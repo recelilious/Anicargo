@@ -1,0 +1,22 @@
+services:
+  postgres:
+    build: .
+    image: anicargo-postgres:dev
+    container_name: anicargo-postgres
+    environment:
+      POSTGRES_USER: anicargo
+      POSTGRES_PASSWORD: anicargo
+      POSTGRES_DB: anicargo
+    ports:
+      - "5432:5432"
+    volumes:
+      - anicargo_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U anicargo -d anicargo"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  anicargo_postgres_data:

@@ -1,0 +1,18 @@
+# Rust / Cargo
+/backend/target/
+/backend/**/target/
+**/*.rs.bk
+
+# Node / npm / Vite
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.vite/
+
+# Logs and caches
+*.log
+.cache/
+
+# OS/editor artifacts
+.DS_Store
+Thumbs.db
+EOF
