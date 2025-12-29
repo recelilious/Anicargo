@@ -1,0 +1,102 @@
+.welcome-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 24px 64px;
+  position: relative;
+}
+
+.welcome-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 36px 44px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: linear-gradient(145deg, rgba(60, 32, 63, 0.26), rgba(44, 36, 51, 0.88));
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.32);
+  position: relative;
+  width: min(520px, 92vw);
+  min-height: 360px;
+  text-align: center;
+}
+
+.welcome-logo {
+  width: 120px;
+  height: auto;
+  filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.35));
+  color: var(--ink);
+}
+
+.welcome-title {
+  margin: 12px 0 4px;
+  font-size: clamp(36px, 6vw, 68px);
+  letter-spacing: 0.06em;
+  color: var(--ink);
+}
+
+.welcome-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.welcome-btn {
+  padding: 14px 22px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--ghost-bg);
+  color: var(--ink);
+  cursor: pointer;
+  text-transform: lowercase;
+  letter-spacing: 0.03em;
+  font-size: 16px;
+  font-weight: 600;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.welcome-btn.solid {
+  background: var(--solid-bg);
+  border-color: var(--border-strong);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+  color: #f7f3fa;
+}
+
+.welcome-btn:hover {
+  transform: translateY(-3px) scale(1.02);
+  border-color: var(--border-strong);
+  background: var(--ghost-hover);
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.4);
+}
+
+.welcome-btn:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.welcome-btn.solid:hover {
+  background: var(--solid-hover);
+}
+
+.footer-note {
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-align: center;
+}
+
+.welcome-footer {
+  padding-bottom: 6px;
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+}

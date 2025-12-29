@@ -1,0 +1,48 @@
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap");
+
+:root {
+  color-scheme: dark;
+  font-family: "JetBrains Mono", monospace;
+  --accent: #3c203f;
+  --accent-2: #5a365f;
+  --bg-main: #231c29;
+  --bg-soft: #2c2433;
+  --ink: #ececf0;
+  --muted: #b6b2c2;
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.2);
+  --ghost-bg: rgba(255, 255, 255, 0.07);
+  --ghost-hover: rgba(255, 255, 255, 0.12);
+  --solid-bg: linear-gradient(135deg, var(--accent), var(--accent-2));
+  --solid-hover: linear-gradient(135deg, #4a284e, var(--accent-2));
+  --dot-glow: rgba(90, 54, 95, 0.55);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(900px 900px at 24% 18%, rgba(90, 54, 95, 0.26), transparent),
+    radial-gradient(700px 700px at 78% 12%, rgba(60, 32, 63, 0.28), transparent),
+    linear-gradient(180deg, #211925 0%, #1b1520 35%, #19131e 100%);
+  color: var(--ink);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+select,
+option,
+button {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+::selection {
+  background: rgba(255, 255, 255, 0.18);
+  color: #0f1117;
+}
