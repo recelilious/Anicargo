@@ -502,13 +502,25 @@ struct MediaMatchRow {
     reason: Option<String>,
 }
 
+pub fn parse_filename(filename: &str) -> ParsedMedia {
+    let mut parser = Anitomy::new();
+    let (parse_ok, elements) = match parser.parse(filename) {
+        Ok(elements) => (true, elements),
+        Err(elements) => (false, elements),
+    };
+    build_parsed_media(parse_ok, &elements)
+}
+
 fn parse_entry(parser: &mut Anitomy, entry: &MediaEntry) -> ParsedMedia {
     let filename = entry.filename.as_str();
     let (parse_ok, elements) = match parser.parse(filename) {
         Ok(elements) => (true, elements),
         Err(elements) => (false, elements),
     };
+    build_parsed_media(parse_ok, &elements)
+}
 
+fn build_parsed_media(parse_ok: bool, elements: &Elements) -> ParsedMedia {
     let raw_elements = elements
         .iter()
         .map(|elem| ParsedElement {
@@ -519,19 +531,19 @@ fn parse_entry(parser: &mut Anitomy, entry: &MediaEntry) -> ParsedMedia {
 
     ParsedMedia {
         parse_ok,
-        title: get_element(&elements, ElementCategory::AnimeTitle),
-        episode: get_element(&elements, ElementCategory::EpisodeNumber),
-        episode_alt: get_element(&elements, ElementCategory::EpisodeNumberAlt),
-        episode_title: get_element(&elements, ElementCategory::EpisodeTitle),
-        season: get_element(&elements, ElementCategory::AnimeSeason),
-        year: get_element(&elements, ElementCategory::AnimeYear),
-        release_group: get_element(&elements, ElementCategory::ReleaseGroup),
-        resolution: get_element(&elements, ElementCategory::VideoResolution),
-        source: get_element(&elements, ElementCategory::Source),
-        audio_term: get_element(&elements, ElementCategory::AudioTerm),
-        video_term: get_element(&elements, ElementCategory::VideoTerm),
-        subtitles: join_elements(&elements, ElementCategory::Subtitles),
-        language: join_elements(&elements, ElementCategory::Language),
+        title: get_element(elements, ElementCategory::AnimeTitle),
+        episode: get_element(elements, ElementCategory::EpisodeNumber),
+        episode_alt: get_element(elements, ElementCategory::EpisodeNumberAlt),
+        episode_title: get_element(elements, ElementCategory::EpisodeTitle),
+        season: get_element(elements, ElementCategory::AnimeSeason),
+        year: get_element(elements, ElementCategory::AnimeYear),
+        release_group: get_element(elements, ElementCategory::ReleaseGroup),
+        resolution: get_element(elements, ElementCategory::VideoResolution),
+        source: get_element(elements, ElementCategory::Source),
+        audio_term: get_element(elements, ElementCategory::AudioTerm),
+        video_term: get_element(elements, ElementCategory::VideoTerm),
+        subtitles: join_elements(elements, ElementCategory::Subtitles),
+        language: join_elements(elements, ElementCategory::Language),
         raw_elements,
     }
 }
