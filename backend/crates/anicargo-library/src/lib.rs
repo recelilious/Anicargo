@@ -376,7 +376,7 @@ pub async fn auto_match_all(
     options: AutoMatchOptions,
 ) -> Result<AutoMatchSummary, LibraryError> {
     let rows = sqlx::query_as::<_, MediaParseRow>(
-        "SELECT media_id, title, episode, year, parse_ok FROM media_parses",
+        "SELECT media_id, title, episode, season, year, parse_ok FROM media_parses",
     )
     .fetch_all(db)
     .await?;
@@ -414,7 +414,13 @@ pub async fn auto_match_all(
         let mut best: Option<(Subject, f32, String)> = None;
         for subject in search.data {
             upsert_subject_cached(db, &subject).await?;
-            let (score, reason) = score_subject(&title, row.year.as_deref(), &subject);
+            let (score, reason) = score_subject(
+                &title,
+                row.year.as_deref(),
+                row.season.as_deref(),
+                row.episode.as_deref(),
+                &subject,
+            );
             if score < options.min_candidate_score {
                 continue;
             }
@@ -816,6 +822,7 @@ struct MediaParseRow {
     media_id: String,
     title: Option<String>,
     episode: Option<String>,
+    season: Option<String>,
     year: Option<String>,
     parse_ok: bool,
 }
@@ -1365,20 +1372,184 @@ fn parse_episode_number(raw: &str) -> Option<f64> {
     }
 }
 
-fn score_subject(title: &str, year: Option<&str>, subject: &Subject) -> (f32, String) {
-    let mut reason = String::new();
+fn score_subject(
+    title: &str,
+    year: Option<&str>,
+    season: Option<&str>,
+    episode: Option<&str>,
+    subject: &Subject,
+) -> (f32, String) {
+    let mut reasons = Vec::new();
     let base = title_similarity(title, &subject.name, &subject.name_cn);
-    reason.push_str(&format!("title={:.2}", base));
+    reasons.push(format!("title={:.2}", base));
     let mut score = base;
 
-    if let (Some(year), Some(date)) = (year, subject.date.as_deref()) {
-        if date.starts_with(year) {
-            score = (score + 0.05).min(1.0);
-            reason.push_str(";year=+0.05");
+    let file_year = year.and_then(parse_year_value);
+    let subject_year = subject.date.as_deref().and_then(parse_year_value);
+    if let (Some(file_year), Some(subject_year)) = (file_year, subject_year) {
+        let diff = (file_year - subject_year).abs();
+        if diff == 0 {
+            score += 0.12;
+            reasons.push("year=+0.12".to_string());
+        } else if diff == 1 {
+            score -= 0.05;
+            reasons.push("year=-0.05".to_string());
+        } else {
+            score -= 0.15;
+            reasons.push("year=-0.15".to_string());
         }
     }
 
-    (score, reason)
+    let file_season = season
+        .and_then(parse_number_value)
+        .or_else(|| infer_season_hint(title));
+    let subject_season = season_hint_from_subject(subject);
+    if let (Some(file_season), Some(subject_season)) = (file_season, subject_season) {
+        if file_season == subject_season {
+            score += 0.08;
+            reasons.push("season=+0.08".to_string());
+        } else {
+            score -= 0.10;
+            reasons.push("season=-0.10".to_string());
+        }
+    }
+
+    let episode_num = episode.and_then(parse_episode_number);
+    if let (Some(episode_num), Some(total)) = (episode_num, subject.total_episodes) {
+        if episode_num >= 1.0 {
+            let total = total as f64;
+            if episode_num <= total + 1.0 {
+                score += 0.03;
+                reasons.push("episode=+0.03".to_string());
+            } else {
+                score -= 0.15;
+                reasons.push("episode=-0.15".to_string());
+            }
+        }
+    }
+
+    let file_movie = is_movie_hint(title);
+    let subject_movie =
+        is_movie_hint(&subject.name) || is_movie_hint(&subject.name_cn);
+    if file_movie != subject_movie {
+        if file_movie || subject_movie {
+            score -= 0.10;
+            reasons.push("movie=-0.10".to_string());
+        }
+    }
+
+    score = score.clamp(0.0, 1.0);
+    (score, reasons.join(";"))
+}
+
+fn parse_year_value(value: &str) -> Option<i32> {
+    let mut digits = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_digit() {
+            digits.push(ch);
+            if digits.len() == 4 {
+                break;
+            }
+        } else if !digits.is_empty() {
+            break;
+        }
+    }
+    if digits.len() == 4 {
+        digits.parse::<i32>().ok()
+    } else {
+        None
+    }
+}
+
+fn parse_number_value(value: &str) -> Option<i32> {
+    let mut digits = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_digit() {
+            digits.push(ch);
+        } else if !digits.is_empty() {
+            break;
+        }
+    }
+    if digits.is_empty() {
+        None
+    } else {
+        digits.parse::<i32>().ok()
+    }
+}
+
+fn infer_season_hint(value: &str) -> Option<i32> {
+    let lower = value.to_lowercase();
+    number_after_keyword(&lower, "season")
+        .or_else(|| number_after_keyword(&lower, "part"))
+        .or_else(|| number_after_keyword(&lower, "cour"))
+        .or_else(|| number_after_s_prefix(&lower))
+        .or_else(|| number_after_ordinal(value))
+}
+
+fn number_after_keyword(value: &str, keyword: &str) -> Option<i32> {
+    value
+        .find(keyword)
+        .and_then(|pos| parse_number_value(&value[pos + keyword.len()..]))
+}
+
+fn number_after_s_prefix(value: &str) -> Option<i32> {
+    let bytes = value.as_bytes();
+    let len = bytes.len();
+    let mut idx = 0;
+    while idx + 1 < len {
+        if bytes[idx] == b's' && bytes[idx + 1].is_ascii_digit() {
+            if idx == 0 || !bytes[idx - 1].is_ascii_alphanumeric() {
+                let rest = &value[idx + 1..];
+                if let Some(num) = parse_number_value(rest) {
+                    return Some(num);
+                }
+            }
+        }
+        idx += 1;
+    }
+    None
+}
+
+fn number_after_ordinal(value: &str) -> Option<i32> {
+    let chars: Vec<char> = value.chars().collect();
+    for i in 0..chars.len() {
+        if chars[i] != '第' {
+            continue;
+        }
+        let mut j = i + 1;
+        let mut digits = String::new();
+        while j < chars.len() && chars[j].is_ascii_digit() {
+            digits.push(chars[j]);
+            j += 1;
+        }
+        if digits.is_empty() {
+            continue;
+        }
+        let num = digits.parse::<i32>().ok()?;
+        if let Some(next) = chars.get(j).copied() {
+            if next == '季' || next == '期' || next == '部' {
+                return Some(num);
+            }
+        }
+        let rest: String = chars[j..].iter().collect();
+        if rest.starts_with("クール") || rest.starts_with("部分") {
+            return Some(num);
+        }
+    }
+    None
+}
+
+fn season_hint_from_subject(subject: &Subject) -> Option<i32> {
+    infer_season_hint(&subject.name).or_else(|| infer_season_hint(&subject.name_cn))
+}
+
+fn is_movie_hint(value: &str) -> bool {
+    let lower = value.to_lowercase();
+    lower.contains("movie")
+        || lower.contains("film")
+        || value.contains("剧场版")
+        || value.contains("劇場版")
+        || value.contains("映画")
 }
 
 fn title_similarity(title: &str, name: &str, name_cn: &str) -> f32 {
@@ -1520,5 +1691,125 @@ mod tests {
     fn normalize_title_removes_separators() {
         let normalized = normalize_title("Spy x Family!!");
         assert_eq!(normalized, "spyxfamily");
+    }
+
+    #[test]
+    fn title_similarity_uses_name_cn_when_stronger() {
+        let score = title_similarity("Spy Family", "Completely Different", "Spy Family");
+        assert_eq!(score, 1.0);
+    }
+
+    #[test]
+    fn score_subject_applies_year_bonus() {
+        let subject = Subject {
+            id: 1,
+            subject_type: 2,
+            name: "Spy Family".to_string(),
+            name_cn: "Spy Family".to_string(),
+            summary: String::new(),
+            date: Some("2025-04-01".to_string()),
+            total_episodes: None,
+            images: None,
+        };
+        let base = title_similarity("Spy Family", &subject.name, &subject.name_cn);
+        let (score, reason) = score_subject("Spy Family", Some("2025"), None, None, &subject);
+        let expected = (base + 0.12).min(1.0);
+        assert_eq!(score, expected);
+        assert!(reason.contains("year=+0.12"));
+    }
+
+    #[test]
+    fn score_subject_penalizes_year_mismatch() {
+        let subject = Subject {
+            id: 2,
+            subject_type: 2,
+            name: "Spy Family".to_string(),
+            name_cn: "Spy Family".to_string(),
+            summary: String::new(),
+            date: Some("2025-04-01".to_string()),
+            total_episodes: None,
+            images: None,
+        };
+        let base = title_similarity("Spy Family", &subject.name, &subject.name_cn);
+        let (score, reason) = score_subject("Spy Family", Some("2023"), None, None, &subject);
+        let expected = (base - 0.15).max(0.0);
+        assert_eq!(score, expected);
+        assert!(reason.contains("year=-0.15"));
+    }
+
+    #[test]
+    fn score_subject_rewards_season_match() {
+        let subject = Subject {
+            id: 3,
+            subject_type: 2,
+            name: "Spy Family Season 3".to_string(),
+            name_cn: "".to_string(),
+            summary: String::new(),
+            date: None,
+            total_episodes: None,
+            images: None,
+        };
+        let base = title_similarity("Spy Family", &subject.name, &subject.name_cn);
+        let (score, reason) = score_subject("Spy Family", None, Some("3"), None, &subject);
+        let expected = (base + 0.08).min(1.0);
+        assert_eq!(score, expected);
+        assert!(reason.contains("season=+0.08"));
+    }
+
+    #[test]
+    fn score_subject_penalizes_season_mismatch() {
+        let subject = Subject {
+            id: 4,
+            subject_type: 2,
+            name: "Spy Family Season 3".to_string(),
+            name_cn: "".to_string(),
+            summary: String::new(),
+            date: None,
+            total_episodes: None,
+            images: None,
+        };
+        let base = title_similarity("Spy Family", &subject.name, &subject.name_cn);
+        let (score, reason) = score_subject("Spy Family", None, Some("2"), None, &subject);
+        let expected = (base - 0.10).max(0.0);
+        assert_eq!(score, expected);
+        assert!(reason.contains("season=-0.10"));
+    }
+
+    #[test]
+    fn score_subject_rewards_episode_within_range() {
+        let subject = Subject {
+            id: 5,
+            subject_type: 2,
+            name: "Spy Family Season 3".to_string(),
+            name_cn: "".to_string(),
+            summary: String::new(),
+            date: None,
+            total_episodes: Some(12),
+            images: None,
+        };
+        let base = title_similarity("Spy Family", &subject.name, &subject.name_cn);
+        let (score, reason) = score_subject("Spy Family", None, None, Some("12"), &subject);
+        let expected = (base + 0.03).min(1.0);
+        assert_eq!(score, expected);
+        assert!(reason.contains("episode=+0.03"));
+    }
+
+    #[test]
+    fn score_subject_penalizes_episode_overflow() {
+        let subject = Subject {
+            id: 6,
+            subject_type: 2,
+            name: "Spy Family Season 3".to_string(),
+            name_cn: "".to_string(),
+            summary: String::new(),
+            date: None,
+            total_episodes: Some(12),
+            images: None,
+        };
+        let base = title_similarity("Spy Family", &subject.name, &subject.name_cn);
+        let (score, reason) = score_subject("Spy Family", None, None, Some("24"), &subject);
+        let expected = (base - 0.15).max(0.0);
+        assert_eq!(score, expected);
+        assert!(reason.contains("episode=-0.15"));
     }
 }
