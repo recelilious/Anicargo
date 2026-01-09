@@ -1,5 +1,9 @@
+use anicargo_bangumi::BangumiClient;
 use anicargo_config::{init_logging, split_config_args, AppConfig};
-use anicargo_library::init_library;
+use anicargo_library::{
+    auto_match_all, clear_match, get_candidates, get_match, init_library, set_manual_match,
+    AutoMatchOptions, AutoMatchSummary, MatchCandidate, MediaMatch,
+};
 use anicargo_media::{ensure_hls, find_entry_by_id, scan_media, MediaConfig, MediaError, MediaEntry};
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
@@ -29,6 +33,7 @@ struct AppState {
     config: Arc<MediaConfig>,
     db: PgPool,
     auth: Arc<AuthConfig>,
+    bangumi: Arc<BangumiClient>,
 }
 
 #[derive(Debug, Clone)]
@@ -61,6 +66,21 @@ struct CreateUserResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct AutoMatchResponse {
+    summary: AutoMatchSummary,
+}
+
+#[derive(Debug, Serialize)]
+struct MatchStatusResponse {
+    current: Option<MediaMatch>,
+}
+
+#[derive(Debug, Serialize)]
+struct MatchCandidatesResponse {
+    candidates: Vec<MatchCandidate>,
+}
+
+#[derive(Debug, Serialize)]
 struct ErrorResponse {
     error: String,
 }
@@ -76,6 +96,12 @@ struct CreateUserRequest {
     user_id: String,
     password: String,
     invite_code: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManualMatchRequest {
+    subject_id: i64,
+    episode_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -168,6 +194,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         admin_password: app_config.auth.admin_password.clone(),
         invite_code: app_config.auth.invite_code.clone(),
     };
+    let bangumi = BangumiClient::new(
+        app_config.bangumi.access_token.clone(),
+        app_config.bangumi.user_agent.clone(),
+    )?;
     let db_url = app_config.db.require_database_url()?;
     let db = connect_db(&db_url).await?;
     init_db(&db).await?;
@@ -177,6 +207,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config: Arc::new(media_config),
         db,
         auth: Arc::new(auth),
+        bangumi: Arc::new(bangumi),
     };
 
     let app = Router::new()
@@ -185,6 +216,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/auth/login", post(login_handler))
         .route("/api/users", post(create_user_handler))
         .route("/api/users/:id", delete(delete_user_handler))
+        .route("/api/matches/auto", post(auto_match_handler))
+        .route("/api/matches/:id", get(match_status_handler).post(manual_match_handler).delete(clear_match_handler))
+        .route(
+            "/api/matches/:id/candidates",
+            get(match_candidates_handler),
+        )
         .route("/hls/:token/:id/:file", get(hls_file_handler_with_token))
         .route("/hls/:id/:file", get(hls_file_handler))
         .with_state(state);
@@ -279,6 +316,109 @@ async fn delete_user_handler(
 
     delete_user(&state.db, &id).await?;
     info!(user_id = %id, "user deleted");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn auto_match_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    query: Query<TokenQuery>,
+) -> Result<Json<AutoMatchResponse>, ApiError> {
+    let auth = require_auth(&state, &headers, &query, None).await?;
+    if auth.role != UserRole::Admin {
+        return Err(ApiError {
+            status: StatusCode::FORBIDDEN,
+            message: "forbidden".to_string(),
+        });
+    }
+
+    let summary = auto_match_all(
+        &state.db,
+        &state.bangumi,
+        AutoMatchOptions::default(),
+    )
+    .await
+    .map_err(|err| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        message: format!("auto match failed: {}", err),
+    })?;
+
+    Ok(Json(AutoMatchResponse { summary }))
+}
+
+async fn match_status_handler(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    query: Query<TokenQuery>,
+) -> Result<Json<MatchStatusResponse>, ApiError> {
+    require_auth(&state, &headers, &query, None).await?;
+    let current = get_match(&state.db, &id).await.map_err(|err| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        message: format!("match lookup failed: {}", err),
+    })?;
+    Ok(Json(MatchStatusResponse { current }))
+}
+
+async fn match_candidates_handler(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    query: Query<TokenQuery>,
+) -> Result<Json<MatchCandidatesResponse>, ApiError> {
+    require_auth(&state, &headers, &query, None).await?;
+    let candidates = get_candidates(&state.db, &id).await.map_err(|err| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        message: format!("candidate lookup failed: {}", err),
+    })?;
+    Ok(Json(MatchCandidatesResponse { candidates }))
+}
+
+async fn manual_match_handler(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    query: Query<TokenQuery>,
+    Json(payload): Json<ManualMatchRequest>,
+) -> Result<StatusCode, ApiError> {
+    let auth = require_auth(&state, &headers, &query, None).await?;
+    if auth.role != UserRole::Admin {
+        return Err(ApiError {
+            status: StatusCode::FORBIDDEN,
+            message: "forbidden".to_string(),
+        });
+    }
+
+    set_manual_match(&state.db, &id, payload.subject_id, payload.episode_id)
+        .await
+        .map_err(|err| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            message: format!("manual match failed: {}", err),
+        })?;
+
+    info!(media_id = %id, subject_id = payload.subject_id, "manual match set");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn clear_match_handler(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    query: Query<TokenQuery>,
+) -> Result<StatusCode, ApiError> {
+    let auth = require_auth(&state, &headers, &query, None).await?;
+    if auth.role != UserRole::Admin {
+        return Err(ApiError {
+            status: StatusCode::FORBIDDEN,
+            message: "forbidden".to_string(),
+        });
+    }
+
+    clear_match(&state.db, &id).await.map_err(|err| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        message: format!("clear match failed: {}", err),
+    })?;
+    info!(media_id = %id, "match cleared");
     Ok(StatusCode::NO_CONTENT)
 }
 

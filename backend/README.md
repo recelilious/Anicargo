@@ -101,6 +101,11 @@ Endpoints:
 - `POST /api/auth/login` -> returns JWT token
 - `POST /api/users` -> create user with invite code
 - `DELETE /api/users/:id` -> delete user (admin or self)
+- `POST /api/matches/auto` -> run auto matching (admin)
+- `GET /api/matches/:id` -> current match for media id
+- `POST /api/matches/:id` -> set manual match (admin)
+- `DELETE /api/matches/:id` -> clear match (admin)
+- `GET /api/matches/:id/candidates` -> list match candidates
 - `GET /hls/:token/:id/index.m3u8` -> HLS playlist (token in path)
 
 ## PostgreSQL via Docker
@@ -170,6 +175,14 @@ cargo run -p anicargo-cli -- bangumi-sync <subject-id>
 
 - `anicargo-cli bangumi-search <keyword>` searches for anime subjects.
 - `anicargo-cli bangumi-sync <subject-id>` fetches subject + episodes and stores them in the database.
+
+## Auto Matching
+
+`POST /api/matches/auto` uses parsed titles to search Bangumi, stores candidates in
+`match_candidates`, and writes auto matches to `media_matches` when confidence exceeds
+the threshold.
+
+Manual fixes can override auto matches via `POST /api/matches/:id` (admin only).
 
 ## Workspace Layout
 

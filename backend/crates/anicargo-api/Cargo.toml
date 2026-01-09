@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anicargo-config = { path = "../anicargo-config" }
+anicargo-bangumi = { path = "../anicargo-bangumi" }
 anicargo-library = { path = "../anicargo-library" }
 anicargo-media = { path = "../anicargo-media" }
 argon2 = "0.5"
