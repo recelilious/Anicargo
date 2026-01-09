@@ -271,3 +271,38 @@ fn media_id_from_path(path: &Path) -> String {
     path.to_string_lossy().hash(&mut hasher);
     format!("{:016x}", hasher.finish())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir() -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("anicargo_media_test_{}", stamp));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    #[test]
+    fn scan_media_filters_extensions() {
+        let dir = temp_dir();
+        let _ = File::create(dir.join("a.mp4")).unwrap();
+        let _ = File::create(dir.join("b.mkv")).unwrap();
+        let _ = File::create(dir.join("c.txt")).unwrap();
+
+        let config = MediaConfig::new(dir.clone(), dir.join(".cache"));
+        let entries = scan_media(&config).expect("scan media");
+        let names: Vec<String> = entries.into_iter().map(|e| e.filename).collect();
+
+        assert!(names.contains(&"a.mp4".to_string()));
+        assert!(names.contains(&"b.mkv".to_string()));
+        assert!(!names.contains(&"c.txt".to_string()));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

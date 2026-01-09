@@ -1102,3 +1102,53 @@ fn category_key(category: ElementCategory) -> &'static str {
         ElementCategory::Unknown => "unknown",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_episode_number_handles_suffix() {
+        assert_eq!(parse_episode_number("12v2"), Some(12.0));
+        assert_eq!(parse_episode_number("03"), Some(3.0));
+        assert_eq!(parse_episode_number("SP"), None);
+    }
+
+    #[test]
+    fn match_episode_id_prefers_exact_match() {
+        let episodes = vec![
+            Episode {
+                id: 100,
+                episode_type: 0,
+                name: "Ep 11".to_string(),
+                name_cn: "".to_string(),
+                sort: 11.0,
+                ep: Some(11.0),
+                airdate: None,
+            },
+            Episode {
+                id: 101,
+                episode_type: 0,
+                name: "Ep 12".to_string(),
+                name_cn: "".to_string(),
+                sort: 12.0,
+                ep: Some(12.0),
+                airdate: None,
+            },
+        ];
+        assert_eq!(match_episode_id("12", &episodes), Some(101));
+    }
+
+    #[test]
+    fn similarity_handles_basic_cases() {
+        assert_eq!(similarity("abc", "abc"), 1.0);
+        assert_eq!(similarity("", "abc"), 0.0);
+        assert!(similarity("spyxfamily", "spyfamily") > 0.5);
+    }
+
+    #[test]
+    fn normalize_title_removes_separators() {
+        let normalized = normalize_title("Spy x Family!!");
+        assert_eq!(normalized, "spyxfamily");
+    }
+}

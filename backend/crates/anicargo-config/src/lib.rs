@@ -675,3 +675,49 @@ fn default_log_path() -> PathBuf {
 fn default_user_agent() -> String {
     "Anicargo/0.1".to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_bool_accepts_common_values() {
+        assert!(parse_bool("key", "true").unwrap());
+        assert!(parse_bool("key", "YES").unwrap());
+        assert!(parse_bool("key", "1").unwrap());
+        assert!(!parse_bool("key", "false").unwrap());
+        assert!(!parse_bool("key", "Off").unwrap());
+        assert!(!parse_bool("key", "0").unwrap());
+    }
+
+    #[test]
+    fn parse_bool_rejects_invalid_values() {
+        assert!(parse_bool("key", "maybe").is_err());
+        assert!(parse_bool("key", "").is_err());
+    }
+
+    #[test]
+    fn parse_numbers_accept_valid_input() {
+        assert_eq!(parse_u32("key", "12").unwrap(), 12);
+        assert_eq!(parse_u64("key", "3600").unwrap(), 3600);
+    }
+
+    #[test]
+    fn parse_numbers_reject_invalid_input() {
+        assert!(parse_u32("key", "12x").is_err());
+        assert!(parse_u64("key", "not").is_err());
+    }
+
+    #[test]
+    fn split_config_args_extracts_path() {
+        let args = vec![
+            "anicargo".to_string(),
+            "--config".to_string(),
+            "cfg.toml".to_string(),
+            "scan".to_string(),
+        ];
+        let (config, rest) = split_config_args(args.into_iter().skip(1)).unwrap();
+        assert_eq!(config, Some(PathBuf::from("cfg.toml")));
+        assert_eq!(rest, vec!["scan".to_string()]);
+    }
+}

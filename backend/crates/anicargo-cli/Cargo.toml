@@ -7,6 +7,7 @@ edition = "2024"
 anicargo-bangumi = { path = "../anicargo-bangumi" }
 anicargo-config = { path = "../anicargo-config" }
 anicargo-library = { path = "../anicargo-library" }
+anicargo-qbittorrent = { path = "../anicargo-qbittorrent" }
 anicargo-media = { path = "../anicargo-media" }
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "json"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

@@ -1,7 +1,10 @@
 use anicargo_bangumi::BangumiClient;
 use anicargo_config::{init_logging, split_config_args, AppConfig};
-use anicargo_library::{init_library, scan_and_index, sync_bangumi_subject};
+use anicargo_library::{
+    auto_match_all, init_library, scan_and_index, sync_bangumi_subject, AutoMatchOptions,
+};
 use anicargo_media::{ensure_hls, find_entry_by_id, scan_media, MediaConfig, MediaError};
+use anicargo_qbittorrent::QbittorrentClient;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 use std::error::Error;
@@ -27,7 +30,13 @@ async fn run() -> Result<(), Box<dyn Error>> {
     }
     if !matches!(
         command.as_str(),
-        "scan" | "hls" | "index" | "bangumi-search" | "bangumi-sync"
+        "scan"
+            | "hls"
+            | "index"
+            | "bangumi-search"
+            | "bangumi-sync"
+            | "qbittorrent-add"
+            | "qbittorrent-sync"
     ) {
         print_usage();
         return Ok(());
@@ -70,6 +79,13 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 .map_err(|_| MediaError::InvalidConfig("invalid subject id".to_string()))?;
             cmd_bangumi_sync(&app_config, subject_id).await
         }
+        "qbittorrent-add" => {
+            let magnet = args
+                .next()
+                .ok_or_else(|| MediaError::InvalidConfig("missing magnet link".to_string()))?;
+            cmd_qbittorrent_add(&app_config, &magnet).await
+        }
+        "qbittorrent-sync" => cmd_qbittorrent_sync(&app_config, &media_config).await,
         _ => {
             print_usage();
             Ok(())
@@ -150,6 +166,61 @@ async fn cmd_bangumi_sync(
     Ok(())
 }
 
+async fn cmd_qbittorrent_add(
+    app_config: &AppConfig,
+    magnet: &str,
+) -> Result<(), Box<dyn Error>> {
+    let client = QbittorrentClient::new(
+        app_config.qbittorrent.base_url.clone(),
+        app_config.qbittorrent.username.clone(),
+        app_config.qbittorrent.password.clone(),
+    )?;
+    let save_path = app_config
+        .qbittorrent
+        .download_dir
+        .as_ref()
+        .and_then(|path| path.to_str());
+    client.add_magnet(magnet, save_path).await?;
+    println!("queued magnet link");
+    Ok(())
+}
+
+async fn cmd_qbittorrent_sync(
+    app_config: &AppConfig,
+    media_config: &MediaConfig,
+) -> Result<(), Box<dyn Error>> {
+    let client = QbittorrentClient::new(
+        app_config.qbittorrent.base_url.clone(),
+        app_config.qbittorrent.username.clone(),
+        app_config.qbittorrent.password.clone(),
+    )?;
+    let completed = client.list_completed().await?;
+    if completed.is_empty() {
+        println!("no completed torrents");
+        return Ok(());
+    }
+
+    let db_url = app_config.db.require_database_url()?;
+    let db = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&db_url)
+        .await?;
+
+    init_library(&db).await?;
+    let index_summary = scan_and_index(&db, media_config).await?;
+    let bangumi_client = BangumiClient::new(
+        app_config.bangumi.access_token.clone(),
+        app_config.bangumi.user_agent.clone(),
+    )?;
+    let match_summary = auto_match_all(&db, &bangumi_client, AutoMatchOptions::default()).await?;
+
+    println!(
+        "indexed {} files, matched {} files",
+        index_summary.upserted, match_summary.matched
+    );
+    Ok(())
+}
+
 fn print_usage() {
     println!("anicargo-cli");
     println!("");
@@ -159,6 +230,8 @@ fn print_usage() {
     println!("  anicargo-cli [--config <path>] hls <media-id>");
     println!("  anicargo-cli [--config <path>] bangumi-search <keyword>");
     println!("  anicargo-cli [--config <path>] bangumi-sync <subject-id>");
+    println!("  anicargo-cli [--config <path>] qbittorrent-add <magnet>");
+    println!("  anicargo-cli [--config <path>] qbittorrent-sync");
     println!("");
     println!("Config:");
     println!("  --config <path>      path to config.toml");

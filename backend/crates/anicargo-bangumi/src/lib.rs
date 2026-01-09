@@ -200,3 +200,15 @@ pub struct Episode {
     #[serde(default)]
     pub airdate: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn empty_keyword_is_rejected() {
+        let client = BangumiClient::new(None, "Anicargo-test/0.1".to_string()).unwrap();
+        let err = client.search_anime("  ", 5).await.unwrap_err();
+        assert!(matches!(err, BangumiError::InvalidInput(_)));
+    }
+}

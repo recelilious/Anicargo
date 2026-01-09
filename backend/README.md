@@ -49,6 +49,12 @@ enabled = false
 path = "~/.cache/anicargo/logs"
 level = "info"
 max_total_mb = 200
+
+[qbittorrent]
+base_url = "http://127.0.0.1:8080"
+username = "admin"
+password = "adminadmin"
+download_dir = "/data/anime"
 ```
 
 Required:
@@ -77,6 +83,12 @@ Logging (optional, default off):
 - `ANICARGO_LOG_PATH` (default: `~/.cache/anicargo/logs`)
 - `ANICARGO_LOG_LEVEL` (default: `info`)
 - `ANICARGO_LOG_MAX_MB` (default: `200`)
+
+qBittorrent (optional):
+- `ANICARGO_QBITTORRENT_BASE_URL` (default: `http://127.0.0.1:8080`)
+- `ANICARGO_QBITTORRENT_USERNAME`
+- `ANICARGO_QBITTORRENT_PASSWORD`
+- `ANICARGO_QBITTORRENT_DOWNLOAD_DIR`
 
 Logs rotate daily; when the directory exceeds `ANICARGO_LOG_MAX_MB`, the oldest logs are removed.
 
@@ -161,6 +173,8 @@ cargo run -p anicargo-cli -- index    # scan + parse + store to database
 cargo run -p anicargo-cli -- hls <media-id>
 cargo run -p anicargo-cli -- bangumi-search <keyword>
 cargo run -p anicargo-cli -- bangumi-sync <subject-id>
+cargo run -p anicargo-cli -- qbittorrent-add <magnet>
+cargo run -p anicargo-cli -- qbittorrent-sync
 ```
 
 ## Library Indexing
@@ -183,6 +197,11 @@ cargo run -p anicargo-cli -- bangumi-sync <subject-id>
 the threshold.
 
 Manual fixes can override auto matches via `POST /api/matches/:id` (admin only).
+
+## qBittorrent Integration
+
+- `qbittorrent-add` queues a magnet link via the WebUI API.
+- `qbittorrent-sync` checks for completed torrents and triggers `index` + auto match.
 
 ## Workspace Layout
 

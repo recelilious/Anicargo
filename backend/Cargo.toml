@@ -5,6 +5,7 @@ members = [
   "crates/anicargo-config",
   "crates/anicargo-library",
   "crates/anicargo-media",
+  "crates/anicargo-qbittorrent",
   "crates/anicargo-cli",
   "crates/anicargo-api",
 ]
