@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
+  "crates/anicargo-bangumi",
+  "crates/anicargo-config",
+  "crates/anicargo-library",
   "crates/anicargo-media",
   "crates/anicargo-cli",
   "crates/anicargo-api",

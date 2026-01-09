@@ -1,13 +1,13 @@
 [package]
-name = "anicargo-cli"
+name = "anicargo-library"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 anicargo-bangumi = { path = "../anicargo-bangumi" }
-anicargo-config = { path = "../anicargo-config" }
-anicargo-library = { path = "../anicargo-library" }
 anicargo-media = { path = "../anicargo-media" }
+anitomy = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "json"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"

@@ -1,3 +1,5 @@
+use anicargo_config::{init_logging, split_config_args, AppConfig};
+use anicargo_library::init_library;
 use anicargo_media::{ensure_hls, find_entry_by_id, scan_media, MediaConfig, MediaError, MediaEntry};
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
@@ -20,12 +22,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::fs::File;
 use tokio_util::io::ReaderStream;
-
-const DEFAULT_BIND: &str = "0.0.0.0:3000";
-const DEFAULT_TOKEN_TTL_SECS: u64 = 3600;
-const DEFAULT_ADMIN_USER: &str = "admin";
-const DEFAULT_ADMIN_PASSWORD: &str = "adminpwd";
-const DEFAULT_INVITE_CODE: &str = "invitecode";
+use tracing::info;
 
 #[derive(Clone)]
 struct AppState {
@@ -148,17 +145,36 @@ impl IntoResponse for ApiError {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = MediaConfig::from_env()?;
-    let hls_root = config.hls_root();
+    let (config_path, _args) = split_config_args(env::args().skip(1))?;
+    let app_config = AppConfig::load(config_path)?;
+    let _log_guard = init_logging(&app_config.logging)?;
+
+    let media_dir = app_config.media.require_media_dir()?;
+    let media_config = MediaConfig {
+        media_dir,
+        cache_dir: app_config.media.cache_dir.clone(),
+        ffmpeg_path: app_config.hls.ffmpeg_path.clone(),
+        hls_segment_secs: app_config.hls.segment_secs,
+        hls_playlist_len: app_config.hls.playlist_len,
+        transcode: app_config.hls.transcode,
+    };
+    let hls_root = media_config.hls_root();
     fs::create_dir_all(&hls_root)?;
 
-    let auth = load_auth_config();
-    let db = connect_db().await?;
+    let auth = AuthConfig {
+        jwt_secret: app_config.auth.jwt_secret.clone(),
+        token_ttl: Duration::from_secs(app_config.auth.token_ttl_secs),
+        admin_user: app_config.auth.admin_user.clone(),
+        admin_password: app_config.auth.admin_password.clone(),
+        invite_code: app_config.auth.invite_code.clone(),
+    };
+    let db_url = app_config.db.require_database_url()?;
+    let db = connect_db(&db_url).await?;
     init_db(&db).await?;
     ensure_admin(&db, &auth).await?;
 
     let state = AppState {
-        config: Arc::new(config),
+        config: Arc::new(media_config),
         db,
         auth: Arc::new(auth),
     };
@@ -173,8 +189,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/hls/:id/:file", get(hls_file_handler))
         .with_state(state);
 
-    let bind_addr = env::var("ANICARGO_BIND").unwrap_or_else(|_| DEFAULT_BIND.to_string());
+    let bind_addr = app_config.server.bind.clone();
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    info!("anicargo-api listening on {}", bind_addr);
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -186,6 +203,7 @@ async fn library_handler(
 ) -> Result<Json<Vec<MediaEntry>>, ApiError> {
     require_auth(&state, &headers, &query, None).await?;
     let entries = scan_media(&state.config)?;
+    info!(count = entries.len(), "library scan completed");
     Ok(Json(entries))
 }
 
@@ -199,6 +217,7 @@ async fn stream_handler(
 
     let entry = find_entry_by_id(&state.config, &id)?;
     let session = ensure_hls(&entry, &state.config)?;
+    info!(user_id = %auth.user_id, media_id = %id, "stream prepared");
 
     let playlist_url = format!("/hls/{}/{}/index.m3u8", auth.token, session.id);
 
@@ -209,6 +228,7 @@ async fn login_handler(
     State(state): State<AppState>,
     Json(payload): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, ApiError> {
+    info!(user_id = %payload.user_id, "login request");
     let user = fetch_user(&state.db, &payload.user_id).await?;
     verify_password(&payload.password, &user.password_hash)?;
 
@@ -235,6 +255,7 @@ async fn create_user_handler(
 
     let hash = hash_password(&payload.password)?;
     let created = create_user(&state.db, &payload.user_id, &hash, UserRole::User).await?;
+    info!(user_id = %created.user_id, "user created");
 
     Ok(Json(CreateUserResponse {
         user_id: created.user_id,
@@ -257,6 +278,7 @@ async fn delete_user_handler(
     }
 
     delete_user(&state.db, &id).await?;
+    info!(user_id = %id, "user deleted");
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -341,37 +363,17 @@ fn extract_token(headers: &HeaderMap, query: &TokenQuery) -> Option<String> {
     Some(token.to_string())
 }
 
-fn load_auth_config() -> AuthConfig {
-    let admin_user = env::var("ANICARGO_ADMIN_USER").unwrap_or_else(|_| DEFAULT_ADMIN_USER.to_string());
-    let admin_password =
-        env::var("ANICARGO_ADMIN_PASSWORD").unwrap_or_else(|_| DEFAULT_ADMIN_PASSWORD.to_string());
-    let invite_code = env::var("ANICARGO_INVITE_CODE").unwrap_or_else(|_| DEFAULT_INVITE_CODE.to_string());
-    let jwt_secret = env::var("ANICARGO_JWT_SECRET").unwrap_or_else(|_| "dev-secret".to_string());
-    let token_ttl = env::var("ANICARGO_TOKEN_TTL_SECS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(DEFAULT_TOKEN_TTL_SECS);
-
-    AuthConfig {
-        jwt_secret,
-        token_ttl: Duration::from_secs(token_ttl),
-        admin_user,
-        admin_password,
-        invite_code,
-    }
-}
-
-async fn connect_db() -> Result<PgPool, ApiError> {
-    let url = env::var("ANICARGO_DATABASE_URL")
-        .or_else(|_| env::var("DATABASE_URL"))
-        .map_err(|_| ApiError {
+async fn connect_db(url: &str) -> Result<PgPool, ApiError> {
+    if url.trim().is_empty() {
+        return Err(ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: "missing ANICARGO_DATABASE_URL".to_string(),
-        })?;
+            message: "missing database url".to_string(),
+        });
+    }
 
     PgPoolOptions::new()
         .max_connections(5)
-        .connect(&url)
+        .connect(url)
         .await
         .map_err(|err| ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -393,6 +395,11 @@ async fn init_db(db: &PgPool) -> Result<(), ApiError> {
     .map_err(|err| ApiError {
         status: StatusCode::INTERNAL_SERVER_ERROR,
         message: format!("failed to init db: {}", err),
+    })?;
+
+    init_library(db).await.map_err(|err| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        message: format!("failed to init library: {}", err),
     })?;
 
     Ok(())
