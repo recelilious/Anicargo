@@ -52,6 +52,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         ffmpeg_path: app_config.hls.ffmpeg_path.clone(),
         hls_segment_secs: app_config.hls.segment_secs,
         hls_playlist_len: app_config.hls.playlist_len,
+        hls_lock_timeout_secs: app_config.hls.lock_timeout_secs,
         transcode: app_config.hls.transcode,
     };
 
@@ -119,15 +120,15 @@ async fn cmd_index(
 ) -> Result<(), Box<dyn Error>> {
     let db_url = app_config.db.require_database_url()?;
     let db = PgPoolOptions::new()
-        .max_connections(5)
+        .max_connections(app_config.db.max_connections)
         .connect(&db_url)
         .await?;
 
     init_library(&db).await?;
     let summary = scan_and_index(&db, media_config).await?;
     println!(
-        "indexed {} files (parsed {})",
-        summary.upserted, summary.parsed
+        "indexed {} files (parsed {}, skipped {}, removed {})",
+        summary.upserted, summary.parsed, summary.skipped, summary.removed
     );
     Ok(())
 }
@@ -154,7 +155,7 @@ async fn cmd_bangumi_sync(
     )?;
     let db_url = app_config.db.require_database_url()?;
     let db = PgPoolOptions::new()
-        .max_connections(5)
+        .max_connections(app_config.db.max_connections)
         .connect(&db_url)
         .await?;
     init_library(&db).await?;
@@ -202,7 +203,7 @@ async fn cmd_qbittorrent_sync(
 
     let db_url = app_config.db.require_database_url()?;
     let db = PgPoolOptions::new()
-        .max_connections(5)
+        .max_connections(app_config.db.max_connections)
         .connect(&db_url)
         .await?;
 
@@ -215,8 +216,12 @@ async fn cmd_qbittorrent_sync(
     let match_summary = auto_match_all(&db, &bangumi_client, AutoMatchOptions::default()).await?;
 
     println!(
-        "indexed {} files, matched {} files",
-        index_summary.upserted, match_summary.matched
+        "indexed {} files (parsed {}, skipped {}, removed {}), matched {} files",
+        index_summary.upserted,
+        index_summary.parsed,
+        index_summary.skipped,
+        index_summary.removed,
+        match_summary.matched
     );
     Ok(())
 }

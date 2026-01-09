@@ -5,14 +5,16 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const DEFAULT_CACHE_DIR: &str = ".cache";
 const DEFAULT_FFMPEG_PATH: &str = "ffmpeg";
 const DEFAULT_HLS_SEGMENT_SECS: u32 = 6;
 const DEFAULT_HLS_PLAYLIST_LEN: u32 = 0;
+const DEFAULT_HLS_LOCK_TIMEOUT_SECS: u64 = 3600;
 
 #[derive(Debug, Clone)]
 pub struct MediaConfig {
@@ -21,6 +23,7 @@ pub struct MediaConfig {
     pub ffmpeg_path: PathBuf,
     pub hls_segment_secs: u32,
     pub hls_playlist_len: u32,
+    pub hls_lock_timeout_secs: u64,
     pub transcode: bool,
 }
 
@@ -32,6 +35,7 @@ impl MediaConfig {
             ffmpeg_path: PathBuf::from(DEFAULT_FFMPEG_PATH),
             hls_segment_secs: DEFAULT_HLS_SEGMENT_SECS,
             hls_playlist_len: DEFAULT_HLS_PLAYLIST_LEN,
+            hls_lock_timeout_secs: DEFAULT_HLS_LOCK_TIMEOUT_SECS,
             transcode: false,
         }
     }
@@ -53,8 +57,14 @@ impl MediaConfig {
         let ffmpeg_path = env::var("ANICARGO_FFMPEG_PATH")
             .unwrap_or_else(|_| DEFAULT_FFMPEG_PATH.to_string());
 
-        let hls_segment_secs = parse_env_u32("ANICARGO_HLS_SEGMENT_SECS", DEFAULT_HLS_SEGMENT_SECS)?;
-        let hls_playlist_len = parse_env_u32("ANICARGO_HLS_PLAYLIST_LEN", DEFAULT_HLS_PLAYLIST_LEN)?;
+        let hls_segment_secs =
+            parse_env_u32("ANICARGO_HLS_SEGMENT_SECS", DEFAULT_HLS_SEGMENT_SECS)?;
+        let hls_playlist_len =
+            parse_env_u32("ANICARGO_HLS_PLAYLIST_LEN", DEFAULT_HLS_PLAYLIST_LEN)?;
+        let hls_lock_timeout_secs = parse_env_u64(
+            "ANICARGO_HLS_LOCK_TIMEOUT_SECS",
+            DEFAULT_HLS_LOCK_TIMEOUT_SECS,
+        )?;
         let transcode = parse_env_bool("ANICARGO_HLS_TRANSCODE", false)?;
 
         Ok(Self {
@@ -63,6 +73,7 @@ impl MediaConfig {
             ffmpeg_path: PathBuf::from(ffmpeg_path),
             hls_segment_secs,
             hls_playlist_len,
+            hls_lock_timeout_secs,
             transcode,
         })
     }
@@ -91,6 +102,15 @@ fn parse_env_bool(key: &str, default_value: bool) -> Result<bool, MediaError> {
                 _ => Err(MediaError::InvalidConfig(format!("invalid {}: {}", key, value))),
             }
         }
+        Err(_) => Ok(default_value),
+    }
+}
+
+fn parse_env_u64(key: &str, default_value: u64) -> Result<u64, MediaError> {
+    match env::var(key) {
+        Ok(value) => value
+            .parse::<u64>()
+            .map_err(|_| MediaError::InvalidConfig(format!("invalid {}: {}", key, value))),
         Err(_) => Ok(default_value),
     }
 }
@@ -200,7 +220,20 @@ pub fn ensure_hls(entry: &MediaEntry, config: &MediaConfig) -> Result<HlsSession
 
     let playlist_path = output_dir.join("index.m3u8");
     if !playlist_path.exists() {
-        spawn_ffmpeg_hls(&entry.path, &output_dir, config)?;
+        if let Some(lock_path) = acquire_hls_lock(&output_dir, config.hls_lock_timeout_secs)? {
+            match spawn_ffmpeg_hls(&entry.path, &output_dir, config) {
+                Ok(mut child) => {
+                    std::thread::spawn(move || {
+                        let _ = child.wait();
+                        let _ = fs::remove_file(lock_path);
+                    });
+                }
+                Err(err) => {
+                    let _ = fs::remove_file(&lock_path);
+                    return Err(err);
+                }
+            }
+        }
     }
 
     Ok(HlsSession {
@@ -210,7 +243,11 @@ pub fn ensure_hls(entry: &MediaEntry, config: &MediaConfig) -> Result<HlsSession
     })
 }
 
-fn spawn_ffmpeg_hls(input: &Path, output_dir: &Path, config: &MediaConfig) -> Result<(), MediaError> {
+fn spawn_ffmpeg_hls(
+    input: &Path,
+    output_dir: &Path,
+    config: &MediaConfig,
+) -> Result<Child, MediaError> {
     let segment_pattern = output_dir.join("segment_%05d.ts");
     let playlist_path = output_dir.join("index.m3u8");
 
@@ -254,12 +291,51 @@ fn spawn_ffmpeg_hls(input: &Path, output_dir: &Path, config: &MediaConfig) -> Re
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    let _child = cmd.spawn()?;
-    Ok(())
+    let child = cmd.spawn()?;
+    Ok(child)
 }
 
 fn hls_output_dir(config: &MediaConfig, id: &str) -> PathBuf {
     config.hls_root().join(id)
+}
+
+fn acquire_hls_lock(output_dir: &Path, timeout_secs: u64) -> Result<Option<PathBuf>, MediaError> {
+    let lock_path = output_dir.join(".hls.lock");
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+    {
+        Ok(mut file) => {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let _ = writeln!(file, "{}", now);
+            Ok(Some(lock_path))
+        }
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            if timeout_secs == 0 {
+                return Ok(None);
+            }
+            if lock_is_stale(&lock_path, timeout_secs)? {
+                let _ = fs::remove_file(&lock_path);
+                return acquire_hls_lock(output_dir, timeout_secs);
+            }
+            Ok(None)
+        }
+        Err(err) => Err(MediaError::Io(err)),
+    }
+}
+
+fn lock_is_stale(lock_path: &Path, timeout_secs: u64) -> Result<bool, MediaError> {
+    let metadata = fs::metadata(lock_path)?;
+    let modified = metadata.modified().unwrap_or(UNIX_EPOCH);
+    let age = SystemTime::now()
+        .duration_since(modified)
+        .unwrap_or_default()
+        .as_secs();
+    Ok(age > timeout_secs)
 }
 
 fn is_media_extension(ext: &str) -> bool {

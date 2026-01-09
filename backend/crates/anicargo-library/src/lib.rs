@@ -2,11 +2,12 @@ use anicargo_bangumi::{BangumiClient, BangumiError, Episode, Subject};
 use anicargo_media::{scan_media, MediaConfig, MediaEntry, MediaError};
 use anitomy::{Anitomy, ElementCategory, Elements};
 use serde::Serialize;
+use serde_json::Value;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use std::fmt;
 use std::fs;
 use std::path::Path;
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::info;
 
 #[derive(Debug)]
@@ -63,6 +64,8 @@ pub struct IndexSummary {
     pub scanned: usize,
     pub upserted: usize,
     pub parsed: usize,
+    pub skipped: usize,
+    pub removed: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize)]
@@ -148,12 +151,17 @@ pub async fn init_library(db: &PgPool) -> Result<(), LibraryError> {
             filename TEXT NOT NULL,\
             size BIGINT NOT NULL,\
             modified_at BIGINT NOT NULL,\
+            last_seen_token TEXT,\
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\
         )",
     )
     .execute(db)
     .await?;
+
+    sqlx::query("ALTER TABLE media_files ADD COLUMN IF NOT EXISTS last_seen_token TEXT")
+        .execute(db)
+        .await?;
 
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS media_parses (\
@@ -242,34 +250,90 @@ pub async fn init_library(db: &PgPool) -> Result<(), LibraryError> {
     .execute(db)
     .await?;
 
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS job_queue (\
+            id BIGSERIAL PRIMARY KEY,\
+            job_type TEXT NOT NULL,\
+            status TEXT NOT NULL,\
+            payload JSONB NOT NULL,\
+            attempts INTEGER NOT NULL DEFAULT 0,\
+            max_attempts INTEGER NOT NULL DEFAULT 3,\
+            scheduled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
+            locked_at TIMESTAMPTZ,\
+            locked_by TEXT,\
+            dedup_key TEXT,\
+            result JSONB,\
+            last_error TEXT,\
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\
+        )",
+    )
+    .execute(db)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS job_queue_status_idx ON job_queue (status, scheduled_at)",
+    )
+    .execute(db)
+    .await?;
+
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS job_queue_dedup_active\
+         ON job_queue (job_type, dedup_key)\
+         WHERE status IN ('queued', 'running', 'retry')",
+    )
+    .execute(db)
+    .await?;
+
     Ok(())
 }
 
 pub async fn scan_and_index(db: &PgPool, config: &MediaConfig) -> Result<IndexSummary, LibraryError> {
     let entries = scan_media(config)?;
+    let scan_token = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        .to_string();
     let mut summary = IndexSummary {
         scanned: entries.len(),
         upserted: 0,
         parsed: 0,
+        skipped: 0,
+        removed: 0,
     };
 
     let mut tx = db.begin().await?;
-    let mut parser = Anitomy::new();
-
     for entry in entries {
-        upsert_media_file(&mut tx, &entry).await?;
+        let modified_at = modified_epoch(&entry.path)?;
+        let needs_parse = match fetch_media_meta(&mut tx, &entry.id).await? {
+            Some(meta) => meta.size != entry.size as i64 || meta.modified_at != modified_at,
+            None => true,
+        };
+
+        upsert_media_file(&mut tx, &entry, modified_at, &scan_token).await?;
         summary.upserted += 1;
 
-        let parsed = parse_entry(&mut parser, &entry);
-        upsert_parse(&mut tx, &entry.id, &parsed).await?;
-        summary.parsed += 1;
+        if needs_parse {
+            let parsed = {
+                let mut parser = Anitomy::new();
+                parse_entry(&mut parser, &entry)
+            };
+            upsert_parse(&mut tx, &entry.id, &parsed).await?;
+            summary.parsed += 1;
+        } else {
+            summary.skipped += 1;
+        }
     }
 
+    summary.removed = delete_stale_media(&mut tx, &scan_token).await?;
     tx.commit().await?;
     info!(
         scanned = summary.scanned,
         upserted = summary.upserted,
         parsed = summary.parsed,
+        skipped = summary.skipped,
+        removed = summary.removed,
         "library index complete"
     );
 
@@ -474,6 +538,279 @@ pub async fn get_candidates(
         .collect())
 }
 
+pub async fn list_media_entries(db: &PgPool) -> Result<Vec<MediaEntry>, LibraryError> {
+    let rows = sqlx::query_as::<_, (String, String, i64, String)>(
+        "SELECT id, filename, size, path FROM media_files ORDER BY filename",
+    )
+    .fetch_all(db)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            let path = Path::new(&row.3);
+            Ok(MediaEntry {
+                id: row.0,
+                filename: row.1,
+                size: row.2 as u64,
+                path: path.to_path_buf(),
+            })
+        })
+        .collect()
+}
+
+#[derive(Debug, Serialize)]
+pub struct JobStatus {
+    pub id: i64,
+    pub job_type: String,
+    pub status: String,
+    pub attempts: i32,
+    pub max_attempts: i32,
+    pub result: Option<Value>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct Job {
+    pub id: i64,
+    pub job_type: String,
+    pub payload: Value,
+    pub attempts: i32,
+    pub max_attempts: i32,
+}
+
+pub async fn enqueue_job(
+    db: &PgPool,
+    job_type: &str,
+    payload: Value,
+    max_attempts: u32,
+    dedup_key: Option<&str>,
+) -> Result<i64, LibraryError> {
+    let max_attempts = max_attempts as i32;
+    let payload = sqlx::types::Json(payload);
+
+    if let Some(key) = dedup_key {
+        let row = sqlx::query_as::<_, (i64,)>(
+            "INSERT INTO job_queue (job_type, status, payload, max_attempts, dedup_key)\
+             VALUES ($1, 'queued', $2, $3, $4)\
+             ON CONFLICT (job_type, dedup_key) WHERE status IN ('queued', 'running', 'retry')\
+             DO NOTHING\
+             RETURNING id",
+        )
+        .bind(job_type)
+        .bind(&payload)
+        .bind(max_attempts)
+        .bind(key)
+        .fetch_optional(db)
+        .await?;
+
+        if let Some(row) = row {
+            return Ok(row.0);
+        }
+
+        if let Some(existing) = sqlx::query_as::<_, (i64,)>(
+            "SELECT id FROM job_queue\
+             WHERE job_type = $1 AND dedup_key = $2 AND status IN ('queued', 'running', 'retry')\
+             ORDER BY id DESC LIMIT 1",
+        )
+        .bind(job_type)
+        .bind(key)
+        .fetch_optional(db)
+        .await?
+        {
+            return Ok(existing.0);
+        }
+    }
+
+    let row = sqlx::query_as::<_, (i64,)>(
+        "INSERT INTO job_queue (job_type, status, payload, max_attempts)\
+         VALUES ($1, 'queued', $2, $3)\
+         RETURNING id",
+    )
+    .bind(job_type)
+    .bind(&payload)
+    .bind(max_attempts)
+    .fetch_one(db)
+    .await?;
+
+    Ok(row.0)
+}
+
+pub async fn fetch_next_job(
+    db: &PgPool,
+    worker_id: &str,
+) -> Result<Option<Job>, LibraryError> {
+    let mut tx = db.begin().await?;
+
+    let row = sqlx::query_as::<_, (i64, String, Value, i32, i32)>(
+        "SELECT id, job_type, payload, attempts, max_attempts\
+         FROM job_queue\
+         WHERE status IN ('queued', 'retry')\
+           AND scheduled_at <= NOW()\
+           AND attempts < max_attempts\
+         ORDER BY created_at\
+         FOR UPDATE SKIP LOCKED\
+         LIMIT 1",
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    let Some(row) = row else {
+        tx.commit().await?;
+        return Ok(None);
+    };
+
+    let attempts = row.3 + 1;
+    sqlx::query(
+        "UPDATE job_queue\
+         SET status = 'running', locked_at = NOW(), locked_by = $2,\
+             attempts = $3, updated_at = NOW()\
+         WHERE id = $1",
+    )
+    .bind(row.0)
+    .bind(worker_id)
+    .bind(attempts)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    Ok(Some(Job {
+        id: row.0,
+        job_type: row.1,
+        payload: row.2,
+        attempts,
+        max_attempts: row.4,
+    }))
+}
+
+pub async fn complete_job(
+    db: &PgPool,
+    job_id: i64,
+    result: Option<Value>,
+) -> Result<(), LibraryError> {
+    let result = result.map(sqlx::types::Json);
+    sqlx::query(
+        "UPDATE job_queue\
+         SET status = 'done', result = $2, updated_at = NOW(), locked_at = NULL, locked_by = NULL\
+         WHERE id = $1",
+    )
+    .bind(job_id)
+    .bind(result)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn fail_job(
+    db: &PgPool,
+    job_id: i64,
+    attempts: i32,
+    max_attempts: i32,
+    error: &str,
+) -> Result<(), LibraryError> {
+    if attempts >= max_attempts {
+        sqlx::query(
+            "UPDATE job_queue\
+             SET status = 'failed', last_error = $2, updated_at = NOW(), locked_at = NULL, locked_by = NULL\
+             WHERE id = $1",
+        )
+        .bind(job_id)
+        .bind(error)
+        .execute(db)
+        .await?;
+        return Ok(());
+    }
+
+    let delay_secs = 30 * (attempts as i64);
+    sqlx::query(
+        "UPDATE job_queue\
+         SET status = 'retry', last_error = $2,\
+             scheduled_at = NOW() + make_interval(secs => $3),\
+             updated_at = NOW(), locked_at = NULL, locked_by = NULL\
+         WHERE id = $1",
+    )
+    .bind(job_id)
+    .bind(error)
+    .bind(delay_secs)
+    .execute(db)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn get_job_status(db: &PgPool, job_id: i64) -> Result<Option<JobStatus>, LibraryError> {
+    let row = sqlx::query_as::<_, (i64, String, String, i32, i32, Option<Value>, Option<String>)>(
+        "SELECT id, job_type, status, attempts, max_attempts, result, last_error\
+         FROM job_queue WHERE id = $1",
+    )
+    .bind(job_id)
+    .fetch_optional(db)
+    .await?;
+
+    Ok(row.map(|row| JobStatus {
+        id: row.0,
+        job_type: row.1,
+        status: row.2,
+        attempts: row.3,
+        max_attempts: row.4,
+        result: row.5,
+        last_error: row.6,
+    }))
+}
+
+pub async fn cleanup_jobs(db: &PgPool, retention_hours: u64) -> Result<u64, LibraryError> {
+    if retention_hours == 0 {
+        return Ok(0);
+    }
+    let result = sqlx::query(
+        "DELETE FROM job_queue\
+         WHERE status IN ('done', 'failed')\
+           AND updated_at < NOW() - make_interval(hours => $1)",
+    )
+    .bind(retention_hours as i64)
+    .execute(db)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn requeue_stuck_jobs(
+    db: &PgPool,
+    timeout_secs: u64,
+) -> Result<(u64, u64), LibraryError> {
+    if timeout_secs == 0 {
+        return Ok((0, 0));
+    }
+    let failed = sqlx::query(
+        "UPDATE job_queue\
+         SET status = 'failed', last_error = 'timeout',\
+             updated_at = NOW(), locked_at = NULL, locked_by = NULL\
+         WHERE status = 'running'\
+           AND locked_at IS NOT NULL\
+           AND locked_at < NOW() - make_interval(secs => $1)\
+           AND attempts >= max_attempts",
+    )
+    .bind(timeout_secs as i64)
+    .execute(db)
+    .await?
+    .rows_affected();
+
+    let retried = sqlx::query(
+        "UPDATE job_queue\
+         SET status = 'retry', last_error = 'timeout',\
+             scheduled_at = NOW(), updated_at = NOW(), locked_at = NULL, locked_by = NULL\
+         WHERE status = 'running'\
+           AND locked_at IS NOT NULL\
+           AND locked_at < NOW() - make_interval(secs => $1)\
+           AND attempts < max_attempts",
+    )
+    .bind(timeout_secs as i64)
+    .execute(db)
+    .await?
+    .rows_affected();
+
+    Ok((retried, failed))
+}
+
 #[derive(Debug, FromRow)]
 struct MediaParseRow {
     media_id: String,
@@ -481,6 +818,12 @@ struct MediaParseRow {
     episode: Option<String>,
     year: Option<String>,
     parse_ok: bool,
+}
+
+#[derive(Debug, FromRow)]
+struct MediaFileMetaRow {
+    size: i64,
+    modified_at: i64,
 }
 
 #[derive(Debug, FromRow)]
@@ -564,18 +907,20 @@ fn join_elements(elements: &Elements, category: ElementCategory) -> Option<Strin
 async fn upsert_media_file(
     tx: &mut Transaction<'_, Postgres>,
     entry: &MediaEntry,
+    modified_at: i64,
+    scan_token: &str,
 ) -> Result<(), LibraryError> {
     let path = path_to_string(&entry.path)?;
-    let modified_at = modified_epoch(&entry.path)?;
 
     sqlx::query(
-        "INSERT INTO media_files (id, path, filename, size, modified_at)\
-        VALUES ($1, $2, $3, $4, $5)\
+        "INSERT INTO media_files (id, path, filename, size, modified_at, last_seen_token)\
+        VALUES ($1, $2, $3, $4, $5, $6)\
         ON CONFLICT (id) DO UPDATE SET\
             path = EXCLUDED.path,\
             filename = EXCLUDED.filename,\
             size = EXCLUDED.size,\
             modified_at = EXCLUDED.modified_at,\
+            last_seen_token = EXCLUDED.last_seen_token,\
             updated_at = NOW()",
     )
     .bind(&entry.id)
@@ -583,6 +928,7 @@ async fn upsert_media_file(
     .bind(&entry.filename)
     .bind(entry.size as i64)
     .bind(modified_at)
+    .bind(scan_token)
     .execute(&mut **tx)
     .await?;
 
@@ -654,6 +1000,30 @@ fn modified_epoch(path: &Path) -> Result<i64, LibraryError> {
     let modified = metadata.modified().unwrap_or(UNIX_EPOCH);
     let duration = modified.duration_since(UNIX_EPOCH).unwrap_or_default();
     Ok(duration.as_secs() as i64)
+}
+
+async fn fetch_media_meta(
+    tx: &mut Transaction<'_, Postgres>,
+    media_id: &str,
+) -> Result<Option<MediaFileMetaRow>, LibraryError> {
+    let row = sqlx::query_as::<_, MediaFileMetaRow>(
+        "SELECT size, modified_at FROM media_files WHERE id = $1",
+    )
+    .bind(media_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(row)
+}
+
+async fn delete_stale_media(
+    tx: &mut Transaction<'_, Postgres>,
+    scan_token: &str,
+) -> Result<usize, LibraryError> {
+    let result = sqlx::query("DELETE FROM media_files WHERE last_seen_token IS DISTINCT FROM $1")
+        .bind(scan_token)
+        .execute(&mut **tx)
+        .await?;
+    Ok(result.rows_affected() as usize)
 }
 
 async fn upsert_subject(

@@ -76,12 +76,14 @@ pub struct HlsConfig {
     pub ffmpeg_path: PathBuf,
     pub segment_secs: u32,
     pub playlist_len: u32,
+    pub lock_timeout_secs: u64,
     pub transcode: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct DbConfig {
     pub database_url: Option<String>,
+    pub max_connections: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +98,22 @@ pub struct AuthConfig {
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub bind: String,
+    pub max_scan_concurrency: u32,
+    pub max_hls_concurrency: u32,
+    pub max_in_flight: u32,
+    pub rate_limit_per_minute: u32,
+    pub rate_limit_user_per_minute: u32,
+    pub rate_limit_ip_per_minute: u32,
+    pub rate_limit_allow_users: Vec<String>,
+    pub rate_limit_allow_ips: Vec<String>,
+    pub rate_limit_block_users: Vec<String>,
+    pub rate_limit_block_ips: Vec<String>,
+    pub job_workers: u32,
+    pub job_poll_interval_ms: u64,
+    pub job_max_attempts: u32,
+    pub job_retention_hours: u64,
+    pub job_cleanup_interval_secs: u64,
+    pub job_running_timeout_secs: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -131,9 +149,13 @@ impl Default for AppConfig {
                 ffmpeg_path: PathBuf::from("ffmpeg"),
                 segment_secs: 6,
                 playlist_len: 0,
+                lock_timeout_secs: 3600,
                 transcode: false,
             },
-            db: DbConfig { database_url: None },
+            db: DbConfig {
+                database_url: None,
+                max_connections: 5,
+            },
             auth: AuthConfig {
                 jwt_secret: "dev-secret".to_string(),
                 token_ttl_secs: DEFAULT_TOKEN_TTL_SECS,
@@ -143,6 +165,22 @@ impl Default for AppConfig {
             },
             server: ServerConfig {
                 bind: DEFAULT_BIND.to_string(),
+                max_scan_concurrency: 1,
+                max_hls_concurrency: 2,
+                max_in_flight: 256,
+                rate_limit_per_minute: 0,
+                rate_limit_user_per_minute: 0,
+                rate_limit_ip_per_minute: 0,
+                rate_limit_allow_users: Vec::new(),
+                rate_limit_allow_ips: Vec::new(),
+                rate_limit_block_users: Vec::new(),
+                rate_limit_block_ips: Vec::new(),
+                job_workers: 2,
+                job_poll_interval_ms: 500,
+                job_max_attempts: 3,
+                job_retention_hours: 168,
+                job_cleanup_interval_secs: 3600,
+                job_running_timeout_secs: 3600,
             },
             bangumi: BangumiConfig {
                 access_token: None,
@@ -229,6 +267,7 @@ impl AppConfig {
         }
 
         config.apply_env()?;
+        config.normalize();
         config.validate()?;
 
         Ok(config)
@@ -254,6 +293,9 @@ impl AppConfig {
             if let Some(playlist_len) = hls.playlist_len {
                 self.hls.playlist_len = playlist_len;
             }
+            if let Some(lock_timeout_secs) = hls.lock_timeout_secs {
+                self.hls.lock_timeout_secs = lock_timeout_secs;
+            }
             if let Some(transcode) = hls.transcode {
                 self.hls.transcode = transcode;
             }
@@ -262,6 +304,9 @@ impl AppConfig {
         if let Some(db) = file.db {
             if let Some(database_url) = db.database_url {
                 self.db.database_url = Some(database_url);
+            }
+            if let Some(max_connections) = db.max_connections {
+                self.db.max_connections = max_connections;
             }
         }
 
@@ -286,6 +331,54 @@ impl AppConfig {
         if let Some(server) = file.server {
             if let Some(bind) = server.bind {
                 self.server.bind = bind;
+            }
+            if let Some(max_scan_concurrency) = server.max_scan_concurrency {
+                self.server.max_scan_concurrency = max_scan_concurrency;
+            }
+            if let Some(max_hls_concurrency) = server.max_hls_concurrency {
+                self.server.max_hls_concurrency = max_hls_concurrency;
+            }
+            if let Some(max_in_flight) = server.max_in_flight {
+                self.server.max_in_flight = max_in_flight;
+            }
+            if let Some(rate_limit_per_minute) = server.rate_limit_per_minute {
+                self.server.rate_limit_per_minute = rate_limit_per_minute;
+            }
+            if let Some(rate_limit_user_per_minute) = server.rate_limit_user_per_minute {
+                self.server.rate_limit_user_per_minute = rate_limit_user_per_minute;
+            }
+            if let Some(rate_limit_ip_per_minute) = server.rate_limit_ip_per_minute {
+                self.server.rate_limit_ip_per_minute = rate_limit_ip_per_minute;
+            }
+            if let Some(rate_limit_allow_users) = server.rate_limit_allow_users {
+                self.server.rate_limit_allow_users = rate_limit_allow_users;
+            }
+            if let Some(rate_limit_allow_ips) = server.rate_limit_allow_ips {
+                self.server.rate_limit_allow_ips = rate_limit_allow_ips;
+            }
+            if let Some(rate_limit_block_users) = server.rate_limit_block_users {
+                self.server.rate_limit_block_users = rate_limit_block_users;
+            }
+            if let Some(rate_limit_block_ips) = server.rate_limit_block_ips {
+                self.server.rate_limit_block_ips = rate_limit_block_ips;
+            }
+            if let Some(job_workers) = server.job_workers {
+                self.server.job_workers = job_workers;
+            }
+            if let Some(job_poll_interval_ms) = server.job_poll_interval_ms {
+                self.server.job_poll_interval_ms = job_poll_interval_ms;
+            }
+            if let Some(job_max_attempts) = server.job_max_attempts {
+                self.server.job_max_attempts = job_max_attempts;
+            }
+            if let Some(job_retention_hours) = server.job_retention_hours {
+                self.server.job_retention_hours = job_retention_hours;
+            }
+            if let Some(job_cleanup_interval_secs) = server.job_cleanup_interval_secs {
+                self.server.job_cleanup_interval_secs = job_cleanup_interval_secs;
+            }
+            if let Some(job_running_timeout_secs) = server.job_running_timeout_secs {
+                self.server.job_running_timeout_secs = job_running_timeout_secs;
             }
         }
 
@@ -347,6 +440,9 @@ impl AppConfig {
         if let Some(value) = env_first(&["ANICARGO_HLS_PLAYLIST_LEN"]) {
             self.hls.playlist_len = parse_u32("ANICARGO_HLS_PLAYLIST_LEN", &value)?;
         }
+        if let Some(value) = env_first(&["ANICARGO_HLS_LOCK_TIMEOUT_SECS"]) {
+            self.hls.lock_timeout_secs = parse_u64("ANICARGO_HLS_LOCK_TIMEOUT_SECS", &value)?;
+        }
         if let Some(value) = env_first(&["ANICARGO_HLS_TRANSCODE"]) {
             self.hls.transcode = parse_bool("ANICARGO_HLS_TRANSCODE", &value)?;
         }
@@ -354,9 +450,69 @@ impl AppConfig {
         if let Some(value) = env_first(&["ANICARGO_DATABASE_URL", "DATABASE_URL"]) {
             self.db.database_url = Some(value);
         }
+        if let Some(value) = env_first(&["ANICARGO_DB_MAX_CONNECTIONS"]) {
+            self.db.max_connections = parse_u32("ANICARGO_DB_MAX_CONNECTIONS", &value)?;
+        }
 
         if let Some(value) = env_first(&["ANICARGO_BIND"]) {
             self.server.bind = value;
+        }
+        if let Some(value) = env_first(&["ANICARGO_MAX_SCAN_CONCURRENCY"]) {
+            self.server.max_scan_concurrency =
+                parse_u32("ANICARGO_MAX_SCAN_CONCURRENCY", &value)?;
+        }
+        if let Some(value) = env_first(&["ANICARGO_MAX_HLS_CONCURRENCY"]) {
+            self.server.max_hls_concurrency =
+                parse_u32("ANICARGO_MAX_HLS_CONCURRENCY", &value)?;
+        }
+        if let Some(value) = env_first(&["ANICARGO_MAX_IN_FLIGHT"]) {
+            self.server.max_in_flight = parse_u32("ANICARGO_MAX_IN_FLIGHT", &value)?;
+        }
+        if let Some(value) = env_first(&["ANICARGO_RATE_LIMIT_PER_MINUTE"]) {
+            self.server.rate_limit_per_minute =
+                parse_u32("ANICARGO_RATE_LIMIT_PER_MINUTE", &value)?;
+        }
+        if let Some(value) = env_first(&["ANICARGO_RATE_LIMIT_USER_PER_MINUTE"]) {
+            self.server.rate_limit_user_per_minute =
+                parse_u32("ANICARGO_RATE_LIMIT_USER_PER_MINUTE", &value)?;
+        }
+        if let Some(value) = env_first(&["ANICARGO_RATE_LIMIT_IP_PER_MINUTE"]) {
+            self.server.rate_limit_ip_per_minute =
+                parse_u32("ANICARGO_RATE_LIMIT_IP_PER_MINUTE", &value)?;
+        }
+        if let Some(value) = env_first(&["ANICARGO_RATE_LIMIT_ALLOW_USERS"]) {
+            self.server.rate_limit_allow_users = split_csv(&value);
+        }
+        if let Some(value) = env_first(&["ANICARGO_RATE_LIMIT_ALLOW_IPS"]) {
+            self.server.rate_limit_allow_ips = split_csv(&value);
+        }
+        if let Some(value) = env_first(&["ANICARGO_RATE_LIMIT_BLOCK_USERS"]) {
+            self.server.rate_limit_block_users = split_csv(&value);
+        }
+        if let Some(value) = env_first(&["ANICARGO_RATE_LIMIT_BLOCK_IPS"]) {
+            self.server.rate_limit_block_ips = split_csv(&value);
+        }
+        if let Some(value) = env_first(&["ANICARGO_JOB_WORKERS"]) {
+            self.server.job_workers = parse_u32("ANICARGO_JOB_WORKERS", &value)?;
+        }
+        if let Some(value) = env_first(&["ANICARGO_JOB_POLL_INTERVAL_MS"]) {
+            self.server.job_poll_interval_ms =
+                parse_u64("ANICARGO_JOB_POLL_INTERVAL_MS", &value)?;
+        }
+        if let Some(value) = env_first(&["ANICARGO_JOB_MAX_ATTEMPTS"]) {
+            self.server.job_max_attempts = parse_u32("ANICARGO_JOB_MAX_ATTEMPTS", &value)?;
+        }
+        if let Some(value) = env_first(&["ANICARGO_JOB_RETENTION_HOURS"]) {
+            self.server.job_retention_hours =
+                parse_u64("ANICARGO_JOB_RETENTION_HOURS", &value)?;
+        }
+        if let Some(value) = env_first(&["ANICARGO_JOB_CLEANUP_INTERVAL_SECS"]) {
+            self.server.job_cleanup_interval_secs =
+                parse_u64("ANICARGO_JOB_CLEANUP_INTERVAL_SECS", &value)?;
+        }
+        if let Some(value) = env_first(&["ANICARGO_JOB_RUNNING_TIMEOUT_SECS"]) {
+            self.server.job_running_timeout_secs =
+                parse_u64("ANICARGO_JOB_RUNNING_TIMEOUT_SECS", &value)?;
         }
         if let Some(value) = env_first(&["ANICARGO_ADMIN_USER"]) {
             self.auth.admin_user = value;
@@ -423,7 +579,62 @@ impl AppConfig {
                 media_dir.display()
             )));
         }
+        if self.db.max_connections == 0 {
+            return Err(ConfigError::InvalidValue(
+                "db.max_connections must be > 0".to_string(),
+            ));
+        }
+        if self.server.max_scan_concurrency == 0 {
+            return Err(ConfigError::InvalidValue(
+                "server.max_scan_concurrency must be > 0".to_string(),
+            ));
+        }
+        if self.server.max_hls_concurrency == 0 {
+            return Err(ConfigError::InvalidValue(
+                "server.max_hls_concurrency must be > 0".to_string(),
+            ));
+        }
+        if self.server.job_workers == 0 {
+            return Err(ConfigError::InvalidValue(
+                "server.job_workers must be > 0".to_string(),
+            ));
+        }
+        if self.server.job_poll_interval_ms == 0 {
+            return Err(ConfigError::InvalidValue(
+                "server.job_poll_interval_ms must be > 0".to_string(),
+            ));
+        }
+        if self.server.job_max_attempts == 0 {
+            return Err(ConfigError::InvalidValue(
+                "server.job_max_attempts must be > 0".to_string(),
+            ));
+        }
+        if (self.server.job_retention_hours > 0 || self.server.job_running_timeout_secs > 0)
+            && self.server.job_cleanup_interval_secs == 0
+        {
+            return Err(ConfigError::InvalidValue(
+                "server.job_cleanup_interval_secs must be > 0 when cleanup is enabled"
+                    .to_string(),
+            ));
+        }
+        if self.server.job_running_timeout_secs == 0 {
+            return Err(ConfigError::InvalidValue(
+                "server.job_running_timeout_secs must be > 0".to_string(),
+            ));
+        }
         Ok(())
+    }
+}
+
+impl AppConfig {
+    fn normalize(&mut self) {
+        if self.server.rate_limit_user_per_minute == 0
+            && self.server.rate_limit_ip_per_minute == 0
+            && self.server.rate_limit_per_minute > 0
+        {
+            self.server.rate_limit_user_per_minute = self.server.rate_limit_per_minute;
+            self.server.rate_limit_ip_per_minute = self.server.rate_limit_per_minute;
+        }
     }
 }
 
@@ -450,12 +661,14 @@ struct HlsConfigFile {
     ffmpeg_path: Option<PathBuf>,
     segment_secs: Option<u32>,
     playlist_len: Option<u32>,
+    lock_timeout_secs: Option<u64>,
     transcode: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
 struct DbConfigFile {
     database_url: Option<String>,
+    max_connections: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -470,6 +683,22 @@ struct AuthConfigFile {
 #[derive(Debug, Deserialize, Default)]
 struct ServerConfigFile {
     bind: Option<String>,
+    max_scan_concurrency: Option<u32>,
+    max_hls_concurrency: Option<u32>,
+    max_in_flight: Option<u32>,
+    rate_limit_per_minute: Option<u32>,
+    rate_limit_user_per_minute: Option<u32>,
+    rate_limit_ip_per_minute: Option<u32>,
+    rate_limit_allow_users: Option<Vec<String>>,
+    rate_limit_allow_ips: Option<Vec<String>>,
+    rate_limit_block_users: Option<Vec<String>>,
+    rate_limit_block_ips: Option<Vec<String>>,
+    job_workers: Option<u32>,
+    job_poll_interval_ms: Option<u64>,
+    job_max_attempts: Option<u32>,
+    job_retention_hours: Option<u64>,
+    job_cleanup_interval_secs: Option<u64>,
+    job_running_timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -674,6 +903,15 @@ fn default_log_path() -> PathBuf {
 
 fn default_user_agent() -> String {
     "Anicargo/0.1".to_string()
+}
+
+fn split_csv(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(|item| item.trim())
+        .filter(|item| !item.is_empty())
+        .map(|item| item.to_string())
+        .collect()
 }
 
 #[cfg(test)]
