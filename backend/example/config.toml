@@ -1,0 +1,5 @@
+[media]
+media_dir = "/path/to/anime"
+
+[db]
+database_url = "postgres://anicargo:anicargo@127.0.0.1:5432/anicargo"
