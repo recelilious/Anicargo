@@ -87,8 +87,8 @@ impl Default for AutoMatchOptions {
     fn default() -> Self {
         Self {
             limit: 8,
-            min_candidate_score: 0.5,
-            min_confidence: 0.9,
+            min_candidate_score: 0.3,
+            min_confidence: 0.3,
         }
     }
 }
@@ -421,12 +421,11 @@ pub async fn auto_match_all(
                 row.episode.as_deref(),
                 &subject,
             );
-            if score < options.min_candidate_score {
-                continue;
-            }
 
-            upsert_candidate(db, &row.media_id, subject.id, score, &reason).await?;
-            summary.candidates += 1;
+            if score >= options.min_candidate_score {
+                upsert_candidate(db, &row.media_id, subject.id, score, &reason).await?;
+                summary.candidates += 1;
+            }
 
             if best.as_ref().map(|(_, s, _)| score > *s).unwrap_or(true) {
                 best = Some((subject, score, reason));
