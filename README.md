@@ -41,3 +41,19 @@ npm run dev
 ```
 
 More details in `backend/README.md`.
+
+## Load Test Script
+
+Quick load test for the backend API:
+
+```bash
+backend/script/load_test.sh \
+  --base http://127.0.0.1:3000 \
+  --endpoint /api/library \
+  --method GET \
+  --token <token> \
+  --concurrency 50 \
+  --requests 500
+```
+
+The script prints throughput/latency and suggested config values.

@@ -1136,7 +1136,7 @@ async fn ensure_admin(db: &PgPool, auth: &AuthConfig) -> Result<(), ApiError> {
     let hash = hash_password(&auth.admin_password)?;
 
     sqlx::query(
-        "INSERT INTO users (id, password_hash, role) VALUES ($1, $2, $3)\
+        "INSERT INTO users (id, password_hash, role) VALUES ($1, $2, $3) \
         ON CONFLICT (id) DO NOTHING",
     )
     .bind(&auth.admin_user)
@@ -1191,7 +1191,7 @@ async fn create_user(
 ) -> Result<DbUser, ApiError> {
     let role_str = role_to_str(role);
     let row = sqlx::query_as::<_, (String, String, String)>(
-        "INSERT INTO users (id, password_hash, role) VALUES ($1, $2, $3)\
+        "INSERT INTO users (id, password_hash, role) VALUES ($1, $2, $3) \
         RETURNING id, password_hash, role",
     )
     .bind(user_id)

@@ -145,15 +145,15 @@ pub struct ParsedElement {
 
 pub async fn init_library(db: &PgPool) -> Result<(), LibraryError> {
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS media_files (\
-            id TEXT PRIMARY KEY,\
-            path TEXT NOT NULL UNIQUE,\
-            filename TEXT NOT NULL,\
-            size BIGINT NOT NULL,\
-            modified_at BIGINT NOT NULL,\
-            last_seen_token TEXT,\
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\
+        "CREATE TABLE IF NOT EXISTS media_files ( \
+            id TEXT PRIMARY KEY, \
+            path TEXT NOT NULL UNIQUE, \
+            filename TEXT NOT NULL, \
+            size BIGINT NOT NULL, \
+            modified_at BIGINT NOT NULL, \
+            last_seen_token TEXT, \
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW() \
         )",
     )
     .execute(db)
@@ -164,108 +164,108 @@ pub async fn init_library(db: &PgPool) -> Result<(), LibraryError> {
         .await?;
 
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS media_parses (\
-            media_id TEXT PRIMARY KEY REFERENCES media_files(id) ON DELETE CASCADE,\
-            parse_ok BOOLEAN NOT NULL,\
-            title TEXT,\
-            episode TEXT,\
-            episode_alt TEXT,\
-            episode_title TEXT,\
-            season TEXT,\
-            year TEXT,\
-            release_group TEXT,\
-            resolution TEXT,\
-            source TEXT,\
-            audio_term TEXT,\
-            video_term TEXT,\
-            subtitles TEXT,\
-            language TEXT,\
-            raw_elements JSONB NOT NULL,\
-            parsed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\
+        "CREATE TABLE IF NOT EXISTS media_parses ( \
+            media_id TEXT PRIMARY KEY REFERENCES media_files(id) ON DELETE CASCADE, \
+            parse_ok BOOLEAN NOT NULL, \
+            title TEXT, \
+            episode TEXT, \
+            episode_alt TEXT, \
+            episode_title TEXT, \
+            season TEXT, \
+            year TEXT, \
+            release_group TEXT, \
+            resolution TEXT, \
+            source TEXT, \
+            audio_term TEXT, \
+            video_term TEXT, \
+            subtitles TEXT, \
+            language TEXT, \
+            raw_elements JSONB NOT NULL, \
+            parsed_at TIMESTAMPTZ NOT NULL DEFAULT NOW() \
         )",
     )
     .execute(db)
     .await?;
 
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS bangumi_subjects (\
-            id BIGINT PRIMARY KEY,\
-            subject_type INTEGER NOT NULL,\
-            name TEXT NOT NULL,\
-            name_cn TEXT NOT NULL,\
-            summary TEXT NOT NULL,\
-            air_date TEXT,\
-            total_episodes INTEGER,\
-            images JSONB,\
-            payload JSONB NOT NULL,\
-            synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\
+        "CREATE TABLE IF NOT EXISTS bangumi_subjects ( \
+            id BIGINT PRIMARY KEY, \
+            subject_type INTEGER NOT NULL, \
+            name TEXT NOT NULL, \
+            name_cn TEXT NOT NULL, \
+            summary TEXT NOT NULL, \
+            air_date TEXT, \
+            total_episodes INTEGER, \
+            images JSONB, \
+            payload JSONB NOT NULL, \
+            synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW() \
         )",
     )
     .execute(db)
     .await?;
 
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS bangumi_episodes (\
-            id BIGINT PRIMARY KEY,\
-            subject_id BIGINT NOT NULL REFERENCES bangumi_subjects(id) ON DELETE CASCADE,\
-            episode_type INTEGER NOT NULL,\
-            sort DOUBLE PRECISION NOT NULL,\
-            ep DOUBLE PRECISION,\
-            name TEXT NOT NULL,\
-            name_cn TEXT NOT NULL,\
-            air_date TEXT,\
-            payload JSONB NOT NULL,\
-            synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\
+        "CREATE TABLE IF NOT EXISTS bangumi_episodes ( \
+            id BIGINT PRIMARY KEY, \
+            subject_id BIGINT NOT NULL REFERENCES bangumi_subjects(id) ON DELETE CASCADE, \
+            episode_type INTEGER NOT NULL, \
+            sort DOUBLE PRECISION NOT NULL, \
+            ep DOUBLE PRECISION, \
+            name TEXT NOT NULL, \
+            name_cn TEXT NOT NULL, \
+            air_date TEXT, \
+            payload JSONB NOT NULL, \
+            synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW() \
         )",
     )
     .execute(db)
     .await?;
 
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS match_candidates (\
-            media_id TEXT NOT NULL REFERENCES media_files(id) ON DELETE CASCADE,\
-            subject_id BIGINT NOT NULL REFERENCES bangumi_subjects(id) ON DELETE CASCADE,\
-            confidence DOUBLE PRECISION NOT NULL,\
-            reason TEXT NOT NULL,\
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
-            PRIMARY KEY (media_id, subject_id)\
+        "CREATE TABLE IF NOT EXISTS match_candidates ( \
+            media_id TEXT NOT NULL REFERENCES media_files(id) ON DELETE CASCADE, \
+            subject_id BIGINT NOT NULL REFERENCES bangumi_subjects(id) ON DELETE CASCADE, \
+            confidence DOUBLE PRECISION NOT NULL, \
+            reason TEXT NOT NULL, \
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
+            PRIMARY KEY (media_id, subject_id) \
         )",
     )
     .execute(db)
     .await?;
 
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS media_matches (\
-            media_id TEXT PRIMARY KEY REFERENCES media_files(id) ON DELETE CASCADE,\
-            subject_id BIGINT NOT NULL REFERENCES bangumi_subjects(id) ON DELETE CASCADE,\
-            episode_id BIGINT REFERENCES bangumi_episodes(id) ON DELETE SET NULL,\
-            method TEXT NOT NULL,\
-            confidence DOUBLE PRECISION,\
-            reason TEXT,\
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\
+        "CREATE TABLE IF NOT EXISTS media_matches ( \
+            media_id TEXT PRIMARY KEY REFERENCES media_files(id) ON DELETE CASCADE, \
+            subject_id BIGINT NOT NULL REFERENCES bangumi_subjects(id) ON DELETE CASCADE, \
+            episode_id BIGINT REFERENCES bangumi_episodes(id) ON DELETE SET NULL, \
+            method TEXT NOT NULL, \
+            confidence DOUBLE PRECISION, \
+            reason TEXT, \
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW() \
         )",
     )
     .execute(db)
     .await?;
 
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS job_queue (\
-            id BIGSERIAL PRIMARY KEY,\
-            job_type TEXT NOT NULL,\
-            status TEXT NOT NULL,\
-            payload JSONB NOT NULL,\
-            attempts INTEGER NOT NULL DEFAULT 0,\
-            max_attempts INTEGER NOT NULL DEFAULT 3,\
-            scheduled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
-            locked_at TIMESTAMPTZ,\
-            locked_by TEXT,\
-            dedup_key TEXT,\
-            result JSONB,\
-            last_error TEXT,\
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\
+        "CREATE TABLE IF NOT EXISTS job_queue ( \
+            id BIGSERIAL PRIMARY KEY, \
+            job_type TEXT NOT NULL, \
+            status TEXT NOT NULL, \
+            payload JSONB NOT NULL, \
+            attempts INTEGER NOT NULL DEFAULT 0, \
+            max_attempts INTEGER NOT NULL DEFAULT 3, \
+            scheduled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
+            locked_at TIMESTAMPTZ, \
+            locked_by TEXT, \
+            dedup_key TEXT, \
+            result JSONB, \
+            last_error TEXT, \
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW() \
         )",
     )
     .execute(db)
@@ -278,8 +278,8 @@ pub async fn init_library(db: &PgPool) -> Result<(), LibraryError> {
     .await?;
 
     sqlx::query(
-        "CREATE UNIQUE INDEX IF NOT EXISTS job_queue_dedup_active\
-         ON job_queue (job_type, dedup_key)\
+        "CREATE UNIQUE INDEX IF NOT EXISTS job_queue_dedup_active \
+         ON job_queue (job_type, dedup_key) \
          WHERE status IN ('queued', 'running', 'retry')",
     )
     .execute(db)
@@ -494,7 +494,7 @@ pub async fn clear_match(db: &PgPool, media_id: &str) -> Result<(), LibraryError
 
 pub async fn get_match(db: &PgPool, media_id: &str) -> Result<Option<MediaMatch>, LibraryError> {
     let match_row = sqlx::query_as::<_, MediaMatchRow>(
-        "SELECT media_id, subject_id, episode_id, method, confidence, reason\
+        "SELECT media_id, subject_id, episode_id, method, confidence, reason \
          FROM media_matches WHERE media_id = $1",
     )
     .bind(media_id)
@@ -516,10 +516,10 @@ pub async fn get_candidates(
     media_id: &str,
 ) -> Result<Vec<MatchCandidate>, LibraryError> {
     let rows = sqlx::query_as::<_, MatchCandidateRow>(
-        "SELECT c.subject_id, c.confidence, c.reason, s.name, s.name_cn\
-         FROM match_candidates c\
-         JOIN bangumi_subjects s ON s.id = c.subject_id\
-         WHERE c.media_id = $1\
+        "SELECT c.subject_id, c.confidence, c.reason, s.name, s.name_cn \
+         FROM match_candidates c \
+         JOIN bangumi_subjects s ON s.id = c.subject_id \
+         WHERE c.media_id = $1 \
          ORDER BY c.confidence DESC",
     )
     .bind(media_id)
@@ -590,10 +590,10 @@ pub async fn enqueue_job(
 
     if let Some(key) = dedup_key {
         let row = sqlx::query_as::<_, (i64,)>(
-            "INSERT INTO job_queue (job_type, status, payload, max_attempts, dedup_key)\
-             VALUES ($1, 'queued', $2, $3, $4)\
-             ON CONFLICT (job_type, dedup_key) WHERE status IN ('queued', 'running', 'retry')\
-             DO NOTHING\
+            "INSERT INTO job_queue (job_type, status, payload, max_attempts, dedup_key) \
+             VALUES ($1, 'queued', $2, $3, $4) \
+             ON CONFLICT (job_type, dedup_key) WHERE status IN ('queued', 'running', 'retry') \
+             DO NOTHING \
              RETURNING id",
         )
         .bind(job_type)
@@ -608,8 +608,8 @@ pub async fn enqueue_job(
         }
 
         if let Some(existing) = sqlx::query_as::<_, (i64,)>(
-            "SELECT id FROM job_queue\
-             WHERE job_type = $1 AND dedup_key = $2 AND status IN ('queued', 'running', 'retry')\
+            "SELECT id FROM job_queue \
+             WHERE job_type = $1 AND dedup_key = $2 AND status IN ('queued', 'running', 'retry') \
              ORDER BY id DESC LIMIT 1",
         )
         .bind(job_type)
@@ -622,8 +622,8 @@ pub async fn enqueue_job(
     }
 
     let row = sqlx::query_as::<_, (i64,)>(
-        "INSERT INTO job_queue (job_type, status, payload, max_attempts)\
-         VALUES ($1, 'queued', $2, $3)\
+        "INSERT INTO job_queue (job_type, status, payload, max_attempts) \
+         VALUES ($1, 'queued', $2, $3) \
          RETURNING id",
     )
     .bind(job_type)
@@ -642,13 +642,13 @@ pub async fn fetch_next_job(
     let mut tx = db.begin().await?;
 
     let row = sqlx::query_as::<_, (i64, String, Value, i32, i32)>(
-        "SELECT id, job_type, payload, attempts, max_attempts\
-         FROM job_queue\
-         WHERE status IN ('queued', 'retry')\
-           AND scheduled_at <= NOW()\
-           AND attempts < max_attempts\
-         ORDER BY created_at\
-         FOR UPDATE SKIP LOCKED\
+        "SELECT id, job_type, payload, attempts, max_attempts \
+         FROM job_queue \
+         WHERE status IN ('queued', 'retry') \
+           AND scheduled_at <= NOW() \
+           AND attempts < max_attempts \
+         ORDER BY created_at \
+         FOR UPDATE SKIP LOCKED \
          LIMIT 1",
     )
     .fetch_optional(&mut *tx)
@@ -661,9 +661,9 @@ pub async fn fetch_next_job(
 
     let attempts = row.3 + 1;
     sqlx::query(
-        "UPDATE job_queue\
-         SET status = 'running', locked_at = NOW(), locked_by = $2,\
-             attempts = $3, updated_at = NOW()\
+        "UPDATE job_queue \
+         SET status = 'running', locked_at = NOW(), locked_by = $2, \
+             attempts = $3, updated_at = NOW() \
          WHERE id = $1",
     )
     .bind(row.0)
@@ -690,8 +690,8 @@ pub async fn complete_job(
 ) -> Result<(), LibraryError> {
     let result = result.map(sqlx::types::Json);
     sqlx::query(
-        "UPDATE job_queue\
-         SET status = 'done', result = $2, updated_at = NOW(), locked_at = NULL, locked_by = NULL\
+        "UPDATE job_queue \
+         SET status = 'done', result = $2, updated_at = NOW(), locked_at = NULL, locked_by = NULL \
          WHERE id = $1",
     )
     .bind(job_id)
@@ -710,8 +710,8 @@ pub async fn fail_job(
 ) -> Result<(), LibraryError> {
     if attempts >= max_attempts {
         sqlx::query(
-            "UPDATE job_queue\
-             SET status = 'failed', last_error = $2, updated_at = NOW(), locked_at = NULL, locked_by = NULL\
+            "UPDATE job_queue \
+             SET status = 'failed', last_error = $2, updated_at = NOW(), locked_at = NULL, locked_by = NULL \
              WHERE id = $1",
         )
         .bind(job_id)
@@ -723,10 +723,10 @@ pub async fn fail_job(
 
     let delay_secs = 30 * (attempts as i64);
     sqlx::query(
-        "UPDATE job_queue\
-         SET status = 'retry', last_error = $2,\
-             scheduled_at = NOW() + make_interval(secs => $3),\
-             updated_at = NOW(), locked_at = NULL, locked_by = NULL\
+        "UPDATE job_queue \
+         SET status = 'retry', last_error = $2, \
+             scheduled_at = NOW() + make_interval(secs => $3), \
+             updated_at = NOW(), locked_at = NULL, locked_by = NULL \
          WHERE id = $1",
     )
     .bind(job_id)
@@ -740,7 +740,7 @@ pub async fn fail_job(
 
 pub async fn get_job_status(db: &PgPool, job_id: i64) -> Result<Option<JobStatus>, LibraryError> {
     let row = sqlx::query_as::<_, (i64, String, String, i32, i32, Option<Value>, Option<String>)>(
-        "SELECT id, job_type, status, attempts, max_attempts, result, last_error\
+        "SELECT id, job_type, status, attempts, max_attempts, result, last_error \
          FROM job_queue WHERE id = $1",
     )
     .bind(job_id)
@@ -763,8 +763,8 @@ pub async fn cleanup_jobs(db: &PgPool, retention_hours: u64) -> Result<u64, Libr
         return Ok(0);
     }
     let result = sqlx::query(
-        "DELETE FROM job_queue\
-         WHERE status IN ('done', 'failed')\
+        "DELETE FROM job_queue \
+         WHERE status IN ('done', 'failed') \
            AND updated_at < NOW() - make_interval(hours => $1)",
     )
     .bind(retention_hours as i64)
@@ -781,12 +781,12 @@ pub async fn requeue_stuck_jobs(
         return Ok((0, 0));
     }
     let failed = sqlx::query(
-        "UPDATE job_queue\
-         SET status = 'failed', last_error = 'timeout',\
-             updated_at = NOW(), locked_at = NULL, locked_by = NULL\
-         WHERE status = 'running'\
-           AND locked_at IS NOT NULL\
-           AND locked_at < NOW() - make_interval(secs => $1)\
+        "UPDATE job_queue \
+         SET status = 'failed', last_error = 'timeout', \
+             updated_at = NOW(), locked_at = NULL, locked_by = NULL \
+         WHERE status = 'running' \
+           AND locked_at IS NOT NULL \
+           AND locked_at < NOW() - make_interval(secs => $1) \
            AND attempts >= max_attempts",
     )
     .bind(timeout_secs as i64)
@@ -795,12 +795,12 @@ pub async fn requeue_stuck_jobs(
     .rows_affected();
 
     let retried = sqlx::query(
-        "UPDATE job_queue\
-         SET status = 'retry', last_error = 'timeout',\
-             scheduled_at = NOW(), updated_at = NOW(), locked_at = NULL, locked_by = NULL\
-         WHERE status = 'running'\
-           AND locked_at IS NOT NULL\
-           AND locked_at < NOW() - make_interval(secs => $1)\
+        "UPDATE job_queue \
+         SET status = 'retry', last_error = 'timeout', \
+             scheduled_at = NOW(), updated_at = NOW(), locked_at = NULL, locked_by = NULL \
+         WHERE status = 'running' \
+           AND locked_at IS NOT NULL \
+           AND locked_at < NOW() - make_interval(secs => $1) \
            AND attempts < max_attempts",
     )
     .bind(timeout_secs as i64)
@@ -913,14 +913,14 @@ async fn upsert_media_file(
     let path = path_to_string(&entry.path)?;
 
     sqlx::query(
-        "INSERT INTO media_files (id, path, filename, size, modified_at, last_seen_token)\
-        VALUES ($1, $2, $3, $4, $5, $6)\
-        ON CONFLICT (id) DO UPDATE SET\
-            path = EXCLUDED.path,\
-            filename = EXCLUDED.filename,\
-            size = EXCLUDED.size,\
-            modified_at = EXCLUDED.modified_at,\
-            last_seen_token = EXCLUDED.last_seen_token,\
+        "INSERT INTO media_files (id, path, filename, size, modified_at, last_seen_token) \
+        VALUES ($1, $2, $3, $4, $5, $6) \
+        ON CONFLICT (id) DO UPDATE SET \
+            path = EXCLUDED.path, \
+            filename = EXCLUDED.filename, \
+            size = EXCLUDED.size, \
+            modified_at = EXCLUDED.modified_at, \
+            last_seen_token = EXCLUDED.last_seen_token, \
             updated_at = NOW()",
     )
     .bind(&entry.id)
@@ -943,28 +943,28 @@ async fn upsert_parse(
     let raw_elements = sqlx::types::Json(&parsed.raw_elements);
 
     sqlx::query(
-        "INSERT INTO media_parses (\
-            media_id, parse_ok, title, episode, episode_alt, episode_title, season, year,\
-            release_group, resolution, source, audio_term, video_term, subtitles, language, raw_elements\
-        ) VALUES (\
-            $1, $2, $3, $4, $5, $6, $7, $8,\
-            $9, $10, $11, $12, $13, $14, $15, $16\
-        ) ON CONFLICT (media_id) DO UPDATE SET\
-            parse_ok = EXCLUDED.parse_ok,\
-            title = EXCLUDED.title,\
-            episode = EXCLUDED.episode,\
-            episode_alt = EXCLUDED.episode_alt,\
-            episode_title = EXCLUDED.episode_title,\
-            season = EXCLUDED.season,\
-            year = EXCLUDED.year,\
-            release_group = EXCLUDED.release_group,\
-            resolution = EXCLUDED.resolution,\
-            source = EXCLUDED.source,\
-            audio_term = EXCLUDED.audio_term,\
-            video_term = EXCLUDED.video_term,\
-            subtitles = EXCLUDED.subtitles,\
-            language = EXCLUDED.language,\
-            raw_elements = EXCLUDED.raw_elements,\
+        "INSERT INTO media_parses ( \
+            media_id, parse_ok, title, episode, episode_alt, episode_title, season, year, \
+            release_group, resolution, source, audio_term, video_term, subtitles, language, raw_elements \
+        ) VALUES ( \
+            $1, $2, $3, $4, $5, $6, $7, $8, \
+            $9, $10, $11, $12, $13, $14, $15, $16 \
+        ) ON CONFLICT (media_id) DO UPDATE SET \
+            parse_ok = EXCLUDED.parse_ok, \
+            title = EXCLUDED.title, \
+            episode = EXCLUDED.episode, \
+            episode_alt = EXCLUDED.episode_alt, \
+            episode_title = EXCLUDED.episode_title, \
+            season = EXCLUDED.season, \
+            year = EXCLUDED.year, \
+            release_group = EXCLUDED.release_group, \
+            resolution = EXCLUDED.resolution, \
+            source = EXCLUDED.source, \
+            audio_term = EXCLUDED.audio_term, \
+            video_term = EXCLUDED.video_term, \
+            subtitles = EXCLUDED.subtitles, \
+            language = EXCLUDED.language, \
+            raw_elements = EXCLUDED.raw_elements, \
             parsed_at = NOW()",
     )
     .bind(media_id)
@@ -1033,20 +1033,20 @@ async fn upsert_subject(
     let payload = sqlx::types::Json(subject);
 
     sqlx::query(
-        "INSERT INTO bangumi_subjects (\
-            id, subject_type, name, name_cn, summary, air_date, total_episodes, images, payload\
-        ) VALUES (\
-            $1, $2, $3, $4, $5, $6, $7, $8, $9\
-        ) ON CONFLICT (id) DO UPDATE SET\
-            subject_type = EXCLUDED.subject_type,\
-            name = EXCLUDED.name,\
-            name_cn = EXCLUDED.name_cn,\
-            summary = EXCLUDED.summary,\
-            air_date = EXCLUDED.air_date,\
-            total_episodes = EXCLUDED.total_episodes,\
-            images = EXCLUDED.images,\
-            payload = EXCLUDED.payload,\
-            synced_at = NOW(),\
+        "INSERT INTO bangumi_subjects ( \
+            id, subject_type, name, name_cn, summary, air_date, total_episodes, images, payload \
+        ) VALUES ( \
+            $1, $2, $3, $4, $5, $6, $7, $8, $9 \
+        ) ON CONFLICT (id) DO UPDATE SET \
+            subject_type = EXCLUDED.subject_type, \
+            name = EXCLUDED.name, \
+            name_cn = EXCLUDED.name_cn, \
+            summary = EXCLUDED.summary, \
+            air_date = EXCLUDED.air_date, \
+            total_episodes = EXCLUDED.total_episodes, \
+            images = EXCLUDED.images, \
+            payload = EXCLUDED.payload, \
+            synced_at = NOW(), \
             updated_at = NOW()",
     )
     .bind(subject.id)
@@ -1072,20 +1072,20 @@ async fn upsert_episode(
     let payload = sqlx::types::Json(episode);
 
     sqlx::query(
-        "INSERT INTO bangumi_episodes (\
-            id, subject_id, episode_type, sort, ep, name, name_cn, air_date, payload\
-        ) VALUES (\
-            $1, $2, $3, $4, $5, $6, $7, $8, $9\
-        ) ON CONFLICT (id) DO UPDATE SET\
-            subject_id = EXCLUDED.subject_id,\
-            episode_type = EXCLUDED.episode_type,\
-            sort = EXCLUDED.sort,\
-            ep = EXCLUDED.ep,\
-            name = EXCLUDED.name,\
-            name_cn = EXCLUDED.name_cn,\
-            air_date = EXCLUDED.air_date,\
-            payload = EXCLUDED.payload,\
-            synced_at = NOW(),\
+        "INSERT INTO bangumi_episodes ( \
+            id, subject_id, episode_type, sort, ep, name, name_cn, air_date, payload \
+        ) VALUES ( \
+            $1, $2, $3, $4, $5, $6, $7, $8, $9 \
+        ) ON CONFLICT (id) DO UPDATE SET \
+            subject_id = EXCLUDED.subject_id, \
+            episode_type = EXCLUDED.episode_type, \
+            sort = EXCLUDED.sort, \
+            ep = EXCLUDED.ep, \
+            name = EXCLUDED.name, \
+            name_cn = EXCLUDED.name_cn, \
+            air_date = EXCLUDED.air_date, \
+            payload = EXCLUDED.payload, \
+            synced_at = NOW(), \
             updated_at = NOW()",
     )
     .bind(episode.id)
@@ -1114,20 +1114,20 @@ fn normalize_optional(value: &Option<String>) -> Option<&str> {
 async fn upsert_subject_cached(db: &PgPool, subject: &Subject) -> Result<(), LibraryError> {
     let payload = sqlx::types::Json(subject);
     sqlx::query(
-        "INSERT INTO bangumi_subjects (\
-            id, subject_type, name, name_cn, summary, air_date, total_episodes, images, payload\
-        ) VALUES (\
-            $1, $2, $3, $4, $5, $6, $7, $8, $9\
-        ) ON CONFLICT (id) DO UPDATE SET\
-            subject_type = EXCLUDED.subject_type,\
-            name = EXCLUDED.name,\
-            name_cn = EXCLUDED.name_cn,\
-            summary = EXCLUDED.summary,\
-            air_date = EXCLUDED.air_date,\
-            total_episodes = EXCLUDED.total_episodes,\
-            images = EXCLUDED.images,\
-            payload = EXCLUDED.payload,\
-            synced_at = NOW(),\
+        "INSERT INTO bangumi_subjects ( \
+            id, subject_type, name, name_cn, summary, air_date, total_episodes, images, payload \
+        ) VALUES ( \
+            $1, $2, $3, $4, $5, $6, $7, $8, $9 \
+        ) ON CONFLICT (id) DO UPDATE SET \
+            subject_type = EXCLUDED.subject_type, \
+            name = EXCLUDED.name, \
+            name_cn = EXCLUDED.name_cn, \
+            summary = EXCLUDED.summary, \
+            air_date = EXCLUDED.air_date, \
+            total_episodes = EXCLUDED.total_episodes, \
+            images = EXCLUDED.images, \
+            payload = EXCLUDED.payload, \
+            synced_at = NOW(), \
             updated_at = NOW()",
     )
     .bind(subject.id)
@@ -1153,11 +1153,11 @@ async fn upsert_candidate(
     reason: &str,
 ) -> Result<(), LibraryError> {
     sqlx::query(
-        "INSERT INTO match_candidates (media_id, subject_id, confidence, reason)\
-        VALUES ($1, $2, $3, $4)\
-        ON CONFLICT (media_id, subject_id) DO UPDATE SET\
-            confidence = EXCLUDED.confidence,\
-            reason = EXCLUDED.reason,\
+        "INSERT INTO match_candidates (media_id, subject_id, confidence, reason) \
+        VALUES ($1, $2, $3, $4) \
+        ON CONFLICT (media_id, subject_id) DO UPDATE SET \
+            confidence = EXCLUDED.confidence, \
+            reason = EXCLUDED.reason, \
             created_at = NOW()",
     )
     .bind(media_id)
@@ -1207,14 +1207,14 @@ async fn upsert_media_match(
     reason: Option<String>,
 ) -> Result<(), LibraryError> {
     sqlx::query(
-        "INSERT INTO media_matches (media_id, subject_id, episode_id, method, confidence, reason)\
-        VALUES ($1, $2, $3, $4, $5, $6)\
-        ON CONFLICT (media_id) DO UPDATE SET\
-            subject_id = EXCLUDED.subject_id,\
-            episode_id = EXCLUDED.episode_id,\
-            method = EXCLUDED.method,\
-            confidence = EXCLUDED.confidence,\
-            reason = EXCLUDED.reason,\
+        "INSERT INTO media_matches (media_id, subject_id, episode_id, method, confidence, reason) \
+        VALUES ($1, $2, $3, $4, $5, $6) \
+        ON CONFLICT (media_id) DO UPDATE SET \
+            subject_id = EXCLUDED.subject_id, \
+            episode_id = EXCLUDED.episode_id, \
+            method = EXCLUDED.method, \
+            confidence = EXCLUDED.confidence, \
+            reason = EXCLUDED.reason, \
             updated_at = NOW()",
     )
     .bind(media_id)
@@ -1296,7 +1296,7 @@ async fn load_cached_episodes(
     subject_id: i64,
 ) -> Result<Vec<Episode>, LibraryError> {
     let rows = sqlx::query_as::<_, EpisodeRow>(
-        "SELECT id, episode_type, sort, ep, name, name_cn, air_date\
+        "SELECT id, episode_type, sort, ep, name, name_cn, air_date \
          FROM bangumi_episodes WHERE subject_id = $1",
     )
     .bind(subject_id)
