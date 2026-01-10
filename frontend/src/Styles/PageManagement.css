@@ -1,0 +1,162 @@
+.management-layout {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+}
+
+.management-search {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.management-table-wrap {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.management-table-wrap tr {
+  cursor: pointer;
+}
+
+.management-table-wrap td:first-child {
+  word-break: break-word;
+}
+
+.management-empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 12px 0;
+}
+
+.management-detail {
+  display: grid;
+  gap: 18px;
+}
+
+.management-detail-block h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.management-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.management-row span:last-child {
+  color: var(--ink);
+  text-align: right;
+}
+
+.management-label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.management-candidate-tools {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+}
+
+.management-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.management-help {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.management-help.error {
+  color: #f7b7b7;
+}
+
+.management-error {
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: linear-gradient(145deg, rgba(255, 94, 94, 0.28), rgba(140, 20, 20, 0.4));
+  color: #fbe9ea;
+}
+
+.management-collection {
+  display: grid;
+  gap: 14px;
+}
+
+.management-collection-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.management-collection-list {
+  display: grid;
+  gap: 14px;
+}
+
+.management-collection-item {
+  gap: 12px;
+}
+
+.management-collection-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.management-status {
+  font-size: 11px;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong);
+  background: rgba(255, 255, 255, 0.08);
+  margin-left: 8px;
+}
+
+.status-approved {
+  color: #b7f7d0;
+}
+
+.status-rejected {
+  color: #f7b7b7;
+}
+
+.status-pending {
+  color: #f7e9b7;
+}
+
+.management-collection-body {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+
+@media (max-width: 1100px) {
+  .management-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .management-candidate-tools {
+    grid-template-columns: 1fr;
+  }
+}
