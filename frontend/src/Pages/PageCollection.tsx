@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import "../Styles/theme.css";
+import AppShell from "../Components/AppShell";
 import "../Styles/PageCollection.css";
-import FooterNote from "./Components/FooterNote";
 import { apiFetch, apiFetchEmpty } from "../api";
 import { useSession } from "../session";
 
@@ -196,43 +195,41 @@ export default function PageCollection() {
   }
 
   return (
-    <div className="collection-shell">
-      <header className="collection-header">
+    <AppShell title="Collection" subtitle="Submit magnets or torrents for review.">
+      <div className="collection-toolbar app-card">
         <div>
-          <p className="collection-kicker">Collector</p>
-          <h1 className="collection-title">Resource intake</h1>
-          <p className="collection-subtitle">Submit magnets or torrents for review.</p>
+          <h2 className="app-card-title">Queue</h2>
+          <p className="app-card-subtitle">Pending items need admin approval.</p>
         </div>
         <div className="collection-actions">
           <select
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value)}
-            className="collection-select"
+            className="app-select"
           >
             <option value="pending">Pending</option>
             <option value="approved">Approved</option>
             <option value="rejected">Rejected</option>
             <option value="all">All</option>
           </select>
-          <button
-            type="button"
-            className="collection-btn"
-            onClick={loadItems}
-            disabled={loading}
-          >
+          <button type="button" className="app-btn" onClick={loadItems} disabled={loading}>
             {loading ? "Refreshing..." : "Refresh"}
           </button>
         </div>
-      </header>
+      </div>
 
       {error ? <div className="collection-error">{error}</div> : null}
 
       <section className="collection-grid">
-        <form className="collection-card" onSubmit={submitMagnet}>
-          <h2>Magnet</h2>
-          <label>
+        <form className="app-card collection-form" onSubmit={submitMagnet}>
+          <div className="app-card-header">
+            <h2 className="app-card-title">Magnet</h2>
+            <span className="app-pill">link</span>
+          </div>
+          <label className="collection-label">
             <span>Magnet link</span>
             <textarea
+              className="app-textarea"
               value={magnet}
               onChange={(event) => setMagnet(event.target.value)}
               placeholder="magnet:?xt=..."
@@ -240,9 +237,10 @@ export default function PageCollection() {
               disabled={submitting}
             />
           </label>
-          <label>
+          <label className="collection-label">
             <span>Note (optional)</span>
             <input
+              className="app-input"
               type="text"
               value={magnetNote}
               onChange={(event) => setMagnetNote(event.target.value)}
@@ -250,25 +248,30 @@ export default function PageCollection() {
               disabled={submitting}
             />
           </label>
-          <button className="collection-btn solid" type="submit" disabled={submitting}>
+          <button className="app-btn primary" type="submit" disabled={submitting}>
             Submit magnet
           </button>
         </form>
 
-        <form className="collection-card" onSubmit={submitTorrent}>
-          <h2>Torrent</h2>
-          <label>
+        <form className="app-card collection-form" onSubmit={submitTorrent}>
+          <div className="app-card-header">
+            <h2 className="app-card-title">Torrent</h2>
+            <span className="app-pill">file</span>
+          </div>
+          <label className="collection-label">
             <span>Torrent file</span>
             <input
+              className="app-input"
               type="file"
               accept=".torrent"
               onChange={(event) => setTorrentFile(event.target.files?.[0] ?? null)}
               disabled={submitting}
             />
           </label>
-          <label>
+          <label className="collection-label">
             <span>Note (optional)</span>
             <input
+              className="app-input"
               type="text"
               value={torrentNote}
               onChange={(event) => setTorrentNote(event.target.value)}
@@ -276,18 +279,20 @@ export default function PageCollection() {
               disabled={submitting}
             />
           </label>
-          <button className="collection-btn solid" type="submit" disabled={submitting}>
+          <button className="app-btn primary" type="submit" disabled={submitting}>
             Submit torrent
           </button>
         </form>
       </section>
 
       <section className="collection-list">
-        {items.length === 0 && !loading ? (
-          <div className="collection-empty">No submissions yet.</div>
+        {items.length === 0 ? (
+          <div className="collection-empty">
+            {loading ? "Loading submissions..." : "No submissions yet."}
+          </div>
         ) : null}
         {items.map((item) => (
-          <div key={item.id} className="collection-item">
+          <div key={item.id} className="app-card collection-item">
             <div className="collection-item-header">
               <div>
                 <strong>#{item.id}</strong>
@@ -295,7 +300,7 @@ export default function PageCollection() {
                   {item.status}
                 </span>
               </div>
-              <span className="collection-kind">{item.kind}</span>
+              <span className="app-pill">{item.kind}</span>
             </div>
             <div className="collection-item-body">
               <div className="collection-row">
@@ -326,7 +331,7 @@ export default function PageCollection() {
                     <>
                       <button
                         type="button"
-                        className="collection-btn"
+                        className="app-btn"
                         onClick={() => approveItem(item.id)}
                         disabled={submitting}
                       >
@@ -334,7 +339,7 @@ export default function PageCollection() {
                       </button>
                       <button
                         type="button"
-                        className="collection-btn ghost"
+                        className="app-btn ghost"
                         onClick={() => rejectItem(item.id)}
                         disabled={submitting}
                       >
@@ -344,7 +349,7 @@ export default function PageCollection() {
                   ) : null}
                   <button
                     type="button"
-                    className="collection-btn ghost"
+                    className="app-btn ghost"
                     onClick={() => deleteItem(item.id)}
                     disabled={submitting}
                   >
@@ -354,7 +359,7 @@ export default function PageCollection() {
               ) : isAdmin ? (
                 <button
                   type="button"
-                  className="collection-btn ghost"
+                  className="app-btn ghost"
                   onClick={() => deleteItem(item.id)}
                   disabled={submitting}
                 >
@@ -365,8 +370,6 @@ export default function PageCollection() {
           </div>
         ))}
       </section>
-
-      <FooterNote className="collection-footer" />
-    </div>
+    </AppShell>
   );
 }

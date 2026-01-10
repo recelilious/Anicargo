@@ -16,10 +16,10 @@
   align-items: center;
   gap: 14px;
   padding: 36px 44px;
-  border-radius: 18px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border);
-  background: linear-gradient(145deg, rgba(60, 32, 63, 0.26), rgba(44, 36, 51, 0.88));
-  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.32);
+  background: var(--panel-bg);
+  box-shadow: var(--shadow-strong);
   width: min(520px, 92vw);
   min-height: 420px;
   text-align: center;
@@ -69,7 +69,7 @@
 .login-form input[type="text"],
 .login-form input[type="password"] {
   padding: 12px;
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border-strong);
   background: rgba(255, 255, 255, 0.08);
   color: var(--ink);
@@ -112,7 +112,7 @@
   background: linear-gradient(145deg, rgba(255, 94, 94, 0.28), rgba(140, 20, 20, 0.4));
   border: 1px solid rgba(255, 255, 255, 0.2);
   color: #fbe9ea;
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   padding: 12px 14px;
   text-align: center;
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32);
@@ -192,7 +192,7 @@
 .login-btn {
   margin-top: 6px;
   padding: 14px;
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border-strong);
   background: var(--solid-bg);
   color: #f7f3fa;

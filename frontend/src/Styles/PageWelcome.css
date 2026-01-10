@@ -15,10 +15,10 @@
   justify-content: center;
   gap: 16px;
   padding: 36px 44px;
-  border-radius: 18px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border);
-  background: linear-gradient(145deg, rgba(60, 32, 63, 0.26), rgba(44, 36, 51, 0.88));
-  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.32);
+  background: var(--panel-bg);
+  box-shadow: var(--shadow-strong);
   position: relative;
   width: min(520px, 92vw);
   min-height: 360px;
@@ -48,7 +48,7 @@
 
 .welcome-btn {
   padding: 14px 22px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   background: var(--ghost-bg);
   color: var(--ink);

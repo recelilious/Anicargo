@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import "../Styles/theme.css";
+import AppShell from "../Components/AppShell";
 import "../Styles/PageAdmin.css";
-import FooterNote from "./Components/FooterNote";
 import { apiFetch } from "../api";
 import { useSession } from "../session";
 
@@ -136,30 +135,20 @@ export default function PageAdmin() {
   const qbittorrent = metrics?.qbittorrent ?? undefined;
 
   return (
-    <div className="admin-shell">
-      <header className="admin-header">
-        <div>
-          <p className="admin-kicker">Admin</p>
-          <h1 className="admin-title">System status</h1>
-          <p className="admin-subtitle">Last updated: {lastUpdatedLabel}</p>
-        </div>
-        <div className="admin-actions">
-          <button
-            type="button"
-            className="admin-btn"
-            onClick={loadMetrics}
-            disabled={loading}
-          >
-            {loading ? "Refreshing..." : "Refresh"}
-          </button>
-        </div>
-      </header>
-
+    <AppShell
+      title="Admin"
+      subtitle={`Last updated: ${lastUpdatedLabel}`}
+      actions={(
+        <button type="button" className="app-btn" onClick={loadMetrics} disabled={loading}>
+          {loading ? "Refreshing..." : "Refresh"}
+        </button>
+      )}
+    >
       {error ? <div className="admin-error">{error}</div> : null}
 
       <section className="admin-grid">
-        <div className="admin-card">
-          <h2>Library</h2>
+        <div className="app-card">
+          <h2 className="app-card-title">Library</h2>
           <div className="admin-metric">
             <span>Total media</span>
             <strong>{metrics ? metrics.media_count : "--"}</strong>
@@ -174,8 +163,8 @@ export default function PageAdmin() {
           </div>
         </div>
 
-        <div className="admin-card">
-          <h2>Requests</h2>
+        <div className="app-card">
+          <h2 className="app-card-title">Requests</h2>
           <div className="admin-metric">
             <span>In-flight</span>
             <strong>{metrics ? metrics.in_flight_requests : "--"}</strong>
@@ -190,8 +179,8 @@ export default function PageAdmin() {
           </div>
         </div>
 
-        <div className="admin-card">
-          <h2>Jobs</h2>
+        <div className="app-card">
+          <h2 className="app-card-title">Jobs</h2>
           <div className="admin-metric">
             <span>Queued</span>
             <strong>{jobStats ? jobStats.queued : "--"}</strong>
@@ -210,8 +199,8 @@ export default function PageAdmin() {
           </div>
         </div>
 
-        <div className="admin-card">
-          <h2>Memory</h2>
+        <div className="app-card">
+          <h2 className="app-card-title">Memory</h2>
           <div className="admin-metric">
             <span>System used</span>
             <strong>{system ? formatBytes(system.used_memory_bytes) : "--"}</strong>
@@ -228,8 +217,8 @@ export default function PageAdmin() {
       </section>
 
       <section className="admin-grid admin-grid-wide">
-        <div className="admin-card">
-          <h2>Storage</h2>
+        <div className="app-card">
+          <h2 className="app-card-title">Storage</h2>
           <div className="admin-metric">
             <span>Media dir</span>
             <strong>
@@ -271,8 +260,8 @@ export default function PageAdmin() {
           </div>
         </div>
 
-        <div className="admin-card">
-          <h2>Network</h2>
+        <div className="app-card">
+          <h2 className="app-card-title">Network</h2>
           <div className="admin-metric">
             <span>Total RX / TX</span>
             <strong>
@@ -309,8 +298,8 @@ export default function PageAdmin() {
       </section>
 
       <section className="admin-grid">
-        <div className="admin-card">
-          <h2>qBittorrent</h2>
+        <div className="app-card">
+          <h2 className="app-card-title">qBittorrent</h2>
           {qbittorrent ? (
             <>
               <div className="admin-metric">
@@ -353,8 +342,6 @@ export default function PageAdmin() {
           )}
         </div>
       </section>
-
-      <FooterNote className="admin-footer" />
-    </div>
+    </AppShell>
   );
 }
