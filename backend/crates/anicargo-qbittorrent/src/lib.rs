@@ -1,10 +1,13 @@
 use reqwest::header::HeaderValue;
+use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
 use std::fmt;
+use std::path::Path;
 
 const LOGIN_PATH: &str = "/api/v2/auth/login";
 const ADD_PATH: &str = "/api/v2/torrents/add";
 const INFO_PATH: &str = "/api/v2/torrents/info";
+const TRANSFER_PATH: &str = "/api/v2/transfer/info";
 
 #[derive(Debug)]
 pub enum QbittorrentError {
@@ -12,6 +15,7 @@ pub enum QbittorrentError {
     InvalidHeader(String),
     AuthFailed(String),
     InvalidInput(String),
+    Io(std::io::Error),
 }
 
 impl fmt::Display for QbittorrentError {
@@ -21,6 +25,7 @@ impl fmt::Display for QbittorrentError {
             QbittorrentError::InvalidHeader(message) => write!(f, "invalid header: {}", message),
             QbittorrentError::AuthFailed(message) => write!(f, "auth failed: {}", message),
             QbittorrentError::InvalidInput(message) => write!(f, "invalid input: {}", message),
+            QbittorrentError::Io(err) => write!(f, "io error: {}", err),
         }
     }
 }
@@ -30,6 +35,12 @@ impl std::error::Error for QbittorrentError {}
 impl From<reqwest::Error> for QbittorrentError {
     fn from(err: reqwest::Error) -> Self {
         QbittorrentError::Http(err)
+    }
+}
+
+impl From<std::io::Error> for QbittorrentError {
+    fn from(err: std::io::Error) -> Self {
+        QbittorrentError::Io(err)
     }
 }
 
@@ -96,6 +107,49 @@ impl QbittorrentClient {
         Ok(())
     }
 
+    pub async fn add_torrent_bytes(
+        &self,
+        filename: &str,
+        bytes: Vec<u8>,
+        save_path: Option<&str>,
+    ) -> Result<(), QbittorrentError> {
+        if bytes.is_empty() {
+            return Err(QbittorrentError::InvalidInput(
+                "torrent file is empty".to_string(),
+            ));
+        }
+
+        self.login().await?;
+        let url = format!("{}{}", self.base_url, ADD_PATH);
+        let part = Part::bytes(bytes).file_name(filename.to_string());
+        let mut form = Form::new().part("torrents", part);
+        if let Some(path) = save_path {
+            form = form.text("savepath", path.to_string());
+        }
+
+        let response = self.client.post(url).multipart(form).send().await?;
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() || !body.to_lowercase().contains("ok") {
+            return Err(QbittorrentError::AuthFailed(body));
+        }
+
+        Ok(())
+    }
+
+    pub async fn add_torrent_file(
+        &self,
+        path: &Path,
+        save_path: Option<&str>,
+    ) -> Result<(), QbittorrentError> {
+        let filename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| QbittorrentError::InvalidInput("invalid torrent filename".to_string()))?;
+        let bytes = std::fs::read(path)?;
+        self.add_torrent_bytes(filename, bytes, save_path).await
+    }
+
     pub async fn list_completed(&self) -> Result<Vec<TorrentInfo>, QbittorrentError> {
         self.login().await?;
         let url = format!("{}{}", self.base_url, INFO_PATH);
@@ -108,6 +162,19 @@ impl QbittorrentClient {
             .error_for_status()?;
 
         Ok(response.json::<Vec<TorrentInfo>>().await?)
+    }
+
+    pub async fn transfer_info(&self) -> Result<TransferInfo, QbittorrentError> {
+        self.login().await?;
+        let url = format!("{}{}", self.base_url, TRANSFER_PATH);
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        Ok(response.json::<TransferInfo>().await?)
     }
 
     async fn login(&self) -> Result<(), QbittorrentError> {
@@ -150,6 +217,26 @@ pub struct TorrentInfo {
     pub completion_on: Option<i64>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct TransferInfo {
+    #[serde(default, rename = "dl_info_speed")]
+    pub download_speed_bytes: u64,
+    #[serde(default, rename = "up_info_speed")]
+    pub upload_speed_bytes: u64,
+    #[serde(default, rename = "dl_info_data")]
+    pub download_total_bytes: u64,
+    #[serde(default, rename = "up_info_data")]
+    pub upload_total_bytes: u64,
+    #[serde(default, rename = "dl_rate_limit")]
+    pub download_rate_limit: i64,
+    #[serde(default, rename = "up_rate_limit")]
+    pub upload_rate_limit: i64,
+    #[serde(default)]
+    pub dht_nodes: i64,
+    #[serde(default)]
+    pub connection_status: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,6 +246,17 @@ mod tests {
         let client = QbittorrentClient::new("http://127.0.0.1:8080".to_string(), None, None)
             .expect("client");
         let err = client.add_magnet("  ", None).await.unwrap_err();
+        assert!(matches!(err, QbittorrentError::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    async fn rejects_empty_torrent() {
+        let client = QbittorrentClient::new("http://127.0.0.1:8080".to_string(), None, None)
+            .expect("client");
+        let err = client
+            .add_torrent_bytes("file.torrent", Vec::new(), None)
+            .await
+            .unwrap_err();
         assert!(matches!(err, QbittorrentError::InvalidInput(_)));
     }
 }

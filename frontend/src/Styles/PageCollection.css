@@ -1,0 +1,225 @@
+.collection-shell {
+  min-height: 100vh;
+  padding: 32px 24px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.collection-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.collection-kicker {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.collection-title {
+  margin: 0;
+  font-size: clamp(28px, 4vw, 44px);
+  letter-spacing: 0.06em;
+}
+
+.collection-subtitle {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.collection-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.collection-select {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.collection-btn {
+  padding: 12px 18px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--ghost-bg);
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.collection-btn:hover {
+  transform: translateY(-2px);
+  background: var(--ghost-hover);
+}
+
+.collection-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.collection-btn.solid {
+  background: var(--solid-bg);
+  color: #f7f3fa;
+}
+
+.collection-btn.ghost {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.collection-error {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: linear-gradient(145deg, rgba(255, 94, 94, 0.28), rgba(140, 20, 20, 0.4));
+  color: #fbe9ea;
+}
+
+.collection-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.collection-card {
+  padding: 20px 22px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: linear-gradient(145deg, rgba(60, 32, 63, 0.24), rgba(44, 36, 51, 0.9));
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+  display: grid;
+  gap: 12px;
+}
+
+.collection-card h2 {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.collection-card label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.collection-card input[type="text"],
+.collection-card input[type="file"],
+.collection-card textarea {
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.collection-card textarea {
+  resize: vertical;
+}
+
+.collection-list {
+  display: grid;
+  gap: 14px;
+}
+
+.collection-item {
+  padding: 18px 22px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: rgba(24, 18, 28, 0.6);
+  display: grid;
+  gap: 12px;
+}
+
+.collection-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.collection-item-header strong {
+  margin-right: 8px;
+}
+
+.collection-status {
+  font-size: 11px;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.status-approved {
+  color: #b7f7d0;
+}
+
+.status-rejected {
+  color: #f7b7b7;
+}
+
+.status-pending {
+  color: #f7e9b7;
+}
+
+.collection-kind {
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.collection-item-body {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.collection-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+}
+
+.collection-row span:last-child {
+  color: var(--ink);
+  text-align: right;
+}
+
+.collection-item-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.collection-empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 18px 12px;
+  border-radius: 12px;
+  border: 1px dashed var(--border);
+}
+
+.collection-footer {
+  margin-top: 12px;
+  align-self: center;
+}

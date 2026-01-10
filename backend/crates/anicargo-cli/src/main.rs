@@ -8,6 +8,7 @@ use anicargo_qbittorrent::QbittorrentClient;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 use std::error::Error;
+use std::path::Path;
 use std::process;
 use tracing::info;
 
@@ -169,7 +170,7 @@ async fn cmd_bangumi_sync(
 
 async fn cmd_qbittorrent_add(
     app_config: &AppConfig,
-    magnet: &str,
+    value: &str,
 ) -> Result<(), Box<dyn Error>> {
     let client = QbittorrentClient::new(
         app_config.qbittorrent.base_url.clone(),
@@ -181,7 +182,17 @@ async fn cmd_qbittorrent_add(
         .download_dir
         .as_ref()
         .and_then(|path| path.to_str());
-    client.add_magnet(magnet, save_path).await?;
+    let path = Path::new(value);
+    if path.exists() {
+        if path.extension().and_then(|ext| ext.to_str()) != Some("torrent") {
+            return Err(MediaError::InvalidConfig("file must be .torrent".to_string()).into());
+        }
+        client.add_torrent_file(path, save_path).await?;
+        println!("queued torrent file");
+        return Ok(());
+    }
+
+    client.add_magnet(value, save_path).await?;
     println!("queued magnet link");
     Ok(())
 }
@@ -235,7 +246,7 @@ fn print_usage() {
     println!("  anicargo-cli [--config <path>] hls <media-id>");
     println!("  anicargo-cli [--config <path>] bangumi-search <keyword>");
     println!("  anicargo-cli [--config <path>] bangumi-sync <subject-id>");
-    println!("  anicargo-cli [--config <path>] qbittorrent-add <magnet>");
+    println!("  anicargo-cli [--config <path>] qbittorrent-add <magnet|path.torrent>");
     println!("  anicargo-cli [--config <path>] qbittorrent-sync");
     println!("");
     println!("Config:");

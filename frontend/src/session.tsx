@@ -6,6 +6,7 @@ export interface SessionInfo {
   token: string;
   userId: string;
   role: UserRole;
+  roleLevel: number;
   expiresIn: number;
 }
 
@@ -24,7 +25,27 @@ function loadSession(): SessionInfo | null {
     return null;
   }
   try {
-    return JSON.parse(raw) as SessionInfo;
+    const parsed = JSON.parse(raw) as Partial<SessionInfo>;
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    if (!parsed.token || !parsed.userId) {
+      return null;
+    }
+    const roleLevel =
+      typeof parsed.roleLevel === "number"
+        ? parsed.roleLevel
+        : parsed.role === "admin"
+          ? 3
+          : 1;
+    const role: UserRole = parsed.role ?? (roleLevel >= 3 ? "admin" : "user");
+    return {
+      token: parsed.token,
+      userId: parsed.userId,
+      role,
+      roleLevel,
+      expiresIn: parsed.expiresIn ?? 0
+    };
   } catch {
     return null;
   }

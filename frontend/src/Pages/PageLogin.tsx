@@ -12,6 +12,7 @@ interface LoginResponse {
   token: string;
   user_id: string;
   role: "admin" | "user";
+  role_level: number;
   expires_in: number;
 }
 
@@ -105,6 +106,7 @@ export default function PageLogin() {
         token: response.token,
         userId: response.user_id,
         role: response.role,
+        roleLevel: response.role_level,
         expiresIn: response.expires_in
       };
       setSession(nextSession);

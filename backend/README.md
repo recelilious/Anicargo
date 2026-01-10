@@ -155,12 +155,33 @@ Endpoints:
 - `GET /api/stream/:id` -> returns HLS playlist URL, or 202 + job id if queued
 - `POST /api/auth/login` -> returns JWT token
 - `POST /api/users` -> create user with invite code
+- `GET /api/users` -> list users (admin)
 - `DELETE /api/users/:id` -> delete user (admin or self)
+- `PATCH /api/users/:id/role` -> update user role level (admin)
+- `GET /api/settings` -> get user settings
+- `PUT /api/settings` -> update user settings
+- `GET /api/progress` -> list playback progress (current user)
+- `GET /api/progress/:id` -> get playback progress for media id
+- `PUT /api/progress/:id` -> update playback progress for media id
+- `GET /api/media/:id` -> media detail (file + parse + match + progress)
+- `GET /api/media/:id/episodes` -> matched subject episode list
+- `GET /api/subjects/:id/episodes` -> episode list by subject id
+- `GET /api/collection` -> list resource submissions (collector/admin)
+- `POST /api/collection/magnet` -> submit magnet link (collector/admin)
+- `POST /api/collection/torrent` -> submit torrent file (multipart, collector/admin)
+- `POST /api/collection/:id/approve` -> approve and enqueue download (admin)
+- `POST /api/collection/:id/reject` -> reject submission (admin)
+- `DELETE /api/collection/:id` -> delete submission (admin or owner when pending)
 - `POST /api/matches/auto` -> enqueue auto matching (admin)
 - `GET /api/matches/:id` -> current match for media id
 - `POST /api/matches/:id` -> set manual match (admin)
 - `DELETE /api/matches/:id` -> clear match (admin)
 - `GET /api/matches/:id/candidates` -> list match candidates
+- `POST /api/qbittorrent/magnet` -> add magnet link (admin)
+- `POST /api/qbittorrent/torrent` -> add torrent file (multipart, admin)
+- `GET /api/admin/metrics` -> system + library + storage/network/qbittorrent metrics (admin)
+- `GET /api/admin/jobs` -> job queue list (admin)
+- `GET /api/admin/qbittorrent/completed` -> completed torrents (admin)
 - `POST /api/jobs/index` -> enqueue library index (admin)
 - `POST /api/jobs/auto-match` -> enqueue auto match (admin, optional body)
 - `POST /api/jobs/hls/:id` -> enqueue HLS generation
@@ -199,6 +220,15 @@ curl -X POST http://127.0.0.1:3000/api/auth/login \\
   -H 'Content-Type: application/json' \\
   -d '{"user_id":"alice","password":"secret"}'
 ```
+
+Role levels are numeric (1-5) and returned as `role_level` on login. Levels >= 3 are considered admin.
+Collectors (level 2+) can submit resources; admins can approve and enqueue downloads.
+
+Resource submissions accept only magnet links or `.torrent` files. Torrent uploads are capped at 4 MB,
+and duplicate submissions are rejected based on a content hash. Use `?status=pending|approved|rejected`
+with `GET /api/collection` to filter.
+
+Admin job queue listing supports `?status=queued|running|retry|done|failed&limit=&offset=`.
 
 Use token for stream:
 
