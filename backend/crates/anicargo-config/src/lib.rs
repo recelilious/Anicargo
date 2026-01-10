@@ -142,8 +142,8 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             media: MediaConfig {
-                media_dir: None,
-                cache_dir: PathBuf::from(".cache"),
+                media_dir: Some(default_media_dir()),
+                cache_dir: default_cache_dir(),
             },
             hls: HlsConfig {
                 ffmpeg_path: PathBuf::from("ffmpeg"),
@@ -573,6 +573,9 @@ impl AppConfig {
             .media_dir
             .as_ref()
             .ok_or(ConfigError::MissingValue("media.media_dir"))?;
+        if !media_dir.exists() {
+            fs::create_dir_all(media_dir)?;
+        }
         if !media_dir.is_dir() {
             return Err(ConfigError::InvalidValue(format!(
                 "invalid media directory: {}",
@@ -898,6 +901,22 @@ fn default_log_path() -> PathBuf {
         home.join(".cache").join("anicargo").join("logs")
     } else {
         PathBuf::from(".cache/anicargo/logs")
+    }
+}
+
+fn default_media_dir() -> PathBuf {
+    if let Some(home) = home_dir() {
+        home.join(".local").join("share").join("anicargo").join("media")
+    } else {
+        PathBuf::from("media")
+    }
+}
+
+fn default_cache_dir() -> PathBuf {
+    if let Some(home) = home_dir() {
+        home.join(".cache").join("anicargo")
+    } else {
+        PathBuf::from(".cache/anicargo")
     }
 }
 
