@@ -91,6 +91,13 @@ interface ProgressListResponse {
   }>;
 }
 
+interface NextEpisodeResponse {
+  subject?: BangumiSubjectInfo | null;
+  current_episode?: BangumiEpisodeInfo | null;
+  next_episode?: BangumiEpisodeInfo | null;
+  next_media?: MediaEntry | null;
+}
+
 function formatBytes(value: number): string {
   if (!Number.isFinite(value)) return "--";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -124,6 +131,7 @@ export default function PagePlayer() {
   const navigate = useNavigate();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const lastProgressSent = useRef<number>(0);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   const [detail, setDetail] = useState<MediaDetailResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -134,8 +142,24 @@ export default function PagePlayer() {
   const [jobId, setJobId] = useState<number | null>(null);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [recent, setRecent] = useState<ProgressListResponse["items"]>([]);
+  const [autoPrepare, setAutoPrepare] = useState(
+    window.localStorage.getItem("anicargo.player.autoPrepare") !== "false"
+  );
+  const [autoPlay, setAutoPlay] = useState(
+    window.localStorage.getItem("anicargo.player.autoPlay") !== "false"
+  );
+  const [autoNext, setAutoNext] = useState(
+    window.localStorage.getItem("anicargo.player.autoNext") === "true"
+  );
+  const [nextInfo, setNextInfo] = useState<NextEpisodeResponse | null>(null);
+  const [nextLoading, setNextLoading] = useState(false);
 
   const resumeAt = detail?.progress?.position_secs ?? 0;
+  const nextEpisode = nextInfo?.next_episode ?? null;
+  const nextMedia = nextInfo?.next_media ?? null;
+  const nextSubjectLabel =
+    nextInfo?.subject?.name_cn || nextInfo?.subject?.name || "";
+  const canCollect = (session?.roleLevel ?? 0) >= 2;
 
   const headerSubtitle = useMemo(() => {
     if (!detail) return "Select a file to start playback.";
@@ -168,6 +192,21 @@ export default function PagePlayer() {
   }, [session, id]);
 
   useEffect(() => {
+    window.localStorage.setItem(
+      "anicargo.player.autoPrepare",
+      autoPrepare ? "true" : "false"
+    );
+  }, [autoPrepare]);
+
+  useEffect(() => {
+    window.localStorage.setItem("anicargo.player.autoPlay", autoPlay ? "true" : "false");
+  }, [autoPlay]);
+
+  useEffect(() => {
+    window.localStorage.setItem("anicargo.player.autoNext", autoNext ? "true" : "false");
+  }, [autoNext]);
+
+  useEffect(() => {
     if (!playlistUrl || !videoRef.current) return;
     const video = videoRef.current;
     let hls: Hls | null = null;
@@ -189,6 +228,12 @@ export default function PagePlayer() {
       }
     };
   }, [playlistUrl]);
+
+  useEffect(() => {
+    if (!session || !id || !autoPrepare) return;
+    if (streamState !== "idle") return;
+    requestStream();
+  }, [autoPrepare, session, id, streamState]);
 
   async function requestStream() {
     if (!session || !id) return;
@@ -224,28 +269,63 @@ export default function PagePlayer() {
     }
   }
 
-  async function checkJob() {
-    if (!session || !jobId) return;
-    try {
-      const status = await apiFetch<JobStatusResponse>(`/api/jobs/${jobId}`, {}, session.token);
-      if (status.job.status === "done") {
-        await requestStream();
-      } else if (status.job.status === "failed") {
-        setStreamState("error");
-        setStreamError(status.job.last_error || "Stream job failed.");
-      }
-    } catch (err) {
-      setStreamError((err as Error).message || "Failed to check job.");
-    }
-  }
-
   useEffect(() => {
-    if (streamState !== "queued" || !jobId) return;
-    const timer = window.setInterval(() => {
-      checkJob();
-    }, 2500);
-    return () => window.clearInterval(timer);
-  }, [streamState, jobId]);
+    if (!session || !jobId || streamState !== "queued") return;
+    const url = resolveApiUrl(
+      `/api/jobs/${jobId}/stream?token=${encodeURIComponent(session.token)}`
+    );
+    const source = new EventSource(url);
+    eventSourceRef.current = source;
+    let closed = false;
+
+    const closeSource = () => {
+      if (closed) return;
+      closed = true;
+      source.close();
+      if (eventSourceRef.current === source) {
+        eventSourceRef.current = null;
+      }
+    };
+
+    const handleStatusEvent = (event: MessageEvent) => {
+      let payload: JobStatusResponse["job"] | null = null;
+      try {
+        payload = JSON.parse(event.data) as JobStatusResponse["job"];
+      } catch {
+        payload = null;
+      }
+
+      if (event.type === "done") {
+        closeSource();
+        requestStream();
+        return;
+      }
+      if (event.type === "failed" || event.type === "error") {
+        const message =
+          payload?.last_error ||
+          (typeof event.data === "string" && event.data.trim() ? event.data : null) ||
+          "Stream job failed.";
+        setStreamState("error");
+        setStreamError(message);
+        closeSource();
+      }
+    };
+
+    ["queued", "running", "retry", "done", "failed", "error"].forEach((type) => {
+      source.addEventListener(type, handleStatusEvent);
+    });
+
+    source.onerror = () => {
+      if (closed) return;
+      setStreamState("error");
+      setStreamError("Stream status connection lost.");
+      closeSource();
+    };
+
+    return () => {
+      closeSource();
+    };
+  }, [session, jobId, streamState]);
 
   async function saveProgress() {
     if (!session || !id || !videoRef.current) return;
@@ -276,11 +356,38 @@ export default function PagePlayer() {
     }
   }
 
+  function handleEnded() {
+    saveProgress();
+    if (autoNext && nextMedia) {
+      navigate(`/player/${nextMedia.id}`);
+    }
+  }
+
   function handleLoadedMetadata() {
     if (!videoRef.current) return;
     if (resumeAt > 1 && resumeAt < videoRef.current.duration) {
       videoRef.current.currentTime = resumeAt;
     }
+    if (autoPlay) {
+      videoRef.current.play().catch(() => {});
+    }
+  }
+
+  useEffect(() => {
+    if (!autoNext || !session || !id) {
+      setNextInfo(null);
+      return;
+    }
+    setNextLoading(true);
+    apiFetch<NextEpisodeResponse>(`/api/media/${id}/next`, {}, session.token)
+      .then((data) => setNextInfo(data))
+      .catch(() => setNextInfo(null))
+      .finally(() => setNextLoading(false));
+  }, [autoNext, session, id]);
+
+  function handleAutoNext() {
+    if (!autoNext || !nextMedia) return;
+    navigate(`/player/${nextMedia.id}`);
   }
 
   if (!id) {
@@ -311,7 +418,7 @@ export default function PagePlayer() {
                 onLoadedMetadata={handleLoadedMetadata}
                 onTimeUpdate={saveProgress}
                 onPause={saveProgress}
-                onEnded={saveProgress}
+                onEnded={handleEnded}
               />
             ) : (
               <div className="player-placeholder">
@@ -336,6 +443,32 @@ export default function PagePlayer() {
                 Size: {formatBytes(detail.entry.size)}
               </span>
             ) : null}
+          </div>
+          <div className="player-toggles">
+            <label>
+              <input
+                type="checkbox"
+                checked={autoPrepare}
+                onChange={(event) => setAutoPrepare(event.target.checked)}
+              />
+              Auto prepare
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={autoPlay}
+                onChange={(event) => setAutoPlay(event.target.checked)}
+              />
+              Auto play
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={autoNext}
+                onChange={(event) => setAutoNext(event.target.checked)}
+              />
+              Auto next
+            </label>
           </div>
         </div>
 
@@ -422,6 +555,65 @@ export default function PagePlayer() {
                   </div>
                 ) : (
                   <div className="app-muted">No recent playback.</div>
+                )}
+              </div>
+
+              <div>
+                <h3>Next episode</h3>
+                {autoNext ? (
+                  nextLoading ? (
+                    <div className="app-muted">Loading next episode...</div>
+                  ) : nextEpisode ? (
+                    <div className="player-next">
+                      <div>
+                        <div>
+                          {nextEpisode.name_cn || nextEpisode.name}
+                        </div>
+                        <div className="app-muted">
+                          Episode {nextEpisode.ep ?? nextEpisode.sort}
+                        </div>
+                      </div>
+                      {nextMedia ? (
+                        <button
+                          type="button"
+                          className="app-btn ghost"
+                          onClick={handleAutoNext}
+                        >
+                          Play next
+                        </button>
+                      ) : (
+                        <div className="player-next-actions">
+                          <span className="app-muted">Not in library</span>
+                          {nextSubjectLabel ? (
+                            <button
+                              type="button"
+                              className="app-btn ghost"
+                              onClick={() =>
+                                navigate(`/library?q=${encodeURIComponent(nextSubjectLabel)}`)
+                              }
+                            >
+                              Search library
+                            </button>
+                          ) : null}
+                          {canCollect ? (
+                            <button
+                              type="button"
+                              className="app-btn ghost"
+                              onClick={() => navigate("/collection")}
+                            >
+                              Open collection
+                            </button>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  ) : nextInfo ? (
+                    <div className="app-muted">No next episode found.</div>
+                  ) : (
+                    <div className="app-muted">No next episode data.</div>
+                  )
+                ) : (
+                  <div className="app-muted">Auto next disabled.</div>
                 )}
               </div>
             </div>

@@ -35,9 +35,58 @@
   width: 100%;
 }
 
+.settings-preset {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-preset-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.settings-preset-list {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-preset-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.settings-preset-item span {
+  color: var(--ink);
+}
+
+.settings-preset-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.settings-hidden-input {
+  display: none;
+}
+
 .settings-actions {
   display: flex;
   justify-content: flex-end;
+}
+
+@media (max-width: 720px) {
+  .settings-preset-actions {
+    width: 100%;
+  }
 }
 
 .settings-error,

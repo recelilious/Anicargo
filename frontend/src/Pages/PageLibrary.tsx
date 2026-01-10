@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import AppShell from "../Components/AppShell";
 import { apiFetch } from "../api";
 import { useSession } from "../session";
@@ -37,6 +37,11 @@ interface BangumiEpisodeInfo {
   air_date?: string | null;
 }
 
+interface EpisodeListResponse {
+  subject: BangumiSubjectInfo;
+  episodes: BangumiEpisodeInfo[];
+}
+
 interface MediaMatchDetail {
   subject: BangumiSubjectInfo;
   episode?: BangumiEpisodeInfo | null;
@@ -64,6 +69,14 @@ interface MatchCandidate {
   reason: string;
   name: string;
   name_cn: string;
+}
+
+function parsePositiveNumber(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.floor(parsed);
 }
 
 function formatBytes(value: number): string {
@@ -96,26 +109,89 @@ function formatDuration(value?: number | null): string {
 export default function PageLibrary() {
   const { session } = useSession();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [items, setItems] = useState<MediaEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [detail, setDetail] = useState<MediaDetailResponse | null>(null);
   const [candidates, setCandidates] = useState<MatchCandidate[]>([]);
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [manualSubjectId, setManualSubjectId] = useState<number | null>(null);
   const [manualEpisodeId, setManualEpisodeId] = useState("");
-  const [query, setQuery] = useState("");
+  const [candidateQuery, setCandidateQuery] = useState("");
+  const [candidateSort, setCandidateSort] = useState("confidence");
+  const [manualSubjectInput, setManualSubjectInput] = useState("");
+  const [episodes, setEpisodes] = useState<BangumiEpisodeInfo[]>([]);
+  const [episodesLoading, setEpisodesLoading] = useState(false);
+  const [episodesSubject, setEpisodesSubject] = useState<BangumiSubjectInfo | null>(null);
+  const [query, setQuery] = useState(() => searchParams.get("q") ?? "");
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [bulkSubjectInput, setBulkSubjectInput] = useState("");
+  const [bulkEpisodeInput, setBulkEpisodeInput] = useState("");
+  const [bulkWorking, setBulkWorking] = useState(false);
 
   const isAdmin = (session?.roleLevel ?? 0) >= 3;
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
   const filteredItems = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return items;
     return items.filter((item) => item.filename.toLowerCase().includes(needle));
   }, [items, query]);
+
+  const filteredCandidates = useMemo(() => {
+    let next = [...candidates];
+    const needle = candidateQuery.trim().toLowerCase();
+    if (needle) {
+      next = next.filter(
+        (candidate) =>
+          candidate.name.toLowerCase().includes(needle) ||
+          candidate.name_cn.toLowerCase().includes(needle)
+      );
+    }
+    if (candidateSort === "name") {
+      next.sort((a, b) => a.name.localeCompare(b.name));
+    } else {
+      next.sort((a, b) => b.confidence - a.confidence);
+    }
+    return next;
+  }, [candidates, candidateQuery, candidateSort]);
+
+  const manualSubjectOverride = useMemo(() => {
+    const trimmed = manualSubjectInput.trim();
+    if (trimmed) {
+      const value = Number(trimmed);
+      if (Number.isFinite(value) && value > 0) {
+        return value;
+      }
+      return null;
+    }
+    return manualSubjectId ?? null;
+  }, [manualSubjectInput, manualSubjectId]);
+
+  const manualSubjectInvalid = useMemo(() => {
+    const trimmed = manualSubjectInput.trim();
+    if (!trimmed) return false;
+    const value = Number(trimmed);
+    return !Number.isFinite(value) || value <= 0;
+  }, [manualSubjectInput]);
+  const subjectIdForEpisodes = manualSubjectOverride;
+  const matchedSubjectId = detail?.matched?.subject?.id ?? null;
+  const bulkSubjectId = useMemo(
+    () => parsePositiveNumber(bulkSubjectInput),
+    [bulkSubjectInput]
+  );
+  const bulkEpisodeId = useMemo(
+    () => parsePositiveNumber(bulkEpisodeInput),
+    [bulkEpisodeInput]
+  );
+  const bulkSubjectInvalid = bulkSubjectInput.trim().length > 0 && bulkSubjectId === null;
+  const bulkEpisodeInvalid = bulkEpisodeInput.trim().length > 0 && bulkEpisodeId === null;
+  const allFilteredSelected =
+    isAdmin && filteredItems.length > 0 && filteredItems.every((item) => selectedSet.has(item.id));
 
   async function loadLibrary(refresh = false) {
     if (!session) return;
@@ -164,13 +240,43 @@ export default function PageLibrary() {
     }
   }
 
+  async function loadEpisodes(subjectId: number) {
+    if (!session) return;
+    setEpisodesLoading(true);
+    try {
+      const data = await apiFetch<EpisodeListResponse>(
+        `/api/subjects/${subjectId}/episodes`,
+        {},
+        session.token
+      );
+      setEpisodes(data.episodes);
+      setEpisodesSubject(data.subject);
+    } catch (err) {
+      setError((err as Error).message || "Failed to load episodes.");
+      setEpisodes([]);
+      setEpisodesSubject(null);
+    } finally {
+      setEpisodesLoading(false);
+    }
+  }
+
   async function applyManualMatch() {
-    if (!session || !selectedId || !manualSubjectId) return;
+    if (!session || !selectedId) return;
+    if (manualSubjectInvalid) {
+      setError("Invalid subject id.");
+      return;
+    }
+    if (!manualSubjectOverride) {
+      setError("Select a candidate or enter a subject id.");
+      return;
+    }
+    const subjectOverride = manualSubjectOverride;
+
     setCandidateLoading(true);
     setError(null);
     try {
       const payload: { subject_id: number; episode_id?: number } = {
-        subject_id: manualSubjectId
+        subject_id: subjectOverride
       };
       const episode = Number(manualEpisodeId);
       if (!Number.isNaN(episode) && episode > 0) {
@@ -222,9 +328,108 @@ export default function PageLibrary() {
     setRefreshing(false);
   }
 
+  function toggleSelected(id: string) {
+    setSelectedIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
+    );
+  }
+
+  function toggleSelectAll() {
+    if (allFilteredSelected) {
+      setSelectedIds((current) =>
+        current.filter((id) => !filteredItems.some((item) => item.id === id))
+      );
+      return;
+    }
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      filteredItems.forEach((item) => next.add(item.id));
+      return Array.from(next);
+    });
+  }
+
+  async function applyBulkMatch() {
+    if (!session || !isAdmin) return;
+    if (bulkSubjectInvalid || bulkEpisodeInvalid) {
+      setError("Invalid bulk match input.");
+      return;
+    }
+    if (!bulkSubjectId) {
+      setError("Bulk match needs a subject id.");
+      return;
+    }
+    if (!selectedIds.length) {
+      setError("Select at least one file for bulk match.");
+      return;
+    }
+    setBulkWorking(true);
+    setError(null);
+    let failures = 0;
+    const payload: { subject_id: number; episode_id?: number } = {
+      subject_id: bulkSubjectId
+    };
+    if (bulkEpisodeId) {
+      payload.episode_id = bulkEpisodeId;
+    }
+    for (const id of selectedIds) {
+      try {
+        await apiFetch<unknown>(
+          `/api/matches/${id}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(payload)
+          },
+          session.token
+        );
+      } catch {
+        failures += 1;
+      }
+    }
+    if (selectedId && selectedIds.includes(selectedId)) {
+      await loadDetail(selectedId);
+    }
+    if (failures > 0) {
+      setError(`Bulk match finished with ${failures} error(s).`);
+    }
+    setBulkWorking(false);
+  }
+
+  async function clearBulkMatches() {
+    if (!session || !isAdmin) return;
+    if (!selectedIds.length) {
+      setError("Select at least one file to clear.");
+      return;
+    }
+    setBulkWorking(true);
+    setError(null);
+    let failures = 0;
+    for (const id of selectedIds) {
+      try {
+        await apiFetch<unknown>(`/api/matches/${id}`, { method: "DELETE" }, session.token);
+      } catch {
+        failures += 1;
+      }
+    }
+    if (selectedId && selectedIds.includes(selectedId)) {
+      await loadDetail(selectedId);
+    }
+    if (failures > 0) {
+      setError(`Bulk clear finished with ${failures} error(s).`);
+    }
+    setBulkWorking(false);
+  }
+
   useEffect(() => {
     loadLibrary(false);
   }, [session]);
+
+  useEffect(() => {
+    const q = searchParams.get("q");
+    setQuery(q ?? "");
+  }, [searchParams]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -235,13 +440,53 @@ export default function PageLibrary() {
   }, [items, selectedId]);
 
   useEffect(() => {
+    if (!selectedIds.length) return;
+    setSelectedIds((current) => current.filter((id) => items.some((item) => item.id === id)));
+  }, [items, selectedIds.length]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    setManualEpisodeId("");
+    setManualSubjectInput("");
+    setCandidateQuery("");
+    setCandidateSort("confidence");
+    setEpisodes([]);
+    setEpisodesSubject(null);
+  }, [selectedId]);
+
+  useEffect(() => {
     if (!selectedId || !isAdmin) {
       setCandidates([]);
       setManualSubjectId(null);
+      setEpisodes([]);
+      setEpisodesSubject(null);
       return;
     }
     loadCandidates(selectedId);
   }, [selectedId, isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin || !subjectIdForEpisodes) {
+      setEpisodes([]);
+      setEpisodesSubject(null);
+      return;
+    }
+    setManualEpisodeId("");
+    loadEpisodes(subjectIdForEpisodes);
+  }, [subjectIdForEpisodes, isAdmin]);
+
+  useEffect(() => {
+    if (manualSubjectInput.trim()) return;
+    if (!filteredCandidates.length) return;
+    if (!manualSubjectId || !filteredCandidates.some((item) => item.subject_id === manualSubjectId)) {
+      setManualSubjectId(filteredCandidates[0].subject_id);
+    }
+  }, [filteredCandidates, manualSubjectId, manualSubjectInput]);
+
+  function handleCandidateSelect(candidate: MatchCandidate) {
+    setManualSubjectInput("");
+    setManualSubjectId(candidate.subject_id);
+  }
 
   function handleSelect(id: string) {
     setSelectedId(id);
@@ -303,6 +548,16 @@ export default function PageLibrary() {
               <table className="app-table">
                 <thead>
                   <tr>
+                    {isAdmin ? (
+                      <th className="library-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={allFilteredSelected}
+                          onChange={toggleSelectAll}
+                          aria-label="Select all"
+                        />
+                      </th>
+                    ) : null}
                     <th>Filename</th>
                     <th>Size</th>
                     <th>Action</th>
@@ -315,6 +570,19 @@ export default function PageLibrary() {
                       className={selectedId === item.id ? "is-active" : undefined}
                       onClick={() => handleSelect(item.id)}
                     >
+                      {isAdmin ? (
+                        <td
+                          className="library-checkbox"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedSet.has(item.id)}
+                            onChange={() => toggleSelected(item.id)}
+                            aria-label={`Select ${item.filename}`}
+                          />
+                        </td>
+                      ) : null}
                       <td>{item.filename}</td>
                       <td>{formatBytes(item.size)}</td>
                       <td>
@@ -335,6 +603,76 @@ export default function PageLibrary() {
               </table>
             </div>
           )}
+          {isAdmin ? (
+            <div className="library-bulk">
+              <div className="library-bulk-header">
+                <div>
+                  <h3>Bulk actions</h3>
+                  <p className="app-card-subtitle">Apply one subject to many files.</p>
+                </div>
+                <span className="app-pill">{selectedIds.length} selected</span>
+              </div>
+              <div className="library-bulk-fields">
+                <label className="library-label">
+                  <span>Subject id</span>
+                  <input
+                    className="app-input"
+                    type="number"
+                    value={bulkSubjectInput}
+                    onChange={(event) => setBulkSubjectInput(event.target.value)}
+                    placeholder="Bangumi subject id"
+                    disabled={bulkWorking}
+                  />
+                </label>
+                <label className="library-label">
+                  <span>Episode id (optional)</span>
+                  <input
+                    className="app-input"
+                    type="number"
+                    value={bulkEpisodeInput}
+                    onChange={(event) => setBulkEpisodeInput(event.target.value)}
+                    placeholder="Bangumi episode id"
+                    disabled={bulkWorking}
+                  />
+                </label>
+              </div>
+              {bulkSubjectInvalid || bulkEpisodeInvalid ? (
+                <div className="library-help error">Enter valid numeric IDs.</div>
+              ) : null}
+              <div className="library-actions">
+                <button
+                  type="button"
+                  className="app-btn primary"
+                  onClick={applyBulkMatch}
+                  disabled={
+                    bulkWorking ||
+                    !selectedIds.length ||
+                    bulkSubjectInvalid ||
+                    bulkEpisodeInvalid ||
+                    !bulkSubjectId
+                  }
+                >
+                  Apply match
+                </button>
+                <button
+                  type="button"
+                  className="app-btn ghost"
+                  onClick={clearBulkMatches}
+                  disabled={bulkWorking || !selectedIds.length}
+                >
+                  Clear matches
+                </button>
+                <button
+                  type="button"
+                  className="app-btn ghost"
+                  onClick={() => setSelectedIds([])}
+                  disabled={!selectedIds.length}
+                >
+                  Clear selection
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div className="app-card">
@@ -413,38 +751,107 @@ export default function PageLibrary() {
                   <h3>Match control</h3>
                   {candidateLoading ? (
                     <div className="library-empty">Loading candidates...</div>
-                  ) : candidates.length ? (
+                  ) : filteredCandidates.length ? (
                     <>
-                      <label className="library-label">
-                        <span>Candidate</span>
+                      <div className="library-candidate-tools">
+                        <input
+                          className="app-input"
+                          type="search"
+                          placeholder="Filter candidates..."
+                          value={candidateQuery}
+                          onChange={(event) => setCandidateQuery(event.target.value)}
+                        />
                         <select
                           className="app-select"
-                          value={manualSubjectId ?? undefined}
-                          onChange={(event) => setManualSubjectId(Number(event.target.value))}
+                          value={candidateSort}
+                          onChange={(event) => setCandidateSort(event.target.value)}
                         >
-                          {candidates.map((candidate) => (
-                            <option key={candidate.subject_id} value={candidate.subject_id}>
-                              {candidate.name} ({candidate.name_cn}) · {candidate.confidence.toFixed(2)}
-                            </option>
-                          ))}
+                          <option value="confidence">Sort by confidence</option>
+                          <option value="name">Sort by name</option>
                         </select>
-                      </label>
+                        <span className="app-pill">{filteredCandidates.length} results</span>
+                      </div>
+
+                      <div className="library-candidate-list">
+                        {filteredCandidates.map((candidate) => {
+                          const isSelected =
+                            !manualSubjectInput.trim() &&
+                            manualSubjectId === candidate.subject_id;
+                          const isCurrent = matchedSubjectId === candidate.subject_id;
+                          const displayName = candidate.name_cn || candidate.name;
+                          return (
+                            <button
+                              key={candidate.subject_id}
+                              type="button"
+                              className={`library-candidate-item${
+                                isSelected ? " is-selected" : ""
+                              }${isCurrent ? " is-current" : ""}`}
+                              onClick={() => handleCandidateSelect(candidate)}
+                            >
+                              <div className="library-candidate-main">
+                                <span className="library-candidate-title">{displayName}</span>
+                                <span className="library-candidate-subtitle">{candidate.name}</span>
+                              </div>
+                              <div className="library-candidate-meta">
+                                <span className="library-candidate-score">
+                                  {candidate.confidence.toFixed(2)}
+                                </span>
+                                <span className="library-candidate-reason">{candidate.reason}</span>
+                                {isCurrent ? <span className="app-pill">current</span> : null}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
                       <label className="library-label">
-                        <span>Episode id (optional)</span>
+                        <span>Manual subject id (override)</span>
                         <input
                           className="app-input"
                           type="number"
-                          value={manualEpisodeId}
-                          onChange={(event) => setManualEpisodeId(event.target.value)}
-                          placeholder="episode id"
+                          value={manualSubjectInput}
+                          onChange={(event) => setManualSubjectInput(event.target.value)}
+                          placeholder="Bangumi subject id"
                         />
+                      </label>
+                      {manualSubjectInvalid ? (
+                        <div className="library-help error">Invalid subject id.</div>
+                      ) : null}
+                      <label className="library-label">
+                        <span>
+                          Episodes
+                          {episodesSubject ? ` · ${episodesSubject.name}` : ""}
+                        </span>
+                        {episodesLoading ? (
+                          <div className="library-empty">Loading episodes...</div>
+                        ) : episodes.length ? (
+                          <select
+                            className="app-select"
+                            value={manualEpisodeId}
+                            onChange={(event) => setManualEpisodeId(event.target.value)}
+                          >
+                            <option value="">Not set</option>
+                            {episodes.map((episode) => (
+                              <option key={episode.id} value={episode.id.toString()}>
+                                E{episode.ep ?? episode.sort} {episode.name_cn || episode.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            className="app-input"
+                            type="number"
+                            value={manualEpisodeId}
+                            onChange={(event) => setManualEpisodeId(event.target.value)}
+                            placeholder="Episode id (optional)"
+                          />
+                        )}
                       </label>
                       <div className="library-actions">
                         <button
                           type="button"
                           className="app-btn primary"
                           onClick={applyManualMatch}
-                          disabled={!manualSubjectId}
+                          disabled={!manualSubjectOverride || manualSubjectInvalid}
                         >
                           Set match
                         </button>

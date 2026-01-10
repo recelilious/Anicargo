@@ -49,3 +49,94 @@
   background: linear-gradient(145deg, rgba(255, 94, 94, 0.28), rgba(140, 20, 20, 0.4));
   color: #fbe9ea;
 }
+
+.admin-jobs {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-jobs-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.admin-jobs-toolbar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.admin-jobs-table {
+  max-height: 360px;
+  overflow: auto;
+}
+
+.admin-job-error {
+  color: #f7b7b7;
+  max-width: 240px;
+  word-break: break-word;
+}
+
+.admin-job-detail {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.admin-job-detail-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.admin-job-detail-block {
+  margin-top: 10px;
+}
+
+.admin-job-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.admin-job-pre {
+  margin: 0;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--ink);
+  font-size: 11px;
+  overflow: auto;
+  max-height: 200px;
+}
+
+.admin-users {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-users-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.admin-users-table {
+  overflow: auto;
+}
+
+.admin-user-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}

@@ -32,6 +32,7 @@ use std::convert::Infallible;
 use std::env;
 use std::fmt;
 use std::fs;
+use std::cmp::Ordering as CmpOrdering;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::Arc;
@@ -359,7 +360,7 @@ struct BangumiSubjectInfo {
     total_episodes: Option<i64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct BangumiEpisodeInfo {
     id: i64,
     sort: f64,
@@ -373,6 +374,21 @@ struct BangumiEpisodeInfo {
 struct EpisodeListResponse {
     subject: BangumiSubjectInfo,
     episodes: Vec<BangumiEpisodeInfo>,
+}
+
+#[derive(Debug, Serialize)]
+struct NextMediaEntry {
+    id: String,
+    filename: String,
+    size: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct NextEpisodeResponse {
+    subject: Option<BangumiSubjectInfo>,
+    current_episode: Option<BangumiEpisodeInfo>,
+    next_episode: Option<BangumiEpisodeInfo>,
+    next_media: Option<NextMediaEntry>,
 }
 
 #[derive(Debug, Serialize)]
@@ -690,6 +706,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/progress", get(list_progress_handler))
         .route("/api/progress/:id", get(get_progress_handler).put(update_progress_handler))
         .route("/api/media/:id", get(media_detail_handler))
+        .route("/api/media/:id/next", get(next_episode_handler))
         .route("/api/media/:id/episodes", get(media_episodes_handler))
         .route("/api/subjects/:id/episodes", get(subject_episodes_handler))
         .route("/api/collection", get(list_collection_handler))
@@ -1030,6 +1047,69 @@ async fn media_episodes_handler(
     let episodes = list_bangumi_episodes(&state.db, subject_id).await?;
     let _ = auth;
     Ok(Json(EpisodeListResponse { subject, episodes }))
+}
+
+async fn next_episode_handler(
+    Path(id): Path<String>,
+    Extension(state): Extension<Arc<AppState>>,
+    headers: HeaderMap,
+    query: Query<TokenQuery>,
+) -> Result<Json<NextEpisodeResponse>, ApiError> {
+    require_auth(&state, &headers, &query.0, None).await?;
+    let match_row = fetch_media_match(&state.db, &id).await?;
+    let Some(match_row) = match_row else {
+        return Ok(Json(NextEpisodeResponse {
+            subject: None,
+            current_episode: None,
+            next_episode: None,
+            next_media: None,
+        }));
+    };
+
+    let subject_id = match_row.subject_id;
+    maybe_sync_episodes(&state, subject_id).await?;
+    let subject = fetch_bangumi_subject(&state.db, subject_id).await?;
+    let episodes = list_bangumi_episodes(&state.db, subject_id).await?;
+    if episodes.is_empty() {
+        return Ok(Json(NextEpisodeResponse {
+            subject: Some(subject),
+            current_episode: None,
+            next_episode: None,
+            next_media: None,
+        }));
+    }
+
+    let parse = fetch_media_parse(&state.db, &id).await?;
+    let parsed_episode = parse
+        .as_ref()
+        .and_then(|row| parse_episode_number(row.episode.as_deref()));
+
+    let current_episode = match_row
+        .episode_id
+        .and_then(|ep_id| episodes.iter().find(|ep| ep.id == ep_id).cloned())
+        .or_else(|| {
+            parsed_episode.and_then(|value| find_episode_by_number(&episodes, value))
+        });
+
+    let current_sort = if let Some(ep) = &current_episode {
+        Some(ep.sort)
+    } else {
+        parsed_episode
+    };
+
+    let next_episode = current_sort.and_then(|current| find_next_episode(&episodes, current));
+    let next_media = if let Some(next) = &next_episode {
+        fetch_media_for_episode(&state.db, subject_id, next.id).await?
+    } else {
+        None
+    };
+
+    Ok(Json(NextEpisodeResponse {
+        subject: Some(subject),
+        current_episode,
+        next_episode,
+        next_media,
+    }))
 }
 
 async fn subject_episodes_handler(
@@ -2134,7 +2214,7 @@ async fn init_db(db: &PgPool) -> Result<(), ApiError> {
             CONSTRAINT resource_submissions_kind_chk CHECK (kind IN ('magnet','torrent')),\
             CONSTRAINT resource_submissions_status_chk CHECK (status IN ('pending','approved','rejected')),\
             CONSTRAINT resource_submissions_payload_chk CHECK (\
-                (kind = 'magnet' AND magnet IS NOT NULL AND torrent_bytes IS NULL)\
+                (kind = 'magnet' AND magnet IS NOT NULL AND torrent_bytes IS NULL) \
                 OR (kind = 'torrent' AND torrent_bytes IS NOT NULL)\
             )\
         )",
@@ -3166,6 +3246,35 @@ async fn list_bangumi_episodes(
         .collect())
 }
 
+async fn fetch_media_for_episode(
+    db: &PgPool,
+    subject_id: i64,
+    episode_id: i64,
+) -> Result<Option<NextMediaEntry>, ApiError> {
+    let row = sqlx::query_as::<_, (String, String, i64)>(
+        "SELECT f.id, f.filename, f.size \
+         FROM media_matches m \
+         JOIN media_files f ON f.id = m.media_id \
+         WHERE m.subject_id = $1 AND m.episode_id = $2 \
+         ORDER BY f.filename \
+         LIMIT 1",
+    )
+    .bind(subject_id)
+    .bind(episode_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|err| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        message: format!("failed to fetch next media: {}", err),
+    })?;
+
+    Ok(row.map(|row| NextMediaEntry {
+        id: row.0,
+        filename: row.1,
+        size: row.2 as u64,
+    }))
+}
+
 async fn maybe_sync_episodes(state: &AppState, subject_id: i64) -> Result<(), ApiError> {
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(1) FROM bangumi_episodes WHERE subject_id = $1",
@@ -3192,7 +3301,7 @@ async fn maybe_sync_episodes(state: &AppState, subject_id: i64) -> Result<(), Ap
 
 async fn fetch_media_stats(db: &PgPool) -> Result<(i64, i64), ApiError> {
     let row = sqlx::query_as::<_, (i64, i64)>(
-        "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM media_files",
+        "SELECT COUNT(*)::BIGINT, COALESCE(SUM(size), 0)::BIGINT FROM media_files",
     )
     .fetch_one(db)
     .await
@@ -3442,6 +3551,55 @@ fn map_qbittorrent_error(err: QbittorrentError) -> ApiError {
         status,
         message: format!("qbittorrent error: {}", err),
     }
+}
+
+fn parse_episode_number(value: Option<&str>) -> Option<f64> {
+    let text = value?.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let mut current = String::new();
+    for ch in text.chars() {
+        if ch.is_ascii_digit() || ch == '.' {
+            current.push(ch);
+        } else if !current.is_empty() {
+            break;
+        }
+    }
+    if current.is_empty() {
+        return None;
+    }
+    current.parse::<f64>().ok()
+}
+
+fn find_episode_by_number(
+    episodes: &[BangumiEpisodeInfo],
+    value: f64,
+) -> Option<BangumiEpisodeInfo> {
+    let epsilon = 0.01;
+    episodes
+        .iter()
+        .find(|ep| {
+            ep.ep
+                .map(|ep_no| (ep_no - value).abs() < epsilon)
+                .unwrap_or_else(|| (ep.sort - value).abs() < epsilon)
+        })
+        .cloned()
+}
+
+fn find_next_episode(
+    episodes: &[BangumiEpisodeInfo],
+    current_sort: f64,
+) -> Option<BangumiEpisodeInfo> {
+    episodes
+        .iter()
+        .filter(|ep| ep.sort > current_sort + 0.0001)
+        .min_by(|a, b| {
+            a.sort
+                .partial_cmp(&b.sort)
+                .unwrap_or(CmpOrdering::Equal)
+        })
+        .cloned()
 }
 
 fn hash_password(password: &str) -> Result<String, ApiError> {

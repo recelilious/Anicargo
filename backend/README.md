@@ -164,6 +164,7 @@ Endpoints:
 - `GET /api/progress/:id` -> get playback progress for media id
 - `PUT /api/progress/:id` -> update playback progress for media id
 - `GET /api/media/:id` -> media detail (file + parse + match + progress)
+- `GET /api/media/:id/next` -> next episode info + next media (if present)
 - `GET /api/media/:id/episodes` -> matched subject episode list
 - `GET /api/subjects/:id/episodes` -> episode list by subject id
 - `GET /api/collection` -> list resource submissions (collector/admin)

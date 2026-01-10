@@ -12,8 +12,8 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { label: "Library", path: "/library", minLevel: 1 },
-  { label: "Player", path: "/player", minLevel: 1 },
   { label: "Collection", path: "/collection", minLevel: 2 },
+  { label: "Management", path: "/management", minLevel: 3 },
   { label: "Admin", path: "/admin", minLevel: 3 },
   { label: "Settings", path: "/settings", minLevel: 1 }
 ];

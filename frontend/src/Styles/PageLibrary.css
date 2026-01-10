@@ -31,6 +31,14 @@
   word-break: break-word;
 }
 
+.library-checkbox {
+  width: 32px;
+}
+
+.library-checkbox input {
+  cursor: pointer;
+}
+
 .library-empty {
   color: var(--muted);
   font-size: 13px;
@@ -57,12 +65,126 @@
   color: var(--muted);
 }
 
+.library-candidate-tools {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+}
+
+.library-bulk {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 12px;
+}
+
+.library-bulk-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.library-bulk-fields {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.library-candidate-list {
+  display: grid;
+  gap: 8px;
+}
+
+.library-candidate-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  width: 100%;
+  text-align: left;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.library-candidate-item:hover {
+  background: var(--ghost-hover);
+}
+
+.library-candidate-item.is-selected {
+  border-color: rgba(140, 110, 160, 0.6);
+  box-shadow: 0 0 0 1px rgba(140, 110, 160, 0.25);
+}
+
+.library-candidate-item.is-current {
+  background: rgba(90, 54, 95, 0.2);
+}
+
+.library-candidate-main {
+  display: grid;
+  gap: 4px;
+}
+
+.library-candidate-title {
+  font-size: 13px;
+}
+
+.library-candidate-subtitle {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.library-candidate-meta {
+  display: grid;
+  gap: 6px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.library-candidate-score {
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.library-candidate-reason {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-help {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.library-help.error {
+  color: #f7b7b7;
+}
+
 .library-actions {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
 }
 
+@media (max-width: 900px) {
+  .library-candidate-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .library-candidate-meta {
+    text-align: left;
+  }
+}
 .library-row {
   display: flex;
   justify-content: space-between;

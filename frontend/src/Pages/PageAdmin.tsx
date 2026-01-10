@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import AppShell from "../Components/AppShell";
 import "../Styles/PageAdmin.css";
-import { apiFetch } from "../api";
+import { apiFetch, apiFetchEmpty } from "../api";
 import { useSession } from "../session";
 
 interface AdminMetricsResponse {
@@ -61,6 +61,33 @@ interface QbittorrentTransferMetrics {
   connection_status: string;
 }
 
+interface AdminJob {
+  id: number;
+  job_type: string;
+  status: string;
+  attempts: number;
+  max_attempts: number;
+  payload?: Record<string, unknown> | null;
+  result?: unknown;
+  last_error?: string | null;
+  scheduled_at: string;
+  locked_at?: string | null;
+  locked_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface AdminJobsResponse {
+  jobs: AdminJob[];
+}
+
+interface UserRow {
+  user_id: string;
+  role: string;
+  role_level: number;
+  created_at: string;
+}
+
 function formatBytes(value: number): string {
   if (!Number.isFinite(value)) return "--";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -93,12 +120,46 @@ function formatPercent(value: number): string {
   return `${value.toFixed(1)}%`;
 }
 
+function roleLabel(level: number): string {
+  if (level >= 5) return "Admin 5";
+  if (level === 4) return "Admin 4";
+  if (level === 3) return "Admin 3";
+  if (level === 2) return "User 2";
+  return "User 1";
+}
+
+function formatJson(value: unknown): string {
+  if (value === null || value === undefined) return "--";
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function formatDate(value?: string | null): string {
+  if (!value) return "--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
 export default function PageAdmin() {
   const { session } = useSession();
   const [metrics, setMetrics] = useState<AdminMetricsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [jobs, setJobs] = useState<AdminJob[]>([]);
+  const [jobStatus, setJobStatus] = useState("running");
+  const [jobLimit, setJobLimit] = useState(50);
+  const [jobLoading, setJobLoading] = useState(false);
+  const [jobError, setJobError] = useState<string | null>(null);
+  const [expandedJobs, setExpandedJobs] = useState<Record<number, boolean>>({});
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [userLoading, setUserLoading] = useState(false);
+  const [userError, setUserError] = useState<string | null>(null);
+  const [userEdits, setUserEdits] = useState<Record<string, number>>({});
 
   const lastUpdatedLabel = useMemo(() => {
     if (!lastUpdated) return "Not loaded yet";
@@ -124,8 +185,127 @@ export default function PageAdmin() {
     }
   }
 
+  async function loadJobs() {
+    if (!session) return;
+    setJobLoading(true);
+    setJobError(null);
+    try {
+      const limit = Math.min(500, Math.max(1, jobLimit));
+      const params = new URLSearchParams();
+      if (jobStatus !== "all") {
+        params.set("status", jobStatus);
+      }
+      params.set("limit", limit.toString());
+      const data = await apiFetch<AdminJobsResponse>(
+        `/api/admin/jobs?${params.toString()}`,
+        {},
+        session.token
+      );
+      setJobs(data.jobs);
+    } catch (err) {
+      setJobError((err as Error).message || "Failed to load jobs.");
+    } finally {
+      setJobLoading(false);
+    }
+  }
+
+  async function loadUsers() {
+    if (!session) return;
+    setUserLoading(true);
+    setUserError(null);
+    try {
+      const data = await apiFetch<UserRow[]>("/api/users", {}, session.token);
+      setUsers(data);
+      setUserEdits((current) => {
+        const next = { ...current };
+        data.forEach((user) => {
+          if (!(user.user_id in next)) {
+            next[user.user_id] = user.role_level;
+          }
+        });
+        Object.keys(next).forEach((key) => {
+          if (!data.some((user) => user.user_id === key)) {
+            delete next[key];
+          }
+        });
+        return next;
+      });
+    } catch (err) {
+      setUserError((err as Error).message || "Failed to load users.");
+    } finally {
+      setUserLoading(false);
+    }
+  }
+
+  async function updateUserRole(user: UserRow) {
+    if (!session) return;
+    const targetLevel = userEdits[user.user_id] ?? user.role_level;
+    if (targetLevel === user.role_level) return;
+    if (targetLevel >= session.roleLevel || user.user_id === session.userId) {
+      setUserError("Insufficient permissions to change this user.");
+      return;
+    }
+    setUserLoading(true);
+    setUserError(null);
+    try {
+      await apiFetch<unknown>(
+        `/api/users/${encodeURIComponent(user.user_id)}/role`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ role_level: targetLevel })
+        },
+        session.token
+      );
+      await loadUsers();
+    } catch (err) {
+      setUserError((err as Error).message || "Failed to update role.");
+    } finally {
+      setUserLoading(false);
+    }
+  }
+
+  async function deleteUser(user: UserRow) {
+    if (!session) return;
+    if (user.user_id === session.userId) {
+      setUserError("Cannot delete current user.");
+      return;
+    }
+    if (user.role_level >= session.roleLevel) {
+      setUserError("Insufficient permissions to delete this user.");
+      return;
+    }
+    setUserLoading(true);
+    setUserError(null);
+    try {
+      await apiFetchEmpty(`/api/users/${encodeURIComponent(user.user_id)}`, {}, session.token);
+      await loadUsers();
+    } catch (err) {
+      setUserError((err as Error).message || "Failed to delete user.");
+    } finally {
+      setUserLoading(false);
+    }
+  }
+
+  function toggleJobDetail(id: number) {
+    setExpandedJobs((current) => ({
+      ...current,
+      [id]: !current[id]
+    }));
+  }
+
   useEffect(() => {
     loadMetrics();
+  }, [session]);
+
+  useEffect(() => {
+    loadJobs();
+  }, [session, jobStatus, jobLimit]);
+
+  useEffect(() => {
+    loadUsers();
   }, [session]);
 
   const jobStats = metrics?.job_counts;
@@ -133,6 +313,8 @@ export default function PageAdmin() {
   const storage = metrics?.storage;
   const network = metrics?.network;
   const qbittorrent = metrics?.qbittorrent ?? undefined;
+  const maxAssignable = Math.max(0, (session?.roleLevel ?? 0) - 1);
+  const assignableLevels = Array.from({ length: maxAssignable }, (_, index) => index + 1);
 
   return (
     <AppShell
@@ -341,6 +523,225 @@ export default function PageAdmin() {
             <div className="admin-submetric">qBittorrent not configured.</div>
           )}
         </div>
+      </section>
+
+      <section className="app-card admin-jobs">
+        <div className="admin-jobs-header">
+          <div>
+            <h2 className="app-card-title">Jobs</h2>
+            <p className="app-card-subtitle">Queue activity and background work.</p>
+          </div>
+          <div className="admin-jobs-toolbar">
+            <select
+              className="app-select"
+              value={jobStatus}
+              onChange={(event) => setJobStatus(event.target.value)}
+            >
+              <option value="all">All</option>
+              <option value="queued">Queued</option>
+              <option value="running">Running</option>
+              <option value="retry">Retry</option>
+              <option value="done">Done</option>
+              <option value="failed">Failed</option>
+            </select>
+            <input
+              className="app-input"
+              type="number"
+              min={1}
+              max={500}
+              value={jobLimit}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                if (Number.isFinite(value)) {
+                  setJobLimit(value);
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="app-btn"
+              onClick={loadJobs}
+              disabled={jobLoading}
+            >
+              {jobLoading ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
+        </div>
+        {jobError ? <div className="admin-error">{jobError}</div> : null}
+        {jobs.length === 0 ? (
+          <div className="admin-submetric">No jobs found.</div>
+        ) : (
+          <div className="admin-jobs-table">
+            <table className="app-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Type</th>
+                  <th>Status</th>
+                  <th>Attempts</th>
+                  <th>Updated</th>
+                  <th>Error</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {jobs.map((job) => {
+                  const expanded = Boolean(expandedJobs[job.id]);
+                  return (
+                    <Fragment key={job.id}>
+                      <tr>
+                        <td>{job.id}</td>
+                        <td>{job.job_type}</td>
+                        <td>{job.status}</td>
+                        <td>
+                          {job.attempts} / {job.max_attempts}
+                        </td>
+                        <td>{formatDate(job.updated_at)}</td>
+                        <td className="admin-job-error">{job.last_error || "--"}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="app-btn ghost"
+                            onClick={() => toggleJobDetail(job.id)}
+                          >
+                            {expanded ? "Hide" : "Show"}
+                          </button>
+                        </td>
+                      </tr>
+                      {expanded ? (
+                        <tr className="admin-job-detail">
+                          <td colSpan={7}>
+                            <div className="admin-job-detail-grid">
+                              <div>
+                                <div className="admin-job-label">Scheduled</div>
+                                <div>{formatDate(job.scheduled_at)}</div>
+                              </div>
+                              <div>
+                                <div className="admin-job-label">Created</div>
+                                <div>{formatDate(job.created_at)}</div>
+                              </div>
+                              <div>
+                                <div className="admin-job-label">Locked</div>
+                                <div>{formatDate(job.locked_at)}</div>
+                              </div>
+                              <div>
+                                <div className="admin-job-label">Worker</div>
+                                <div>{job.locked_by || "--"}</div>
+                              </div>
+                            </div>
+                            <div className="admin-job-detail-block">
+                              <div className="admin-job-label">Payload</div>
+                              <pre className="admin-job-pre">{formatJson(job.payload)}</pre>
+                            </div>
+                            <div className="admin-job-detail-block">
+                              <div className="admin-job-label">Result</div>
+                              <pre className="admin-job-pre">{formatJson(job.result)}</pre>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="app-card admin-users">
+        <div className="admin-users-header">
+          <div>
+            <h2 className="app-card-title">Users</h2>
+            <p className="app-card-subtitle">Manage roles and access levels.</p>
+          </div>
+          <button
+            type="button"
+            className="app-btn"
+            onClick={loadUsers}
+            disabled={userLoading}
+          >
+            {userLoading ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
+        {userError ? <div className="admin-error">{userError}</div> : null}
+        {users.length === 0 ? (
+          <div className="admin-submetric">No users found.</div>
+        ) : (
+          <div className="admin-users-table">
+            <table className="app-table">
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Role</th>
+                  <th>Level</th>
+                  <th>Created</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((user) => {
+                  const isSelf = user.user_id === session?.userId;
+                  const canManage = !isSelf && user.role_level < (session?.roleLevel ?? 0);
+                  const selectedLevel = userEdits[user.user_id] ?? user.role_level;
+                  return (
+                    <tr key={user.user_id}>
+                      <td>
+                        {user.user_id}
+                        {isSelf ? <span className="app-pill">you</span> : null}
+                      </td>
+                      <td>{user.role}</td>
+                      <td>{roleLabel(user.role_level)}</td>
+                      <td>{formatDate(user.created_at)}</td>
+                      <td>
+                        <div className="admin-user-actions">
+                          {canManage ? (
+                            <>
+                              <select
+                                className="app-select"
+                                value={selectedLevel}
+                                onChange={(event) =>
+                                  setUserEdits((current) => ({
+                                    ...current,
+                                    [user.user_id]: Number(event.target.value)
+                                  }))
+                                }
+                              >
+                                {assignableLevels.map((level) => (
+                                  <option key={level} value={level}>
+                                    {roleLabel(level)}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                className="app-btn ghost"
+                                onClick={() => updateUserRole(user)}
+                                disabled={userLoading || selectedLevel === user.role_level}
+                              >
+                                Apply
+                              </button>
+                              <button
+                                type="button"
+                                className="app-btn ghost"
+                                onClick={() => deleteUser(user)}
+                                disabled={userLoading}
+                              >
+                                Delete
+                              </button>
+                            </>
+                          ) : (
+                            <span className="admin-submetric">No permission</span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
     </AppShell>
   );

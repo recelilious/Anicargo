@@ -51,8 +51,13 @@ export default function PageCollection() {
   const [torrentNote, setTorrentNote] = useState("");
   const [torrentFile, setTorrentFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [decisionNotes, setDecisionNotes] = useState<Record<number, string>>({});
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [bulkNote, setBulkNote] = useState("");
+  const [bulkWorking, setBulkWorking] = useState(false);
 
   const isAdmin = useMemo(() => (session?.roleLevel ?? 0) >= 3, [session]);
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
   async function loadItems() {
     if (!session) return;
@@ -66,6 +71,26 @@ export default function PageCollection() {
         session.token
       );
       setItems(data.items);
+      setDecisionNotes((current) => {
+        const next = { ...current };
+        const ids = new Set<number>();
+        data.items.forEach((item) => {
+          ids.add(item.id);
+          if (!(item.id in next)) {
+            next[item.id] = item.decision_note ?? "";
+          }
+        });
+        Object.keys(next).forEach((key) => {
+          const id = Number(key);
+          if (!ids.has(id)) {
+            delete next[id];
+          }
+        });
+        return next;
+      });
+      setSelectedIds((current) =>
+        current.filter((id) => data.items.some((item) => item.id === id))
+      );
     } catch (err) {
       setError((err as Error).message || "Failed to load submissions.");
     } finally {
@@ -149,9 +174,16 @@ export default function PageCollection() {
     setSubmitting(true);
     setError(null);
     try {
+      const note = decisionNotes[id]?.trim() || null;
       await apiFetch<CollectionCreateResponse>(
         `/api/collection/${id}/approve`,
-        { method: "POST" },
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ note })
+        },
         session.token
       );
       await loadItems();
@@ -167,9 +199,16 @@ export default function PageCollection() {
     setSubmitting(true);
     setError(null);
     try {
+      const note = decisionNotes[id]?.trim() || null;
       await apiFetch<CollectionCreateResponse>(
         `/api/collection/${id}/reject`,
-        { method: "POST" },
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ note })
+        },
         session.token
       );
       await loadItems();
@@ -194,6 +233,125 @@ export default function PageCollection() {
     }
   }
 
+  function toggleSelected(id: number) {
+    setSelectedIds((current) =>
+      current.includes(id) ? current.filter((value) => value !== id) : [...current, id]
+    );
+  }
+
+  function selectPending() {
+    setSelectedIds(items.filter((item) => item.status === "pending").map((item) => item.id));
+  }
+
+  async function bulkApprove() {
+    if (!session || !isAdmin) return;
+    const pendingIds = items
+      .filter((item) => item.status === "pending" && selectedSet.has(item.id))
+      .map((item) => item.id);
+    if (!pendingIds.length) {
+      setError("Select pending submissions to approve.");
+      return;
+    }
+    setBulkWorking(true);
+    setError(null);
+    let failures = 0;
+    for (const id of pendingIds) {
+      const note = decisionNotes[id]?.trim() || bulkNote.trim() || null;
+      try {
+        await apiFetch<CollectionCreateResponse>(
+          `/api/collection/${id}/approve`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ note })
+          },
+          session.token
+        );
+      } catch {
+        failures += 1;
+      }
+    }
+    if (failures > 0) {
+      setError(`Bulk approve finished with ${failures} error(s).`);
+    }
+    await loadItems();
+    setBulkWorking(false);
+  }
+
+  async function bulkReject() {
+    if (!session || !isAdmin) return;
+    const pendingIds = items
+      .filter((item) => item.status === "pending" && selectedSet.has(item.id))
+      .map((item) => item.id);
+    if (!pendingIds.length) {
+      setError("Select pending submissions to reject.");
+      return;
+    }
+    setBulkWorking(true);
+    setError(null);
+    let failures = 0;
+    for (const id of pendingIds) {
+      const note = decisionNotes[id]?.trim() || bulkNote.trim() || null;
+      try {
+        await apiFetch<CollectionCreateResponse>(
+          `/api/collection/${id}/reject`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ note })
+          },
+          session.token
+        );
+      } catch {
+        failures += 1;
+      }
+    }
+    if (failures > 0) {
+      setError(`Bulk reject finished with ${failures} error(s).`);
+    }
+    await loadItems();
+    setBulkWorking(false);
+  }
+
+  async function bulkDelete() {
+    if (!session || !isAdmin) return;
+    if (!selectedIds.length) {
+      setError("Select submissions to delete.");
+      return;
+    }
+    setBulkWorking(true);
+    setError(null);
+    let failures = 0;
+    for (const id of selectedIds) {
+      try {
+        await apiFetchEmpty(`/api/collection/${id}`, { method: "DELETE" }, session.token);
+      } catch {
+        failures += 1;
+      }
+    }
+    if (failures > 0) {
+      setError(`Bulk delete finished with ${failures} error(s).`);
+    }
+    await loadItems();
+    setBulkWorking(false);
+  }
+
+  const statusCounts = useMemo(() => {
+    return items.reduce(
+      (acc, item) => {
+        if (item.status === "pending") acc.pending += 1;
+        else if (item.status === "approved") acc.approved += 1;
+        else if (item.status === "rejected") acc.rejected += 1;
+        return acc;
+      },
+      { pending: 0, approved: 0, rejected: 0 }
+    );
+  }, [items]);
+
   return (
     <AppShell title="Collection" subtitle="Submit magnets or torrents for review.">
       <div className="collection-toolbar app-card">
@@ -202,6 +360,11 @@ export default function PageCollection() {
           <p className="app-card-subtitle">Pending items need admin approval.</p>
         </div>
         <div className="collection-actions">
+          <div className="collection-summary">
+            <span className="app-pill">Pending {statusCounts.pending}</span>
+            <span className="app-pill">Approved {statusCounts.approved}</span>
+            <span className="app-pill">Rejected {statusCounts.rejected}</span>
+          </div>
           <select
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value)}
@@ -219,6 +382,73 @@ export default function PageCollection() {
       </div>
 
       {error ? <div className="collection-error">{error}</div> : null}
+
+      {isAdmin ? (
+        <section className="app-card collection-bulk">
+          <div className="collection-bulk-header">
+            <div>
+              <h2 className="app-card-title">Bulk review</h2>
+              <p className="app-card-subtitle">Select multiple submissions at once.</p>
+            </div>
+            <span className="app-pill">{selectedIds.length} selected</span>
+          </div>
+          <div className="collection-bulk-actions">
+            <button
+              type="button"
+              className="app-btn"
+              onClick={selectPending}
+              disabled={bulkWorking || loading}
+            >
+              Select pending
+            </button>
+            <button
+              type="button"
+              className="app-btn ghost"
+              onClick={() => setSelectedIds([])}
+              disabled={!selectedIds.length || bulkWorking}
+            >
+              Clear selection
+            </button>
+          </div>
+          <label className="collection-label">
+            <span>Bulk decision note (optional)</span>
+            <input
+              className="app-input"
+              type="text"
+              value={bulkNote}
+              onChange={(event) => setBulkNote(event.target.value)}
+              placeholder="Note applied when per-item note is empty"
+              disabled={bulkWorking}
+            />
+          </label>
+          <div className="collection-item-actions">
+            <button
+              type="button"
+              className="app-btn primary"
+              onClick={bulkApprove}
+              disabled={bulkWorking || !selectedIds.length}
+            >
+              Approve selected
+            </button>
+            <button
+              type="button"
+              className="app-btn ghost"
+              onClick={bulkReject}
+              disabled={bulkWorking || !selectedIds.length}
+            >
+              Reject selected
+            </button>
+            <button
+              type="button"
+              className="app-btn ghost"
+              onClick={bulkDelete}
+              disabled={bulkWorking || !selectedIds.length}
+            >
+              Delete selected
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       <section className="collection-grid">
         <form className="app-card collection-form" onSubmit={submitMagnet}>
@@ -294,7 +524,15 @@ export default function PageCollection() {
         {items.map((item) => (
           <div key={item.id} className="app-card collection-item">
             <div className="collection-item-header">
-              <div>
+              <div className="collection-item-title">
+                {isAdmin ? (
+                  <input
+                    type="checkbox"
+                    checked={selectedSet.has(item.id)}
+                    onChange={() => toggleSelected(item.id)}
+                    aria-label={`Select submission ${item.id}`}
+                  />
+                ) : null}
                 <strong>#{item.id}</strong>
                 <span className={`collection-status status-${item.status}`}>
                   {item.status}
@@ -312,6 +550,10 @@ export default function PageCollection() {
                 </span>
               </div>
               <div className="collection-row">
+                <span>Submitter</span>
+                <span>{item.submitter_id}</span>
+              </div>
+              <div className="collection-row">
                 <span>Note</span>
                 <span>{item.note || "--"}</span>
               </div>
@@ -323,6 +565,32 @@ export default function PageCollection() {
                 <span>Decision</span>
                 <span>{item.decision_note || "--"}</span>
               </div>
+              <div className="collection-row">
+                <span>Decided by</span>
+                <span>{item.decided_by || "--"}</span>
+              </div>
+              <div className="collection-row">
+                <span>Decided at</span>
+                <span>{formatDate(item.decided_at)}</span>
+              </div>
+              {isAdmin && item.status === "pending" ? (
+                <label className="collection-label">
+                  <span>Decision note</span>
+                  <input
+                    className="app-input"
+                    type="text"
+                    value={decisionNotes[item.id] ?? ""}
+                    onChange={(event) =>
+                      setDecisionNotes((prev) => ({
+                        ...prev,
+                        [item.id]: event.target.value
+                      }))
+                    }
+                    placeholder="Optional note for approval/rejection"
+                    disabled={submitting}
+                  />
+                </label>
+              ) : null}
             </div>
             <div className="collection-item-actions">
               {item.status === "pending" ? (

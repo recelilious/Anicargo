@@ -1,8 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../Components/AppShell";
 import { apiFetch } from "../api";
 import { useSession } from "../session";
-import { applyLocalTheme, loadLocalTheme, resetLocalTheme, saveLocalTheme } from "../theme";
+import {
+  applyLocalTheme,
+  createPreset,
+  loadLocalPresets,
+  loadLocalTheme,
+  resetLocalTheme,
+  saveLocalPresets,
+  saveLocalTheme,
+  type ThemePreset
+} from "../theme";
+import { libraryColumnsRange, loadLibraryColumns, saveLibraryColumns } from "../uiSettings";
 import "../Styles/PageSettings.css";
 
 interface UserSettingsResponse {
@@ -23,6 +33,10 @@ export default function PageSettings() {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [localTheme, setLocalTheme] = useState(loadLocalTheme());
+  const [presets, setPresets] = useState<ThemePreset[]>(loadLocalPresets());
+  const [presetName, setPresetName] = useState("");
+  const [libraryColumns, setLibraryColumns] = useState(loadLibraryColumns());
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const radiusValue = useMemo(() => localTheme.radiusBase, [localTheme.radiusBase]);
 
@@ -45,6 +59,14 @@ export default function PageSettings() {
     applyLocalTheme(localTheme);
     saveLocalTheme(localTheme);
   }, [localTheme]);
+
+  useEffect(() => {
+    saveLocalPresets(presets);
+  }, [presets]);
+
+  useEffect(() => {
+    saveLibraryColumns(libraryColumns);
+  }, [libraryColumns]);
 
   async function handleSave(event: React.FormEvent) {
     event.preventDefault();
@@ -84,6 +106,83 @@ export default function PageSettings() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function handleSavePreset() {
+    const name = presetName.trim();
+    if (!name) {
+      setError("Preset name is required.");
+      return;
+    }
+    setError(null);
+    setStatus(null);
+
+    const existing = presets.find((preset) => preset.name.toLowerCase() === name.toLowerCase());
+    if (existing) {
+      setPresets((prev) =>
+        prev.map((preset) =>
+          preset.id === existing.id ? { ...preset, settings: { ...localTheme } } : preset
+        )
+      );
+      setStatus("Preset updated.");
+      return;
+    }
+
+    const preset = createPreset(name, localTheme);
+    setPresets((prev) => [...prev, preset]);
+    setPresetName("");
+    setStatus("Preset saved.");
+  }
+
+  function handleExportPresets() {
+    const payload = JSON.stringify(presets, null, 2);
+    const blob = new Blob([payload], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "anicargo-theme-presets.json";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleImportFile(file: File) {
+    try {
+      const raw = await file.text();
+      const parsed = JSON.parse(raw);
+      const list = Array.isArray(parsed) ? parsed : parsed?.presets;
+      if (!Array.isArray(list)) {
+        setError("Invalid preset file.");
+        return;
+      }
+      const imported = list
+        .filter((item) => item && typeof item === "object" && item.settings)
+        .map((item) => createPreset(item.name || "Imported", item.settings));
+      if (!imported.length) {
+        setError("No presets found in file.");
+        return;
+      }
+      setPresets((prev) => [...prev, ...imported]);
+      setStatus(`Imported ${imported.length} preset(s).`);
+    } catch {
+      setError("Failed to import preset file.");
+    }
+  }
+
+  function handleImportPresets(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    handleImportFile(file);
+    event.target.value = "";
+  }
+
+  function handleApplyPreset(preset: ThemePreset) {
+    setLocalTheme(preset.settings);
+    setStatus(`Applied preset: ${preset.name}`);
+  }
+
+  function handleDeletePreset(id: string) {
+    setPresets((prev) => prev.filter((preset) => preset.id !== id));
+    setStatus("Preset removed.");
   }
 
   return (
@@ -248,14 +347,88 @@ export default function PageSettings() {
             />
           </label>
 
-          <div className="settings-actions">
-            <button
-              type="button"
-              className="app-btn ghost"
-              onClick={() => setLocalTheme(resetLocalTheme())}
-            >
-              Reset to default
-            </button>
+          <label className="settings-label">
+            <span>Library columns</span>
+            <input
+              className="app-input"
+              type="number"
+              min={libraryColumnsRange.min}
+              max={libraryColumnsRange.max}
+              value={libraryColumns}
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                if (!Number.isNaN(next)) {
+                  setLibraryColumns(next);
+                }
+              }}
+            />
+          </label>
+
+          <div className="settings-preset">
+            <div className="settings-preset-row">
+              <input
+                className="app-input"
+                type="text"
+                placeholder="Preset name"
+                value={presetName}
+                onChange={(event) => setPresetName(event.target.value)}
+              />
+              <button type="button" className="app-btn" onClick={handleSavePreset}>
+                Save preset
+              </button>
+              <button type="button" className="app-btn ghost" onClick={handleExportPresets}>
+                Export
+              </button>
+              <button
+                type="button"
+                className="app-btn ghost"
+                onClick={() => importInputRef.current?.click()}
+              >
+                Import
+              </button>
+              <button
+                type="button"
+                className="app-btn ghost"
+                onClick={() => setLocalTheme(resetLocalTheme())}
+              >
+                Reset
+              </button>
+            </div>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept="application/json"
+              className="settings-hidden-input"
+              onChange={handleImportPresets}
+            />
+
+            {presets.length ? (
+              <div className="settings-preset-list">
+                {presets.map((preset) => (
+                  <div key={preset.id} className="settings-preset-item">
+                    <span>{preset.name}</span>
+                    <div className="settings-preset-actions">
+                      <button
+                        type="button"
+                        className="app-btn ghost"
+                        onClick={() => handleApplyPreset(preset)}
+                      >
+                        Apply
+                      </button>
+                      <button
+                        type="button"
+                        className="app-btn ghost"
+                        onClick={() => handleDeletePreset(preset.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="app-muted">No presets saved.</div>
+            )}
           </div>
         </section>
       </div>

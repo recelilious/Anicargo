@@ -9,6 +9,7 @@ export interface LocalThemeSettings {
 }
 
 const storageKey = "anicargo.localTheme";
+const presetsKey = "anicargo.localTheme.presets";
 
 const defaultTheme: LocalThemeSettings = {
   accent: "#3c203f",
@@ -19,6 +20,12 @@ const defaultTheme: LocalThemeSettings = {
   muted: "#b6b2c2",
   radiusBase: 14
 };
+
+export interface ThemePreset {
+  id: string;
+  name: string;
+  settings: LocalThemeSettings;
+}
 
 export function loadLocalTheme(): LocalThemeSettings {
   try {
@@ -51,6 +58,31 @@ export function saveLocalTheme(theme: LocalThemeSettings) {
 export function resetLocalTheme(): LocalThemeSettings {
   window.localStorage.removeItem(storageKey);
   return { ...defaultTheme };
+}
+
+export function loadLocalPresets(): ThemePreset[] {
+  try {
+    const raw = window.localStorage.getItem(presetsKey);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as ThemePreset[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((preset) => preset && typeof preset.id === "string");
+  } catch {
+    return [];
+  }
+}
+
+export function saveLocalPresets(presets: ThemePreset[]) {
+  window.localStorage.setItem(presetsKey, JSON.stringify(presets));
+}
+
+export function createPreset(name: string, settings: LocalThemeSettings): ThemePreset {
+  const id = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+  return {
+    id,
+    name,
+    settings: { ...settings }
+  };
 }
 
 export function applyLocalTheme(theme: LocalThemeSettings) {

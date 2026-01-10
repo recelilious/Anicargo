@@ -10,6 +10,13 @@
   display: flex;
   gap: 12px;
   align-items: center;
+  flex-wrap: wrap;
+}
+
+.collection-summary {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .collection-error {
@@ -24,6 +31,25 @@
   display: grid;
   gap: 16px;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.collection-bulk {
+  display: grid;
+  gap: 12px;
+}
+
+.collection-bulk-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.collection-bulk-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .collection-form {
@@ -51,6 +77,16 @@
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+}
+
+.collection-item-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.collection-item-title input[type="checkbox"] {
+  cursor: pointer;
 }
 
 .collection-status {

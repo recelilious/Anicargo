@@ -6,6 +6,7 @@ import PageSignup from "./Pages/PageSignup";
 import PageSettings from "./Pages/PageSettings";
 import PagePlayer from "./Pages/PagePlayer";
 import PageCollection from "./Pages/PageCollection";
+import PageManagement from "./Pages/PageManagement";
 import PageAdmin from "./Pages/PageAdmin";
 import PageNotFound from "./Pages/PageNotFound";
 import { SessionProvider } from "./session";
@@ -57,6 +58,14 @@ export default function App() {
             element={(
               <RequireRole minLevel={2}>
                 <PageCollection />
+              </RequireRole>
+            )}
+          />
+          <Route
+            path="/management"
+            element={(
+              <RequireRole minLevel={3}>
+                <PageManagement />
               </RequireRole>
             )}
           />

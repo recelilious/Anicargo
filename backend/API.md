@@ -156,6 +156,22 @@ Response:
 }
 ```
 
+#### GET /api/media/:id/next
+
+Returns the next episode info for the matched subject, plus the next media file
+if it exists in the library.
+
+Response:
+
+```json
+{
+  "subject":{"id":329906,"name":"SPYxFAMILY","name_cn":"...","air_date":"2022-04-09","total_episodes":25},
+  "current_episode":{"id":101,"sort":12,"ep":12,"name":"...","name_cn":"...","air_date":"..."},
+  "next_episode":{"id":102,"sort":13,"ep":13,"name":"...","name_cn":"...","air_date":"..."},
+  "next_media":{"id":"...","filename":"...","size":123456}
+}
+```
+
 #### GET /api/media/:id/episodes
 
 Returns episodes for the matched subject (auto-syncs on first request).
