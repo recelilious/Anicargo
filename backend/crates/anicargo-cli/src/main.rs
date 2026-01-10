@@ -1,7 +1,8 @@
 use anicargo_bangumi::BangumiClient;
 use anicargo_config::{init_logging, split_config_args, AppConfig};
 use anicargo_library::{
-    auto_match_all, init_library, scan_and_index, sync_bangumi_subject, AutoMatchOptions,
+    auto_match_all, auto_match_unmatched, init_library, scan_and_index, sync_bangumi_subject,
+    AutoMatchOptions,
 };
 use anicargo_media::{ensure_hls, find_entry_by_id, scan_media, MediaConfig, MediaError};
 use anicargo_qbittorrent::QbittorrentClient;
@@ -127,9 +128,19 @@ async fn cmd_index(
 
     init_library(&db).await?;
     let summary = scan_and_index(&db, media_config).await?;
+    let client = BangumiClient::new(
+        app_config.bangumi.access_token.clone(),
+        app_config.bangumi.user_agent.clone(),
+    )?;
+    let match_summary = auto_match_unmatched(&db, &client, AutoMatchOptions::default()).await?;
     println!(
-        "indexed {} files (parsed {}, skipped {}, removed {})",
-        summary.upserted, summary.parsed, summary.skipped, summary.removed
+        "indexed {} files (parsed {}, skipped {}, removed {}), auto matched {} files (candidates {})",
+        summary.upserted,
+        summary.parsed,
+        summary.skipped,
+        summary.removed,
+        match_summary.matched,
+        match_summary.candidates
     );
     Ok(())
 }

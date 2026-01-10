@@ -1,10 +1,10 @@
 use anicargo_bangumi::BangumiClient;
 use anicargo_config::{init_logging, split_config_args, AppConfig};
 use anicargo_library::{
-    auto_match_all, cleanup_jobs, clear_match, complete_job, enqueue_job, fail_job, fetch_next_job,
-    get_candidates, get_job_status, get_match, init_library, list_media_entries, requeue_stuck_jobs,
-    scan_and_index, set_manual_match, sync_bangumi_subject, AutoMatchOptions, Job, JobStatus,
-    MatchCandidate, MediaMatch,
+    auto_match_all, auto_match_unmatched, cleanup_jobs, clear_match, complete_job, enqueue_job,
+    fail_job, fetch_next_job, get_candidates, get_job_status, get_match, init_library,
+    list_media_entries, requeue_stuck_jobs, scan_and_index, set_manual_match, sync_bangumi_subject,
+    AutoMatchOptions, Job, JobStatus, MatchCandidate, MediaMatch,
 };
 use anicargo_media::{ensure_hls, find_entry_by_id, MediaConfig, MediaError, MediaEntry};
 use anicargo_qbittorrent::{QbittorrentClient, QbittorrentError};
@@ -2029,6 +2029,10 @@ async fn process_job(state: &AppState, job: Job) -> Result<Option<Value>, String
             let summary = scan_and_index(&state.db, &state.config)
                 .await
                 .map_err(|err| format!("index failed: {}", err))?;
+            let options = AutoMatchOptions::default();
+            if let Err(err) = auto_match_unmatched(&state.db, &state.bangumi, options).await {
+                tracing::warn!("auto match after index failed: {}", err);
+            }
             serde_json::to_value(summary)
                 .map(Some)
                 .map_err(|err| format!("index result encode failed: {}", err))

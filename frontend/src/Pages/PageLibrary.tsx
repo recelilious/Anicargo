@@ -95,6 +95,7 @@ export default function PageLibrary() {
     () => normalizeNumberInput(episodesValue),
     [episodesValue]
   );
+  const yearFilterActive = yearEnabled && (yearMinValue !== null || yearMaxValue !== null);
 
   useEffect(() => {
     const q = searchParams.get("q");
@@ -205,7 +206,7 @@ export default function PageLibrary() {
       });
     }
 
-    if (yearEnabled) {
+    if (yearFilterActive) {
       next = next.filter((card) => {
         if (!card.year) return false;
         if (yearMinValue !== null && card.year < yearMinValue) return false;
@@ -229,7 +230,7 @@ export default function PageLibrary() {
   }, [
     cards,
     normalizedSearch,
-    yearEnabled,
+    yearFilterActive,
     yearMinValue,
     yearMaxValue,
     episodesEnabled,

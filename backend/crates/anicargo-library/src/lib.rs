@@ -466,6 +466,101 @@ pub async fn auto_match_all(
     Ok(summary)
 }
 
+pub async fn auto_match_unmatched(
+    db: &PgPool,
+    client: &BangumiClient,
+    options: AutoMatchOptions,
+) -> Result<AutoMatchSummary, LibraryError> {
+    let rows = sqlx::query_as::<_, MediaParseRow>(
+        "SELECT p.media_id, p.title, p.episode, p.season, p.year, p.parse_ok \
+         FROM media_parses p \
+         WHERE p.parse_ok = true \
+           AND NOT EXISTS (SELECT 1 FROM media_matches m WHERE m.media_id = p.media_id)",
+    )
+    .fetch_all(db)
+    .await?;
+
+    let mut summary = AutoMatchSummary::default();
+
+    for row in rows {
+        summary.scanned += 1;
+        if !row.parse_ok {
+            summary.skipped += 1;
+            continue;
+        }
+
+        let title = match row.title {
+            Some(value) if !value.trim().is_empty() => value,
+            _ => {
+                summary.skipped += 1;
+                continue;
+            }
+        };
+
+        let search = client.search_anime(&title, options.limit).await?;
+        clear_candidates(db, &row.media_id).await?;
+        clear_auto_match(db, &row.media_id).await?;
+
+        if search.data.is_empty() {
+            summary.skipped += 1;
+            continue;
+        }
+
+        let mut best: Option<(Subject, f32, String)> = None;
+        for subject in search.data {
+            upsert_subject_cached(db, &subject).await?;
+            let (score, reason) = score_subject(
+                &title,
+                row.year.as_deref(),
+                row.season.as_deref(),
+                row.episode.as_deref(),
+                &subject,
+            );
+
+            if score >= options.min_candidate_score {
+                upsert_candidate(db, &row.media_id, subject.id, score, &reason).await?;
+                summary.candidates += 1;
+            }
+
+            if best.as_ref().map(|(_, s, _)| score > *s).unwrap_or(true) {
+                best = Some((subject, score, reason));
+            }
+        }
+
+        let Some((subject, score, reason)) = best else {
+            summary.skipped += 1;
+            continue;
+        };
+
+        if score < options.min_confidence {
+            continue;
+        }
+
+        let episode_id = match row.episode.as_deref() {
+            Some(ep_str) => {
+                ensure_episode_cache(db, client, subject.id).await?;
+                let episodes = load_cached_episodes(db, subject.id).await?;
+                match_episode_id(ep_str, &episodes)
+            }
+            None => None,
+        };
+
+        upsert_media_match(
+            db,
+            &row.media_id,
+            subject.id,
+            episode_id,
+            "auto",
+            Some(score),
+            Some(reason),
+        )
+        .await?;
+        summary.matched += 1;
+    }
+
+    Ok(summary)
+}
+
 pub async fn set_manual_match(
     db: &PgPool,
     media_id: &str,
