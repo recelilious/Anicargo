@@ -1016,7 +1016,7 @@ async fn media_detail_handler(
             subject,
             episode,
             method: row.method,
-            confidence: row.confidence,
+            confidence: row.confidence.map(|value| value as f32),
             reason: row.reason,
         })
     } else {
@@ -2642,7 +2642,7 @@ struct MediaMatchRowDb {
     subject_id: i64,
     episode_id: Option<i64>,
     method: String,
-    confidence: Option<f32>,
+    confidence: Option<f64>,
     reason: Option<String>,
 }
 
@@ -3247,7 +3247,7 @@ async fn fetch_bangumi_subject(
     subject_id: i64,
 ) -> Result<BangumiSubjectInfo, ApiError> {
     let row = sqlx::query_as::<_, BangumiSubjectRow>(
-        "SELECT id, name, name_cn, air_date, total_episodes \
+        "SELECT id, name, name_cn, air_date, total_episodes::BIGINT \
          FROM bangumi_subjects WHERE id = $1",
     )
     .bind(subject_id)
