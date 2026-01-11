@@ -22,6 +22,7 @@ use axum::Extension;
 use async_stream::stream;
 use futures::Stream;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -32,6 +33,7 @@ use std::convert::Infallible;
 use std::env;
 use std::fmt;
 use std::fs;
+use std::pin::Pin;
 use std::cmp::Ordering as CmpOrdering;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path as StdPath, PathBuf};
@@ -39,7 +41,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::fs::File;
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::{mpsc, Mutex, Semaphore};
 use tokio::time::sleep;
 use tokio_util::io::ReaderStream;
 use tower::limit::ConcurrencyLimitLayer;
@@ -760,6 +762,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Duration::from_secs(app_config.server.job_cleanup_interval_secs),
         );
     }
+    spawn_media_watcher(state.clone());
 
     let bind_addr = app_config.server.bind.clone();
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
@@ -1950,6 +1953,79 @@ fn spawn_job_workers(state: Arc<AppState>, workers: u32, poll_interval: Duration
 fn spawn_job_cleanup(state: Arc<AppState>, interval: Duration) {
     tokio::spawn(async move {
         job_cleanup_loop(state, interval).await;
+    });
+}
+
+fn spawn_media_watcher(state: Arc<AppState>) {
+    let media_dir = state.config.media_dir.clone();
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<()>();
+
+    std::thread::spawn(move || {
+        let tx = event_tx.clone();
+        let mut watcher = match RecommendedWatcher::new(
+            move |res: notify::Result<notify::Event>| {
+                if let Ok(event) = res {
+                    match event.kind {
+                        notify::event::EventKind::Create(_)
+                        | notify::event::EventKind::Modify(_)
+                        | notify::event::EventKind::Remove(_) => {
+                            let _ = tx.send(());
+                        }
+                        _ => {}
+                    }
+                }
+            },
+            notify::Config::default(),
+        ) {
+            Ok(watcher) => watcher,
+            Err(err) => {
+                tracing::warn!("media watcher init failed: {}", err);
+                return;
+            }
+        };
+
+        if let Err(err) = watcher.watch(&media_dir, RecursiveMode::Recursive) {
+            tracing::warn!("media watcher start failed: {}", err);
+            return;
+        }
+
+        info!(path = %media_dir.display(), "media watcher started");
+        let (_keep_tx, keep_rx) = std::sync::mpsc::channel::<()>();
+        let _ = keep_rx.recv();
+    });
+
+    tokio::spawn(async move {
+        let debounce_delay = Duration::from_secs(2);
+        let mut debounce: Option<Pin<Box<tokio::time::Sleep>>> = None;
+        loop {
+            tokio::select! {
+                event = event_rx.recv() => {
+                    if event.is_none() {
+                        break;
+                    }
+                    if let Some(timer) = debounce.as_mut() {
+                        timer.as_mut().reset(tokio::time::Instant::now() + debounce_delay);
+                    } else {
+                        debounce = Some(Box::pin(tokio::time::sleep(debounce_delay)));
+                    }
+                }
+                _ = async {
+                    if let Some(timer) = debounce.as_mut() {
+                        timer.as_mut().await;
+                    }
+                }, if debounce.is_some() => {
+                    debounce = None;
+                    let _ = enqueue_job(
+                        &state.db,
+                        "index",
+                        json!({ "mode": "watcher" }),
+                        state.job_max_attempts,
+                        Some("index"),
+                    )
+                    .await;
+                }
+            }
+        }
     });
 }
 
