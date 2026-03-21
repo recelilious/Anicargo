@@ -74,6 +74,14 @@ function formatRating(score: number | null) {
   return score == null ? "暂无评分" : score.toFixed(1);
 }
 
+function formatBroadcast(detail: SubjectDetailResponse["subject"]) {
+  if (detail.broadcastTime) {
+    return detail.airDate ? `${detail.airDate} ${detail.broadcastTime}` : detail.broadcastTime;
+  }
+
+  return detail.airDate ?? "未知";
+}
+
 export function SubjectPage() {
   const styles = useStyles();
   const { subjectId } = useParams();
@@ -186,7 +194,7 @@ export function SubjectPage() {
         </Card>
         <Card className={styles.surfaceCard}>
           <Text weight="semibold">放送</Text>
-          <Text>{detail.subject.airDate ?? "未知"}</Text>
+          <Text>{formatBroadcast(detail.subject)}</Text>
         </Card>
         <Card className={styles.surfaceCard}>
           <Text weight="semibold">评分</Text>

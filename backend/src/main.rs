@@ -1,14 +1,20 @@
+mod anilist;
 mod auth;
 mod bangumi;
 mod config;
 mod db;
 mod routes;
+mod syoboi;
 mod types;
 
 use anyhow::Context;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::{bangumi::BangumiClient, config::AppConfig, db::connect_and_migrate, routes::AppState};
+use crate::{
+    anilist::AniListClient, bangumi::BangumiClient, config::AppConfig, db::connect_and_migrate,
+    routes::AppState,
+    syoboi::SyoboiClient,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -28,10 +34,14 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to ensure bootstrap admin")?;
 
     let bangumi = BangumiClient::new(&config.bangumi).context("failed to initialize bangumi")?;
+    let syoboi = SyoboiClient::new(&config.syoboi).context("failed to initialize syoboi")?;
+    let anilist = AniListClient::new(&config.anilist).context("failed to initialize anilist")?;
     let router = routes::build_router(AppState {
         config: config.clone(),
         pool,
         bangumi,
+        syoboi,
+        anilist,
     });
 
     let address = format!("{}:{}", config.server.host, config.server.port);

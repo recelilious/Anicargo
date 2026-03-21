@@ -32,6 +32,7 @@ export type SubjectCard = {
   summary: string;
   releaseStatus: "airing" | "completed";
   airDate: string | null;
+  broadcastTime: string | null;
   airWeekday: number | null;
   imagePortrait: string | null;
   imageBanner: string | null;
@@ -92,6 +93,7 @@ export type SubjectDetailResponse = {
     titleCn: string;
     summary: string;
     airDate: string | null;
+    broadcastTime: string | null;
     airWeekday: number | null;
     totalEpisodes: number | null;
     imagePortrait: string | null;

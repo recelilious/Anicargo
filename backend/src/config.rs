@@ -9,6 +9,8 @@ pub struct AppConfig {
     pub server: ServerConfig,
     pub storage: StorageConfig,
     pub bangumi: BangumiConfig,
+    pub syoboi: SyoboiConfig,
+    pub anilist: AniListConfig,
     pub auth: AuthConfig,
 }
 
@@ -28,6 +30,18 @@ pub struct StorageConfig {
 pub struct BangumiConfig {
     pub base_url: String,
     pub user_agent: String,
+    pub request_timeout_secs: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct SyoboiConfig {
+    pub base_url: String,
+    pub request_timeout_secs: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AniListConfig {
+    pub base_url: String,
     pub request_timeout_secs: u64,
 }
 
@@ -59,6 +73,8 @@ struct PartialConfig {
     server: Option<PartialServerConfig>,
     storage: Option<PartialStorageConfig>,
     bangumi: Option<PartialBangumiConfig>,
+    syoboi: Option<PartialSyoboiConfig>,
+    anilist: Option<PartialAniListConfig>,
     auth: Option<PartialAuthConfig>,
 }
 
@@ -78,6 +94,18 @@ struct PartialStorageConfig {
 struct PartialBangumiConfig {
     base_url: Option<String>,
     user_agent: Option<String>,
+    request_timeout_secs: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PartialSyoboiConfig {
+    base_url: Option<String>,
+    request_timeout_secs: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PartialAniListConfig {
+    base_url: Option<String>,
     request_timeout_secs: Option<u64>,
 }
 
@@ -104,6 +132,14 @@ impl Default for AppConfig {
                 base_url: "https://api.bgm.tv".to_owned(),
                 user_agent: "Anicargo/0.1 (+https://github.com/recelilious/Anicargo)".to_owned(),
                 request_timeout_secs: 15,
+            },
+            syoboi: SyoboiConfig {
+                base_url: "http://cal.syoboi.jp".to_owned(),
+                request_timeout_secs: 10,
+            },
+            anilist: AniListConfig {
+                base_url: "https://graphql.anilist.co".to_owned(),
+                request_timeout_secs: 10,
             },
             auth: AuthConfig {
                 default_admin_username: "admin".to_owned(),
@@ -187,6 +223,24 @@ impl AppConfig {
             }
             if let Some(request_timeout_secs) = bangumi.request_timeout_secs {
                 self.bangumi.request_timeout_secs = request_timeout_secs;
+            }
+        }
+
+        if let Some(syoboi) = partial.syoboi {
+            if let Some(base_url) = syoboi.base_url {
+                self.syoboi.base_url = base_url;
+            }
+            if let Some(request_timeout_secs) = syoboi.request_timeout_secs {
+                self.syoboi.request_timeout_secs = request_timeout_secs;
+            }
+        }
+
+        if let Some(anilist) = partial.anilist {
+            if let Some(base_url) = anilist.base_url {
+                self.anilist.base_url = base_url;
+            }
+            if let Some(request_timeout_secs) = anilist.request_timeout_secs {
+                self.anilist.request_timeout_secs = request_timeout_secs;
             }
         }
 

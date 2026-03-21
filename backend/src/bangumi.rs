@@ -238,6 +238,7 @@ impl SubjectRaw {
             summary: self.summary.clone(),
             release_status: self.release_status().to_owned(),
             air_date: self.air_date.clone().or(self.date.clone()),
+            broadcast_time: None,
             air_weekday: self.air_weekday,
             image_portrait: self
                 .images
@@ -260,6 +261,7 @@ impl SubjectRaw {
             title_cn: self.name_cn.clone(),
             summary: self.summary.clone(),
             air_date: self.air_date.clone().or(self.date.clone()),
+            broadcast_time: None,
             air_weekday: self.air_weekday,
             total_episodes: self.total_episodes,
             image_portrait: self

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Badge, Card, Text, makeStyles, tokens } from "@fluentui/react-components";
 import { Link } from "react-router-dom";
 
@@ -8,9 +8,11 @@ import type { SubjectCard as SubjectCardModel } from "../types";
 
 const useStyles = makeStyles({
   link: {
+    display: "block",
     textDecorationLine: "none",
     color: "inherit",
-    height: "100%"
+    height: "100%",
+    perspective: "1200px"
   },
   card: {
     height: "414px",
@@ -19,7 +21,13 @@ const useStyles = makeStyles({
     overflow: "hidden",
     backgroundColor: tokens.colorNeutralBackground1,
     border: "1px solid var(--app-border)",
-    boxShadow: "var(--app-card-shadow)"
+    boxShadow: "var(--app-card-shadow)",
+    transform:
+      "perspective(1000px) translateY(var(--card-lift, 0px)) rotateX(var(--card-rotate-x, 0deg)) rotateY(var(--card-rotate-y, 0deg))",
+    transformStyle: "preserve-3d",
+    transition: "transform 180ms ease, box-shadow 180ms ease",
+    willChange: "transform",
+    cursor: "pointer"
   },
   posterWrap: {
     position: "relative",
@@ -31,7 +39,9 @@ const useStyles = makeStyles({
     position: "absolute",
     inset: 0,
     backgroundSize: "cover",
-    backgroundPosition: "center center"
+    backgroundPosition: "center center",
+    transform: "scale(var(--poster-scale, 1))",
+    transition: "transform 180ms ease"
   },
   status: {
     position: "absolute",
@@ -109,7 +119,11 @@ const useStyles = makeStyles({
 const detailTagCache = new Map<number, string[]>();
 const detailTagRequests = new Map<number, Promise<string[]>>();
 
-function extractBroadcastTime(airDate: string | null) {
+function extractBroadcastTime(broadcastTime: string | null, airDate: string | null) {
+  if (broadcastTime) {
+    return broadcastTime;
+  }
+
   if (!airDate) {
     return "--:--";
   }
@@ -120,6 +134,10 @@ function extractBroadcastTime(airDate: string | null) {
   }
 
   return `${match[1].padStart(2, "0")}:${match[2]}`;
+}
+
+function prefersReducedMotion() {
+  return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 function formatRating(score: number | null) {
@@ -133,6 +151,7 @@ function formatStatus(status: SubjectCardModel["releaseStatus"]) {
 export function SubjectCard({ subject }: { subject: SubjectCardModel }) {
   const styles = useStyles();
   const { deviceId, userToken } = useSession();
+  const linkRef = useRef<HTMLAnchorElement | null>(null);
   const [tags, setTags] = useState(() => subject.tags.slice(0, 8));
   const primaryTitle = subject.titleCn || subject.title;
   const secondaryTitle = subject.titleCn && subject.titleCn !== subject.title ? subject.title : null;
@@ -185,8 +204,64 @@ export function SubjectCard({ subject }: { subject: SubjectCardModel }) {
     };
   }, [deviceId, subject.bangumiSubjectId, subject.tags, userToken]);
 
+  function resetHoverMotion() {
+    const link = linkRef.current;
+    if (!link) {
+      return;
+    }
+
+    link.style.setProperty("--card-lift", "0px");
+    link.style.setProperty("--card-rotate-x", "0deg");
+    link.style.setProperty("--card-rotate-y", "0deg");
+    link.style.setProperty("--poster-scale", "1");
+  }
+
+  function handleMouseEnter() {
+    if (prefersReducedMotion()) {
+      return;
+    }
+
+    const link = linkRef.current;
+    if (!link) {
+      return;
+    }
+
+    link.style.setProperty("--card-lift", "-8px");
+    link.style.setProperty("--poster-scale", "1.035");
+  }
+
+  function handleMouseMove(event: React.MouseEvent<HTMLAnchorElement>) {
+    if (prefersReducedMotion()) {
+      return;
+    }
+
+    const link = linkRef.current;
+    if (!link) {
+      return;
+    }
+
+    const rect = link.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const rotateY = (x / rect.width - 0.5) * 7;
+    const rotateX = (0.5 - y / rect.height) * 7;
+
+    link.style.setProperty("--card-lift", "-8px");
+    link.style.setProperty("--card-rotate-x", `${rotateX.toFixed(2)}deg`);
+    link.style.setProperty("--card-rotate-y", `${rotateY.toFixed(2)}deg`);
+    link.style.setProperty("--poster-scale", "1.035");
+  }
+
   return (
-    <Link to={`/title/${subject.bangumiSubjectId}`} className={styles.link}>
+    <Link
+      ref={linkRef}
+      to={`/title/${subject.bangumiSubjectId}`}
+      className={styles.link}
+      onMouseEnter={handleMouseEnter}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={resetHoverMotion}
+      onBlur={resetHoverMotion}
+    >
       <Card className={styles.card} appearance="filled-alternative">
         <div className={styles.posterWrap}>
           <div
@@ -228,7 +303,7 @@ export function SubjectCard({ subject }: { subject: SubjectCardModel }) {
               {formatRating(subject.ratingScore)}
             </Text>
             <Text size={300} className={styles.time}>
-              {extractBroadcastTime(subject.airDate)}
+              {extractBroadcastTime(subject.broadcastTime, subject.airDate)}
             </Text>
           </div>
         </div>

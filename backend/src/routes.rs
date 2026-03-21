@@ -6,18 +6,22 @@ use axum::{
     http::HeaderMap,
     routing::{get, post, put},
 };
+use futures::stream::{self, StreamExt};
 use sqlx::SqlitePool;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::{
+    anilist::AniListClient,
     auth::{AdminIdentity, ViewerIdentity, extract_admin_token, extract_device_id, extract_user_token},
     bangumi::{BangumiClient, SearchFacets},
     config::AppConfig,
     db,
+    syoboi::SyoboiClient,
     types::{
         AdminDashboardResponse, ApiEnvelope, AppError, AuthResponse, BootstrapResponse,
         CalendarDayDto, CalendarResponse, CredentialsRequest, FansubRuleDto, HealthResponse,
-        SearchRequest, SearchResponse, SubjectDetailResponse, SubscriptionStateDto,
+        SearchRequest, SearchResponse, SubjectCardDto, SubjectDetailDto, SubjectDetailResponse,
+        SubscriptionStateDto,
         ToggleSubscriptionResponse, UpdatePolicyRequest, UpsertFansubRuleRequest, ViewerSummary,
     },
 };
@@ -27,6 +31,8 @@ pub struct AppState {
     pub config: AppConfig,
     pub pool: SqlitePool,
     pub bangumi: BangumiClient,
+    pub syoboi: SyoboiClient,
+    pub anilist: AniListClient,
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -82,16 +88,18 @@ async fn bootstrap(
 async fn calendar(
     State(state): State<AppState>,
 ) -> Result<Json<ApiEnvelope<CalendarResponse>>, AppError> {
-    let days = state
-        .bangumi
-        .fetch_calendar()
-        .await?
-        .into_iter()
-        .map(|day| CalendarDayDto {
-            weekday: day.to_weekday(),
-            items: day.items.into_iter().map(|item| item.to_card()).collect(),
-        })
-        .collect();
+    let mut days = Vec::new();
+
+    for day in state.bangumi.fetch_calendar().await? {
+        let weekday = day.to_weekday();
+        let cards = day.items.into_iter().map(|item| item.to_card()).collect();
+        let items = enrich_cards(&state.syoboi, &state.anilist, cards).await;
+
+        days.push(CalendarDayDto {
+            weekday,
+            items,
+        });
+    }
 
     Ok(Json(ApiEnvelope::new(CalendarResponse { days })))
 }
@@ -204,6 +212,7 @@ async fn search(
             .map(|subject| subject.to_card())
             .collect()
     };
+    let paged_items = enrich_cards(&state.syoboi, &state.anilist, paged_items).await;
 
     Ok(Json(ApiEnvelope::new(SearchResponse {
         items: paged_items,
@@ -239,8 +248,10 @@ async fn subject_detail(
         (false, 0)
     };
 
+    let subject = enrich_detail(&state.syoboi, &state.anilist, subject.to_detail()).await;
+
     Ok(Json(ApiEnvelope::new(SubjectDetailResponse {
-        subject: subject.to_detail(),
+        subject,
         episodes: episodes.into_iter().map(|episode| episode.to_dto()).collect(),
         subscription: SubscriptionStateDto {
             is_subscribed,
@@ -474,4 +485,31 @@ fn validate_credentials(username: &str, password: &str) -> Result<(), AppError> 
     }
 
     Ok(())
+}
+
+async fn enrich_cards(
+    syoboi: &SyoboiClient,
+    anilist: &AniListClient,
+    cards: Vec<SubjectCardDto>,
+) -> Vec<SubjectCardDto> {
+    stream::iter(cards.into_iter().map(|card| {
+        let syoboi = syoboi.clone();
+        let anilist = anilist.clone();
+        async move {
+            let card = syoboi.enrich_card(card).await;
+            anilist.enrich_card(card).await
+        }
+    }))
+    .buffered(8)
+    .collect()
+    .await
+}
+
+async fn enrich_detail(
+    syoboi: &SyoboiClient,
+    anilist: &AniListClient,
+    detail: SubjectDetailDto,
+) -> SubjectDetailDto {
+    let detail = syoboi.enrich_detail(detail).await;
+    anilist.enrich_detail(detail).await
 }
