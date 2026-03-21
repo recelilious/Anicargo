@@ -139,7 +139,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const isGuestViewer = bootstrap?.viewer.kind !== "user";
   const displayName = isGuestViewer ? guestName : bootstrap?.viewer.label ?? guestName;
   const viewerModeLabel = isGuestViewer ? "设备订阅" : "账号订阅";
-  const viewerSubline = isGuestViewer ? `游客设备 ${deviceId.slice(0, 8)}` : "订阅与历史会跟随账号同步";
+  const viewerSubline = isGuestViewer ? `设备 ${deviceId.slice(0, 8)}` : "账号已连接";
 
   const value: SessionContextValue = {
     bootstrap,

@@ -1,12 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  Card,
-  Spinner,
-  Tab,
-  TabList,
-  Text,
-  makeStyles
-} from "@fluentui/react-components";
+import { Card, Spinner, Tab, TabList, Text, makeStyles } from "@fluentui/react-components";
 
 import { fetchCalendar } from "../api";
 import { SubjectCard } from "../components/SubjectCard";
@@ -19,9 +12,10 @@ const useStyles = makeStyles({
     flexDirection: "column",
     gap: "20px"
   },
-  hero: {
-    padding: "24px 28px",
-    background: "linear-gradient(135deg, #dbeeff 0%, #f6fbff 55%, #ffe8cf 100%)"
+  header: {
+    padding: "20px 24px",
+    background: "var(--app-panel)",
+    boxShadow: "var(--app-card-shadow)"
   },
   grid: {
     display: "grid",
@@ -79,16 +73,13 @@ export function SeasonPage() {
 
   return (
     <section className={styles.page}>
-      <Card className={styles.hero}>
+      <Card className={styles.header}>
         <Text weight="semibold" size={800}>
           新番时间表
         </Text>
-        <Text>
-          默认打开到今天。这里只展示 Bangumi 当前季时间表里的连载条目，点进卡片后可以直接订阅。
-        </Text>
       </Card>
 
-      {isLoading ? <Spinner label="正在拉取 Bangumi 时间表..." /> : null}
+      {isLoading ? <Spinner label="正在同步时间表..." /> : null}
       {error ? <Text>{error}</Text> : null}
 
       {days.length > 0 ? (

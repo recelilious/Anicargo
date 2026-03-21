@@ -14,7 +14,7 @@ const useStyles = makeStyles({
     minHeight: "100vh",
     display: "grid",
     gridTemplateColumns: "248px 1fr",
-    backgroundColor: tokens.colorNeutralBackground2
+    backgroundColor: "var(--app-bg)"
   },
   rail: {
     display: "flex",
@@ -22,7 +22,7 @@ const useStyles = makeStyles({
     gap: "20px",
     padding: "28px 20px",
     borderRight: `1px solid ${tokens.colorNeutralStroke2}`,
-    background: "linear-gradient(180deg, #f7fbff 0%, #eef6ff 100%)"
+    background: "var(--app-rail)"
   },
   profileCard: {
     display: "flex",
@@ -30,8 +30,9 @@ const useStyles = makeStyles({
     gap: "14px",
     padding: "16px",
     borderRadius: tokens.borderRadiusXLarge,
-    background: "linear-gradient(135deg, rgba(15, 108, 189, 0.12) 0%, rgba(255, 185, 95, 0.20) 100%)",
-    border: `1px solid ${tokens.colorNeutralStroke2}`
+    background: "var(--app-panel-soft)",
+    border: "1px solid var(--app-border)",
+    boxShadow: "var(--app-card-shadow)"
   },
   profileRow: {
     display: "flex",
@@ -45,7 +46,7 @@ const useStyles = makeStyles({
     minWidth: 0
   },
   profileSubtitle: {
-    color: tokens.colorNeutralForeground3
+    color: "var(--app-muted)"
   },
   brand: {
     display: "flex",
@@ -65,8 +66,8 @@ const useStyles = makeStyles({
     justifyContent: "flex-start"
   },
   active: {
-    backgroundColor: "#d6ebff",
-    color: "#0f6cbd"
+    backgroundColor: "var(--app-selected-bg)",
+    color: "var(--app-selected-fg)"
   },
   footer: {
     marginTop: "auto",
@@ -75,7 +76,7 @@ const useStyles = makeStyles({
     gap: "12px"
   },
   adminHint: {
-    color: tokens.colorNeutralForeground3
+    color: "var(--app-muted)"
   },
   content: {
     padding: "24px 28px 40px"
@@ -112,7 +113,6 @@ export function AppShell() {
           <Text weight="semibold" size={700}>
             Anicargo
           </Text>
-          <Text size={300}>面向朋友间私有部署的动漫订阅、下载与播放平台。</Text>
         </div>
 
         <nav className={styles.nav}>
@@ -133,11 +133,11 @@ export function AppShell() {
 
         <div className={styles.footer}>
           <Text size={200} className={styles.adminHint}>
-            管理员请使用 `/admin` 独立入口登录。
+            管理入口：`/admin`
           </Text>
           <NavLink to="/settings" className={styles.navLink}>
             <Button appearance="secondary" icon={<ArrowSwapRegular />}>
-              打开设置
+              设置
             </Button>
           </NavLink>
         </div>

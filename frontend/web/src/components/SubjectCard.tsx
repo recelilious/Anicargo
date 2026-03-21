@@ -102,9 +102,7 @@ export function SubjectCard({ subject }: { subject: SubjectCardModel }) {
         <div
           className={styles.poster}
           style={{
-            backgroundImage: subject.imagePortrait
-              ? `url(${subject.imagePortrait})`
-              : "linear-gradient(160deg, #d9ebff 0%, #b8d5ff 100%)"
+            backgroundImage: subject.imagePortrait ? `url(${subject.imagePortrait})` : "var(--app-fallback-hero)"
           }}
         />
 

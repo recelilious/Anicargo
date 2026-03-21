@@ -1,12 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  Badge,
-  Button,
-  Card,
-  Spinner,
-  Text,
-  makeStyles
-} from "@fluentui/react-components";
+import { Badge, Button, Card, Spinner, Text, makeStyles } from "@fluentui/react-components";
 import { useParams } from "react-router-dom";
 
 import { fetchSubjectDetail, toggleSubscription } from "../api";
@@ -27,7 +20,8 @@ const useStyles = makeStyles({
     padding: "28px",
     display: "grid",
     alignContent: "end",
-    color: "#ffffff"
+    color: "#ffffff",
+    boxShadow: "var(--app-card-shadow)"
   },
   heroBackdrop: {
     position: "absolute",
@@ -40,7 +34,7 @@ const useStyles = makeStyles({
   heroOverlay: {
     position: "absolute",
     inset: 0,
-    background: "linear-gradient(180deg, rgba(12,18,28,0.15) 0%, rgba(12,18,28,0.78) 100%)"
+    background: "linear-gradient(180deg, rgba(18, 14, 17, 0.08) 0%, rgba(18, 14, 17, 0.82) 100%)"
   },
   heroContent: {
     position: "relative",
@@ -69,6 +63,10 @@ const useStyles = makeStyles({
     gap: "12px"
   }
 });
+
+function formatRating(score: number | null) {
+  return score == null ? "暂无评分" : `${score.toFixed(1)} 分`;
+}
 
 export function SubjectPage() {
   const styles = useStyles();
@@ -132,7 +130,7 @@ export function SubjectPage() {
   }
 
   if (isLoading) {
-    return <Spinner label="正在加载 Bangumi 条目详情..." />;
+    return <Spinner label="正在加载条目..." />;
   }
 
   if (!detail) {
@@ -145,9 +143,7 @@ export function SubjectPage() {
         <div
           className={styles.heroBackdrop}
           style={{
-            backgroundImage: detail.subject.imageBanner
-              ? `url(${detail.subject.imageBanner})`
-              : "linear-gradient(135deg, #0f6cbd 0%, #004578 100%)"
+            backgroundImage: detail.subject.imageBanner ? `url(${detail.subject.imageBanner})` : "var(--app-fallback-hero)"
           }}
         />
         <div className={styles.heroOverlay} />
@@ -165,43 +161,51 @@ export function SubjectPage() {
             ))}
           </div>
           <Button appearance="primary" onClick={handleToggleSubscription} disabled={isSubscribing}>
-            {detail.subscription.isSubscribed ? "取消订阅" : "订阅这部番"}
+            {detail.subscription.isSubscribed ? "取消订阅" : "订阅"}
           </Button>
         </div>
       </Card>
 
       <div className={styles.stats}>
         <Card>
-          <Text weight="semibold">订阅进度</Text>
+          <Text weight="semibold">订阅</Text>
           <Text>
             {detail.subscription.subscriptionCount} / {detail.subscription.threshold}
           </Text>
         </Card>
         <Card>
-          <Text weight="semibold">订阅归属</Text>
+          <Text weight="semibold">归属</Text>
           <Text>{detail.subscription.source.kind === "user" ? "账号订阅" : "设备订阅"}</Text>
         </Card>
         <Card>
-          <Text weight="semibold">Bangumi 时间</Text>
-          <Text>{detail.subject.airDate ?? "未提供日期"}</Text>
+          <Text weight="semibold">放送</Text>
+          <Text>{detail.subject.airDate ?? "未知"}</Text>
+        </Card>
+        <Card>
+          <Text weight="semibold">评分</Text>
+          <Text>{formatRating(detail.subject.ratingScore)}</Text>
         </Card>
       </div>
 
-      <Card>
-        <Text weight="semibold" size={700}>
-          简介
-        </Text>
-        <Text>{detail.subject.summary || "Bangumi 暂无简介。"}</Text>
-      </Card>
+      {detail.subject.summary ? (
+        <Card>
+          <Text weight="semibold" size={700}>
+            简介
+          </Text>
+          <Text>{detail.subject.summary}</Text>
+        </Card>
+      ) : null}
 
-      <div className={styles.infoGrid}>
-        {detail.subject.infobox.map((item) => (
-          <Card key={`${item.key}-${item.value}`}>
-            <Text weight="semibold">{item.key}</Text>
-            <Text>{item.value}</Text>
-          </Card>
-        ))}
-      </div>
+      {detail.subject.infobox.length > 0 ? (
+        <div className={styles.infoGrid}>
+          {detail.subject.infobox.map((item) => (
+            <Card key={`${item.key}-${item.value}`}>
+              <Text weight="semibold">{item.key}</Text>
+              <Text>{item.value}</Text>
+            </Card>
+          ))}
+        </div>
+      ) : null}
 
       <div className={styles.episodes}>
         {detail.episodes.map((episode) => (

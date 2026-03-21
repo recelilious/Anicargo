@@ -1,10 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  Card,
-  Spinner,
-  Text,
-  makeStyles
-} from "@fluentui/react-components";
+import { Card, Spinner, Text, makeStyles } from "@fluentui/react-components";
 import { useParams } from "react-router-dom";
 
 import { fetchSubjectDetail } from "../api";
@@ -21,8 +16,9 @@ const useStyles = makeStyles({
     minHeight: "360px",
     display: "grid",
     placeItems: "center",
-    background: "linear-gradient(135deg, #07111c 0%, #102033 100%)",
-    color: "#f6f9ff"
+    background: "var(--app-panel)",
+    color: "var(--app-text)",
+    boxShadow: "var(--app-card-shadow)"
   }
 });
 
@@ -49,9 +45,7 @@ export function WatchPage() {
         }
 
         setDetail(response);
-        setEpisode(
-          response.episodes.find((item) => item.bangumiEpisodeId === Number(episodeId)) ?? null
-        );
+        setEpisode(response.episodes.find((item) => item.bangumiEpisodeId === Number(episodeId)) ?? null);
       })
       .finally(() => {
         if (isMounted) {
@@ -65,25 +59,20 @@ export function WatchPage() {
   }, [subjectId, episodeId, deviceId, userToken]);
 
   if (isLoading) {
-    return <Spinner label="正在准备播放页..." />;
+    return <Spinner label="正在准备播放..." />;
   }
 
   return (
     <section className={styles.page}>
       <Card className={styles.player}>
         <Text weight="semibold" size={800}>
-          {episode?.isAvailable ? "播放器接入位" : "资源尚未入库"}
+          {episode?.isAvailable ? "播放器占位" : "资源未入库"}
         </Text>
-        <Text>
-          {episode?.availabilityNote ??
-            "等下载链路接上后，这里会直接进入按集播放界面。"}
-        </Text>
+        <Text>{episode?.availabilityNote ?? "播放链路接入后会直接进入按集播放。"}</Text>
       </Card>
 
       <Card>
-        <Text weight="semibold">
-          {detail?.subject.titleCn || detail?.subject.title}
-        </Text>
+        <Text weight="semibold">{detail?.subject.titleCn || detail?.subject.title}</Text>
         <Text>
           第 {episode?.episodeNumber ?? episode?.sort ?? "?"} 集 · {episode?.titleCn || episode?.title || "未命名剧集"}
         </Text>

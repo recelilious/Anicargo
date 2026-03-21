@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from "react";
-import { Button, Card, Field, Input, Switch, Text, makeStyles } from "@fluentui/react-components";
+import { Button, Card, Field, Input, Radio, RadioGroup, Text, makeStyles } from "@fluentui/react-components";
 
+import { useAppearance } from "../appearance";
 import { useSession } from "../session";
 
 const useStyles = makeStyles({
@@ -18,12 +19,16 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: "12px"
+  },
+  muted: {
+    color: "var(--app-muted)"
   }
 });
 
 export function SettingsPage() {
   const styles = useStyles();
   const { bootstrap, displayName, isGuestViewer, registerAccount, loginAccount, logoutAccount } = useSession();
+  const { themePreference, resolvedAppearance, setThemePreference } = useAppearance();
   const [registerForm, setRegisterForm] = useState({ username: "", password: "" });
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [error, setError] = useState<string | null>(null);
@@ -54,23 +59,13 @@ export function SettingsPage() {
 
   return (
     <section className={styles.page}>
-      <Card>
-        <Text weight="semibold" size={800}>
-          用户设置
-        </Text>
-        <Text>
-          默认模式下不需要登录，当前设备本身就可以订阅。只有在你需要跨设备同步订阅时，才需要注册并登录账号。
-        </Text>
-      </Card>
-
       {error ? <Text>{error}</Text> : null}
 
       <div className={styles.cards}>
         <Card>
-          <Text weight="semibold">当前身份</Text>
+          <Text weight="semibold">身份</Text>
           <Text>{isGuestViewer ? `游客：${displayName}` : `账号：${displayName}`}</Text>
-          <Text>{isGuestViewer ? "当前订阅保存在本机设备中。" : "当前订阅会跟随账号同步。"}</Text>
-          <Text size={300}>{bootstrap?.deviceId}</Text>
+          <Text className={styles.muted}>{bootstrap?.deviceId}</Text>
           {!isGuestViewer ? (
             <Button appearance="secondary" onClick={() => void logoutAccount()}>
               退出账号
@@ -79,10 +74,18 @@ export function SettingsPage() {
         </Card>
 
         <Card>
-          <Text weight="semibold">网页设置</Text>
-          <Switch defaultChecked label="优先显示中文标题" />
-          <Switch defaultChecked label="进入首页时聚焦到今天" />
-          <Text size={300}>后续这里会继续补充播放、布局和通知相关的偏好设置。</Text>
+          <Text weight="semibold">外观</Text>
+          <RadioGroup
+            value={themePreference}
+            onChange={(_, data) => setThemePreference(data.value as "system" | "light" | "dark")}
+          >
+            <Radio value="system" label="跟随系统" />
+            <Radio value="light" label="浅色" />
+            <Radio value="dark" label="深色" />
+          </RadioGroup>
+          <Text size={300} className={styles.muted}>
+            当前生效：{resolvedAppearance === "dark" ? "深色" : "浅色"}
+          </Text>
         </Card>
       </div>
 
@@ -105,7 +108,7 @@ export function SettingsPage() {
                 />
               </Field>
               <Button type="submit" appearance="primary">
-                注册并切换到账号模式
+                注册
               </Button>
             </Card>
           </form>
@@ -127,7 +130,7 @@ export function SettingsPage() {
                 />
               </Field>
               <Button type="submit" appearance="primary">
-                登录并同步账号订阅
+                登录
               </Button>
             </Card>
           </form>

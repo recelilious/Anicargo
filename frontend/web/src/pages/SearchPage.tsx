@@ -1,13 +1,5 @@
 import { startTransition, useDeferredValue, useEffect, useState } from "react";
-import {
-  Card,
-  Field,
-  Input,
-  Select,
-  Spinner,
-  Text,
-  makeStyles
-} from "@fluentui/react-components";
+import { Card, Field, Input, Select, Spinner, Text, makeStyles } from "@fluentui/react-components";
 
 import { searchSubjects } from "../api";
 import { SubjectCard } from "../components/SubjectCard";
@@ -21,7 +13,9 @@ const useStyles = makeStyles({
     gap: "18px"
   },
   searchBar: {
-    padding: "24px"
+    padding: "24px",
+    background: "var(--app-panel)",
+    boxShadow: "var(--app-card-shadow)"
   },
   filters: {
     display: "grid",
@@ -97,20 +91,20 @@ export function SearchPage() {
     <section className={styles.page}>
       <Card className={styles.searchBar}>
         <Text weight="semibold" size={800}>
-          搜索番剧
+          搜索
         </Text>
         <div className={styles.filters}>
-          <Field label="搜索关键词">
+          <Field label="关键词">
             <Input
               value={keyword}
               onChange={(_, data) => setKeyword(data.value)}
-              placeholder="输入番名、别名或关键词"
+              placeholder="番名 / 别名 / 关键词"
             />
           </Field>
 
-          <Field label="年份筛选">
+          <Field label="年份">
             <Select value={selectedYear} onChange={(event) => setSelectedYear(event.target.value)}>
-              <option value="">全部年份</option>
+              <option value="">全部</option>
               {response.facets.years.map((year) => (
                 <option key={year} value={String(year)}>
                   {year}
@@ -119,9 +113,9 @@ export function SearchPage() {
             </Select>
           </Field>
 
-          <Field label="Tag 筛选">
+          <Field label="标签">
             <Select value={selectedTag} onChange={(event) => setSelectedTag(event.target.value)}>
-              <option value="">全部标签</option>
+              <option value="">全部</option>
               {response.facets.tags.map((tag) => (
                 <option key={tag} value={tag}>
                   {tag}
@@ -132,7 +126,7 @@ export function SearchPage() {
         </div>
       </Card>
 
-      {isLoading ? <Spinner label="正在搜索 Bangumi..." /> : null}
+      {isLoading ? <Spinner label="正在搜索..." /> : null}
       {error ? <Text>{error}</Text> : null}
 
       <div className={styles.grid}>

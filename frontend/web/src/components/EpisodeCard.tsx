@@ -29,9 +29,7 @@ export function EpisodeCard({
     <Link to={`/watch/${subjectId}/${episode.bangumiEpisodeId}`} className={styles.link}>
       <Card className={styles.card} appearance="outline">
         <div>
-          <Text weight="semibold">
-            第 {episode.episodeNumber ?? episode.sort} 集
-          </Text>
+          <Text weight="semibold">第 {episode.episodeNumber ?? episode.sort} 集</Text>
           <Text block size={300}>
             {episode.titleCn || episode.title || "未命名剧集"}
           </Text>
@@ -44,7 +42,7 @@ export function EpisodeCard({
         </div>
 
         <Text size={300} className={styles.muted}>
-          {episode.availabilityNote ?? "资源状态未知。"}
+          {episode.availabilityNote ?? "状态未知"}
         </Text>
       </Card>
     </Link>
