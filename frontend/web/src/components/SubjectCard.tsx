@@ -1,6 +1,9 @@
+import { useEffect, useState } from "react";
 import { Badge, Card, Text, makeStyles, tokens } from "@fluentui/react-components";
 import { Link } from "react-router-dom";
 
+import { fetchSubjectDetail } from "../api";
+import { useSession } from "../session";
 import type { SubjectCard as SubjectCardModel } from "../types";
 
 const useStyles = makeStyles({
@@ -10,9 +13,9 @@ const useStyles = makeStyles({
     height: "100%"
   },
   card: {
-    height: "438px",
+    height: "414px",
     display: "grid",
-    gridTemplateRows: "252px minmax(0, 1fr)",
+    gridTemplateRows: "238px minmax(0, 1fr)",
     overflow: "hidden",
     backgroundColor: tokens.colorNeutralBackground1,
     border: "1px solid var(--app-border)",
@@ -55,14 +58,14 @@ const useStyles = makeStyles({
   body: {
     display: "flex",
     flexDirection: "column",
-    gap: "8px",
-    paddingTop: "10px",
+    gap: "6px",
+    paddingTop: "8px",
     minHeight: 0
   },
   titleGroup: {
     display: "flex",
     flexDirection: "column",
-    gap: "4px",
+    gap: "2px",
     minHeight: 0
   },
   title: {
@@ -86,7 +89,7 @@ const useStyles = makeStyles({
   },
   meta: {
     marginTop: "auto",
-    paddingTop: "12px",
+    paddingTop: "10px",
     display: "grid",
     gridTemplateColumns: "1fr auto",
     gap: "12px",
@@ -102,6 +105,9 @@ const useStyles = makeStyles({
     fontVariantNumeric: "tabular-nums"
   }
 });
+
+const detailTagCache = new Map<number, string[]>();
+const detailTagRequests = new Map<number, Promise<string[]>>();
 
 function extractBroadcastTime(airDate: string | null) {
   if (!airDate) {
@@ -126,8 +132,58 @@ function formatStatus(status: SubjectCardModel["releaseStatus"]) {
 
 export function SubjectCard({ subject }: { subject: SubjectCardModel }) {
   const styles = useStyles();
+  const { deviceId, userToken } = useSession();
+  const [tags, setTags] = useState(() => subject.tags.slice(0, 8));
   const primaryTitle = subject.titleCn || subject.title;
   const secondaryTitle = subject.titleCn && subject.titleCn !== subject.title ? subject.title : null;
+  const displayedTags = tags.slice(0, 8);
+
+  useEffect(() => {
+    const nextTags = subject.tags.slice(0, 8);
+    setTags(nextTags);
+
+    if (nextTags.length > 0) {
+      detailTagCache.set(subject.bangumiSubjectId, nextTags);
+      return;
+    }
+
+    const cachedTags = detailTagCache.get(subject.bangumiSubjectId);
+    if (cachedTags && cachedTags.length > 0) {
+      setTags(cachedTags);
+      return;
+    }
+
+    let cancelled = false;
+    let request = detailTagRequests.get(subject.bangumiSubjectId);
+
+    if (!request) {
+      request = fetchSubjectDetail(subject.bangumiSubjectId, deviceId, userToken)
+        .then((response) => {
+          const resolvedTags = response.subject.tags.slice(0, 8);
+          detailTagCache.set(subject.bangumiSubjectId, resolvedTags);
+          detailTagRequests.delete(subject.bangumiSubjectId);
+          return resolvedTags;
+        })
+        .catch((error) => {
+          detailTagRequests.delete(subject.bangumiSubjectId);
+          throw error;
+        });
+
+      detailTagRequests.set(subject.bangumiSubjectId, request);
+    }
+
+    void request
+      .then((resolvedTags) => {
+        if (!cancelled && resolvedTags.length > 0) {
+          setTags(resolvedTags);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [deviceId, subject.bangumiSubjectId, subject.tags, userToken]);
 
   return (
     <Link to={`/title/${subject.bangumiSubjectId}`} className={styles.link}>
@@ -144,9 +200,9 @@ export function SubjectCard({ subject }: { subject: SubjectCardModel }) {
             <Badge appearance="filled">{formatStatus(subject.releaseStatus)}</Badge>
           </div>
 
-          {subject.tags.length > 0 ? (
+          {displayedTags.length > 0 ? (
             <div className={styles.tagRail}>
-              {subject.tags.slice(0, 8).map((tag) => (
+              {displayedTags.map((tag) => (
                 <Badge key={tag} appearance="outline" className={styles.tag}>
                   {tag}
                 </Badge>
