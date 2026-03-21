@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import { Badge, Card, Text, makeStyles, tokens } from "@fluentui/react-components";
 import { Link, useLocation } from "react-router-dom";
 
@@ -63,6 +63,11 @@ const useStyles = makeStyles({
     gap: "6px",
     padding: "10px",
     backgroundColor: "rgba(24, 14, 11, 0.7)",
+    transform: "translateY(var(--tag-translate-y, 0%))",
+    opacity: "var(--tag-opacity, 1)",
+    transition:
+      "transform var(--tag-transition-duration, 220ms) cubic-bezier(0.22, 1, 0.36, 1), opacity var(--tag-transition-duration, 220ms) ease",
+    willChange: "transform, opacity",
   },
   tag: {
     display: "inline-flex",
@@ -178,11 +183,15 @@ export function SubjectCard({
   const { deviceId, userToken } = useSession();
   const linkRef = useRef<HTMLAnchorElement | null>(null);
   const frameRef = useRef<number | null>(null);
+  const tagRevealFrameRef = useRef<number | null>(null);
   const pendingMotionRef = useRef<{ rotateX: number; rotateY: number } | null>(null);
   const [tags, setTags] = useState(() => subject.tags.slice(0, 8));
+  const [isHovering, setIsHovering] = useState(false);
+  const [isTagRailReady, setIsTagRailReady] = useState(() => prefersReducedMotion());
   const primaryTitle = subject.titleCn || subject.title;
   const secondaryTitle = subject.titleCn && subject.titleCn !== subject.title ? subject.title : null;
   const displayedTags = tags.slice(0, 8);
+  const displayedTagsKey = displayedTags.join("|");
   const metaValue = resolveMetaValue(subject, metaVariant);
   const fromPath = buildRoutePath(location);
 
@@ -238,8 +247,35 @@ export function SubjectCard({
       if (frameRef.current != null) {
         window.cancelAnimationFrame(frameRef.current);
       }
+
+      if (tagRevealFrameRef.current != null) {
+        window.cancelAnimationFrame(tagRevealFrameRef.current);
+      }
     };
   }, []);
+
+  useEffect(() => {
+    if (tagRevealFrameRef.current != null) {
+      window.cancelAnimationFrame(tagRevealFrameRef.current);
+      tagRevealFrameRef.current = null;
+    }
+
+    if (displayedTags.length === 0) {
+      setIsTagRailReady(false);
+      return;
+    }
+
+    if (prefersReducedMotion()) {
+      setIsTagRailReady(true);
+      return;
+    }
+
+    setIsTagRailReady(false);
+    tagRevealFrameRef.current = window.requestAnimationFrame(() => {
+      tagRevealFrameRef.current = null;
+      setIsTagRailReady(true);
+    });
+  }, [displayedTags.length, displayedTagsKey]);
 
   function applyMotion(rotateX: number, rotateY: number) {
     const link = linkRef.current;
@@ -254,6 +290,7 @@ export function SubjectCard({
   }
 
   function resetHoverMotion() {
+    setIsHovering(false);
     const link = linkRef.current;
     if (!link) {
       return;
@@ -272,6 +309,7 @@ export function SubjectCard({
   }
 
   function handleMouseEnter() {
+    setIsHovering(true);
     if (prefersReducedMotion()) {
       return;
     }
@@ -317,6 +355,13 @@ export function SubjectCard({
     rememberReturnTarget(fromPath, scrollTop);
   }
 
+  const isTagRailShown = displayedTags.length > 0 && isTagRailReady && !isHovering;
+  const tagRailStyle = {
+    "--tag-translate-y": isTagRailShown ? "0%" : "105%",
+    "--tag-opacity": isTagRailShown ? "1" : "0",
+    "--tag-transition-duration": prefersReducedMotion() ? "0ms" : "220ms",
+  } as CSSProperties;
+
   return (
     <Link
       ref={linkRef}
@@ -343,7 +388,7 @@ export function SubjectCard({
           </div>
 
           {displayedTags.length > 0 ? (
-            <div className={styles.tagRail}>
+            <div className={styles.tagRail} style={tagRailStyle}>
               {displayedTags.map((tag) => (
                 <Badge key={tag} appearance="outline" className={styles.tag}>
                   {tag}
