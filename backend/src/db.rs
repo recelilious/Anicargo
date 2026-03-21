@@ -133,12 +133,13 @@ pub async fn register_user(
     let password_hash = hash_password(password)?;
     let created_at = now_string();
 
-    let result = sqlx::query("INSERT INTO users (username, password_hash, created_at) VALUES (?1, ?2, ?3)")
-        .bind(username)
-        .bind(password_hash)
-        .bind(created_at)
-        .execute(pool)
-        .await;
+    let result =
+        sqlx::query("INSERT INTO users (username, password_hash, created_at) VALUES (?1, ?2, ?3)")
+            .bind(username)
+            .bind(password_hash)
+            .bind(created_at)
+            .execute(pool)
+            .await;
 
     let user_id = match result {
         Ok(result) => result.last_insert_rowid(),
@@ -150,7 +151,7 @@ pub async fn register_user(
     Ok((
         ViewerIdentity::User {
             id: user_id,
-            username: username.to_owned()
+            username: username.to_owned(),
         },
         token,
     ))
@@ -168,7 +169,8 @@ pub async fn login_user(
     .bind(username)
     .fetch_optional(pool)
     .await
-    .map_err(|_| AppError::internal("failed to query user"))? else {
+    .map_err(|_| AppError::internal("failed to query user"))?
+    else {
         return Err(AppError::unauthorized("invalid username or password"));
     };
 
@@ -181,7 +183,7 @@ pub async fn login_user(
     Ok((
         ViewerIdentity::User {
             id: user.id,
-            username: user.username
+            username: user.username,
         },
         token,
     ))
@@ -199,7 +201,8 @@ pub async fn login_admin(
     .bind(username)
     .fetch_optional(pool)
     .await
-    .map_err(|_| AppError::internal("failed to query admin account"))? else {
+    .map_err(|_| AppError::internal("failed to query admin account"))?
+    else {
         return Err(AppError::unauthorized("invalid admin username or password"));
     };
 
@@ -211,13 +214,16 @@ pub async fn login_admin(
 
     Ok((
         AdminIdentity {
-            username: admin.username
+            username: admin.username,
         },
         token,
     ))
 }
 
-pub async fn user_from_token(pool: &SqlitePool, token: &str) -> Result<Option<ViewerIdentity>, AppError> {
+pub async fn user_from_token(
+    pool: &SqlitePool,
+    token: &str,
+) -> Result<Option<ViewerIdentity>, AppError> {
     let row = sqlx::query_as::<_, (i64, String)>(
         "SELECT users.id, users.username
          FROM user_sessions
@@ -230,13 +236,13 @@ pub async fn user_from_token(pool: &SqlitePool, token: &str) -> Result<Option<Vi
     .await
     .map_err(|_| AppError::internal("failed to read user session"))?;
 
-    Ok(row.map(|(id, username)| ViewerIdentity::User {
-        id,
-        username
-    }))
+    Ok(row.map(|(id, username)| ViewerIdentity::User { id, username }))
 }
 
-pub async fn admin_from_token(pool: &SqlitePool, token: &str) -> Result<Option<AdminIdentity>, AppError> {
+pub async fn admin_from_token(
+    pool: &SqlitePool,
+    token: &str,
+) -> Result<Option<AdminIdentity>, AppError> {
     let row = sqlx::query_as::<_, (i64, String)>(
         "SELECT admin_accounts.id, admin_accounts.username
          FROM admin_sessions
@@ -511,7 +517,11 @@ async fn count(pool: &SqlitePool, query: &str) -> Result<i64, AppError> {
         .map_err(|_| AppError::internal("failed to count rows"))
 }
 
-async fn create_user_session(pool: &SqlitePool, user_id: i64, days: i64) -> Result<String, AppError> {
+async fn create_user_session(
+    pool: &SqlitePool,
+    user_id: i64,
+    days: i64,
+) -> Result<String, AppError> {
     let token = generate_token();
     let created_at = Utc::now();
     let expires_at = created_at + Duration::days(days);
@@ -530,7 +540,11 @@ async fn create_user_session(pool: &SqlitePool, user_id: i64, days: i64) -> Resu
     Ok(token)
 }
 
-async fn create_admin_session(pool: &SqlitePool, admin_id: i64, hours: i64) -> Result<String, AppError> {
+async fn create_admin_session(
+    pool: &SqlitePool,
+    admin_id: i64,
+    hours: i64,
+) -> Result<String, AppError> {
     let token = generate_token();
     let created_at = Utc::now();
     let expires_at = created_at + Duration::hours(hours);

@@ -80,18 +80,20 @@ const DEFAULT_FORM: SearchFormState = {
 
 const CARD_MIN_WIDTH = 210;
 const CARD_GAP = 16;
+const LOAD_MORE_DISTANCE = 160;
 
 const useStyles = makeStyles({
   page: {
     display: "flex",
     flexDirection: "column",
     gap: "18px",
+    minHeight: "100%",
   },
   searchBar: {
     position: "sticky",
-    top: "24px",
+    top: 0,
     zIndex: 5,
-    padding: "20px 22px",
+    padding: "20px 22px 16px",
     backgroundColor: "var(--app-surface-1)",
     border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)",
@@ -112,25 +114,24 @@ const useStyles = makeStyles({
   keywordField: {
     gridColumn: "span 2",
   },
+  footerRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "12px",
+    marginTop: "14px",
+    paddingTop: "12px",
+    borderTop: "1px solid var(--app-border)",
+  },
   actions: {
     display: "flex",
     justifyContent: "flex-end",
-    marginTop: "12px",
   },
   results: {
     display: "flex",
     flexDirection: "column",
     gap: "16px",
-  },
-  summary: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: "12px",
-    padding: "12px 16px",
-    backgroundColor: "var(--app-panel)",
-    border: "1px solid var(--app-border)",
-    borderRadius: tokens.borderRadiusLarge,
+    minWidth: 0,
   },
   gridHost: {
     minWidth: 0,
@@ -140,11 +141,22 @@ const useStyles = makeStyles({
     gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))",
     gap: "16px",
   },
-  sentinel: {
-    height: "1px",
+  loadMoreRow: {
+    display: "flex",
+    justifyContent: "center",
+    paddingBottom: "8px",
+  },
+  statusRow: {
+    display: "flex",
+    justifyContent: "center",
+    paddingBottom: "8px",
   },
   muted: {
     color: "var(--app-muted)",
+  },
+  metaText: {
+    color: "var(--app-muted)",
+    fontVariantNumeric: "tabular-nums",
   },
 });
 
@@ -304,7 +316,7 @@ export function SearchPage() {
   const styles = useStyles();
   const { deviceId, userToken } = useSession();
   const gridHostRef = useRef<HTMLDivElement | null>(null);
-  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const loadLockRef = useRef(false);
   const [form, setForm] = useState<SearchFormState>(DEFAULT_FORM);
   const [pageSize, setPageSize] = useState(20);
   const [page, setPage] = useState(1);
@@ -313,6 +325,8 @@ export function SearchPage() {
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [autoLoadUnlocked, setAutoLoadUnlocked] = useState(false);
+  const [showLoadMoreButton, setShowLoadMoreButton] = useState(false);
 
   const debouncedKeyword = useDebouncedValue(form.keyword, 280);
   const debouncedTagInput = useDebouncedValue(form.tagInput, 280);
@@ -362,11 +376,16 @@ export function SearchPage() {
       return;
     }
 
+    const scrollRoot = document.getElementById("app-scroll-root");
+    scrollRoot?.scrollTo({ top: 0, behavior: "auto" });
+    loadLockRef.current = false;
+
     startTransition(() => {
       setItems([]);
       setResponse(EMPTY_RESPONSE);
       setError(null);
       setPage(1);
+      setShowLoadMoreButton(false);
       setActiveQuerySignature(querySignature);
     });
   }, [activeQuerySignature, querySignature]);
@@ -376,7 +395,7 @@ export function SearchPage() {
       return;
     }
 
-    let isMounted = true;
+    let cancelled = false;
     const activeRequest = JSON.parse(activeQuerySignature) as SearchRequestModel;
     const params = buildSearchParams(activeRequest, page);
     const loadingMore = page > 1;
@@ -389,7 +408,7 @@ export function SearchPage() {
 
     void searchSubjects(params, deviceId, userToken)
       .then((nextResponse) => {
-        if (!isMounted) {
+        if (cancelled) {
           return;
         }
 
@@ -402,7 +421,7 @@ export function SearchPage() {
         });
       })
       .catch((nextError: Error) => {
-        if (!isMounted) {
+        if (cancelled) {
           return;
         }
 
@@ -413,10 +432,11 @@ export function SearchPage() {
         }
       })
       .finally(() => {
-        if (!isMounted) {
+        if (cancelled) {
           return;
         }
 
+        loadLockRef.current = false;
         if (loadingMore) {
           setIsLoadingMore(false);
         } else {
@@ -425,34 +445,57 @@ export function SearchPage() {
       });
 
     return () => {
-      isMounted = false;
+      cancelled = true;
     };
   }, [activeQuerySignature, deviceId, page, querySignature, userToken]);
 
   useEffect(() => {
-    const sentinel = loadMoreRef.current;
-    if (!sentinel || isInitialLoading || isLoadingMore || !response.hasNextPage || error) {
+    const scrollRoot = document.getElementById("app-scroll-root");
+    if (!scrollRoot) {
       return;
     }
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries.some((entry) => entry.isIntersecting)) {
+    let ticking = false;
+
+    const handleScroll = () => {
+      if (ticking) {
+        return;
+      }
+
+      ticking = true;
+      window.requestAnimationFrame(() => {
+        ticking = false;
+
+        if (isInitialLoading || isLoadingMore || !response.hasNextPage || error) {
           return;
         }
 
-        observer.disconnect();
+        const distanceToBottom =
+          scrollRoot.scrollHeight - scrollRoot.clientHeight - scrollRoot.scrollTop;
+
+        if (distanceToBottom > LOAD_MORE_DISTANCE) {
+          return;
+        }
+
+        if (!autoLoadUnlocked) {
+          setShowLoadMoreButton(true);
+          return;
+        }
+
+        if (loadLockRef.current) {
+          return;
+        }
+
+        loadLockRef.current = true;
         setPage((current) => current + 1);
-      },
-      { rootMargin: "240px 0px" },
-    );
-
-    observer.observe(sentinel);
-
-    return () => {
-      observer.disconnect();
+      });
     };
-  }, [error, isInitialLoading, isLoadingMore, response.hasNextPage]);
+
+    scrollRoot.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      scrollRoot.removeEventListener("scroll", handleScroll);
+    };
+  }, [autoLoadUnlocked, error, isInitialLoading, isLoadingMore, response.hasNextPage]);
 
   function updateForm<K extends keyof SearchFormState>(key: K, value: SearchFormState[K]) {
     setForm((current) => ({
@@ -463,6 +506,17 @@ export function SearchPage() {
 
   function resetFilters() {
     setForm(DEFAULT_FORM);
+  }
+
+  function handleLoadMore() {
+    if (loadLockRef.current || isInitialLoading || isLoadingMore || !response.hasNextPage || error) {
+      return;
+    }
+
+    loadLockRef.current = true;
+    setAutoLoadUnlocked(true);
+    setShowLoadMoreButton(false);
+    setPage((current) => current + 1);
   }
 
   return (
@@ -487,7 +541,10 @@ export function SearchPage() {
           </Field>
 
           <Field label="排序">
-            <Select value={form.sort} onChange={(event) => updateForm("sort", event.target.value as SearchFormState["sort"])}>
+            <Select
+              value={form.sort}
+              onChange={(event) => updateForm("sort", event.target.value as SearchFormState["sort"])}
+            >
               <option value="score">评分</option>
               <option value="rank">排名</option>
               <option value="heat">热度</option>
@@ -505,7 +562,12 @@ export function SearchPage() {
           </Field>
 
           <Field label="季度">
-            <Select value={form.season} onChange={(event) => updateForm("season", event.target.value as SearchFormState["season"])}>
+            <Select
+              value={form.season}
+              onChange={(event) =>
+                updateForm("season", event.target.value as SearchFormState["season"])
+              }
+            >
               <option value="">全年</option>
               <option value="winter">冬</option>
               <option value="spring">春</option>
@@ -599,7 +661,9 @@ export function SearchPage() {
           <Field label="R18">
             <Select
               value={form.nsfwMode}
-              onChange={(event) => updateForm("nsfwMode", event.target.value as SearchFormState["nsfwMode"])}
+              onChange={(event) =>
+                updateForm("nsfwMode", event.target.value as SearchFormState["nsfwMode"])
+              }
             >
               <option value="safe">仅非 R18</option>
               <option value="any">交给 Bangumi 默认处理</option>
@@ -608,26 +672,22 @@ export function SearchPage() {
           </Field>
         </div>
 
-        <div className={styles.actions}>
-          <Button appearance="secondary" onClick={resetFilters}>
-            清空筛选
-          </Button>
+        <div className={styles.footerRow}>
+          <Text size={200} className={styles.metaText}>
+            已加载 {items.length} / {response.total} · 每次追加 {pageSize} 条
+          </Text>
+
+          <div className={styles.actions}>
+            <Button appearance="secondary" onClick={resetFilters}>
+              清空筛选
+            </Button>
+          </div>
         </div>
       </Card>
 
       <div className={styles.results}>
-        <div className={styles.summary}>
-          <Text size={300}>
-            已加载 {items.length} / {response.total}
-          </Text>
-          <Text size={300} className={styles.muted}>
-            每次追加 {pageSize} 条
-          </Text>
-        </div>
-
         {error ? <Text>{error}</Text> : null}
         {isInitialLoading ? <Spinner label="正在同步 Bangumi 条目..." /> : null}
-
         {!isInitialLoading && !error && items.length === 0 ? <Text>没有匹配的条目。</Text> : null}
 
         <div ref={gridHostRef} className={styles.gridHost}>
@@ -638,14 +698,22 @@ export function SearchPage() {
           </div>
         </div>
 
-        {isLoadingMore ? <Spinner label="正在加载更多..." /> : null}
-        {!isInitialLoading && !isLoadingMore && !response.hasNextPage && items.length > 0 ? (
-          <Text size={200} className={styles.muted}>
-            已经到底了。
-          </Text>
+        {showLoadMoreButton && !isInitialLoading && !isLoadingMore && response.hasNextPage ? (
+          <div className={styles.loadMoreRow}>
+            <Button appearance="secondary" onClick={handleLoadMore}>
+              加载更多
+            </Button>
+          </div>
         ) : null}
 
-        <div ref={loadMoreRef} className={styles.sentinel} aria-hidden="true" />
+        {isLoadingMore ? <Spinner label="正在加载更多..." /> : null}
+        {!isInitialLoading && !isLoadingMore && !response.hasNextPage && items.length > 0 ? (
+          <div className={styles.statusRow}>
+            <Text size={200} className={styles.muted}>
+              已经到底了。
+            </Text>
+          </div>
+        ) : null}
       </div>
     </section>
   );

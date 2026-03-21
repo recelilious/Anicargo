@@ -237,7 +237,11 @@ fn merge_entries(
     merged
 }
 
-fn select_broadcast_time(entries: &[YucScheduleEntry], title: &str, title_cn: &str) -> Option<String> {
+fn select_broadcast_time(
+    entries: &[YucScheduleEntry],
+    title: &str,
+    title_cn: &str,
+) -> Option<String> {
     let targets = build_match_targets(title, title_cn);
     if targets.is_empty() {
         return None;
@@ -265,12 +269,18 @@ fn select_broadcast_time(entries: &[YucScheduleEntry], title: &str, title_cn: &s
 }
 
 fn score_entry(entry: &YucScheduleEntry, targets: &[MatchTarget]) -> i32 {
-    entry.aliases
+    entry
+        .aliases
         .iter()
         .flat_map(|alias| {
-            targets
-                .iter()
-                .map(move |target| score_text_pair(&alias.normalized, &alias.stripped, &target.normalized, &target.stripped))
+            targets.iter().map(move |target| {
+                score_text_pair(
+                    &alias.normalized,
+                    &alias.stripped,
+                    &target.normalized,
+                    &target.stripped,
+                )
+            })
         })
         .max()
         .unwrap_or_default()

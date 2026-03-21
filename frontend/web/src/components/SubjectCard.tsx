@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Badge, Card, Text, makeStyles, tokens } from "@fluentui/react-components";
 import { Link } from "react-router-dom";
 
@@ -11,9 +11,9 @@ type SubjectCardMetaVariant = "schedule" | "catalog";
 const useStyles = makeStyles({
   link: {
     display: "block",
-    textDecorationLine: "none",
-    color: "inherit",
     height: "100%",
+    color: "inherit",
+    textDecorationLine: "none",
     perspective: "1200px",
   },
   card: {
@@ -61,7 +61,7 @@ const useStyles = makeStyles({
     flexWrap: "wrap",
     gap: "6px",
     padding: "10px",
-    backgroundColor: "rgba(24, 14, 11, 0.70)",
+    backgroundColor: "rgba(24, 14, 11, 0.7)",
   },
   tag: {
     backgroundColor: "rgba(255, 248, 241, 0.16)",
@@ -71,8 +71,8 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: "6px",
-    padding: "8px 12px 12px",
     minHeight: 0,
+    padding: "8px 12px 12px",
   },
   titleGroup: {
     display: "flex",
@@ -101,12 +101,12 @@ const useStyles = makeStyles({
   },
   meta: {
     marginTop: "auto",
-    paddingTop: "10px",
-    paddingInline: "8px",
     display: "flex",
-    gap: "12px",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: "12px",
+    paddingTop: "10px",
+    paddingInline: "8px",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   metaRatingOnly: {
@@ -134,7 +134,14 @@ function formatRating(score: number | null) {
 }
 
 function formatStatus(status: SubjectCardModel["releaseStatus"]) {
-  return status === "completed" ? "已完结" : "放送中";
+  switch (status) {
+    case "airing":
+      return "放送中";
+    case "upcoming":
+      return "未播出";
+    default:
+      return "已完结";
+  }
 }
 
 function extractCatalogYear(airDate: string | null) {
@@ -144,7 +151,8 @@ function extractCatalogYear(airDate: string | null) {
 
 function resolveMetaValue(subject: SubjectCardModel, variant: SubjectCardMetaVariant) {
   if (variant === "schedule") {
-    return subject.broadcastTime?.trim() || "--:--";
+    const value = subject.broadcastTime?.trim();
+    return value ? value : null;
   }
 
   return extractCatalogYear(subject.airDate);
@@ -160,6 +168,8 @@ export function SubjectCard({
   const styles = useStyles();
   const { deviceId, userToken } = useSession();
   const linkRef = useRef<HTMLAnchorElement | null>(null);
+  const frameRef = useRef<number | null>(null);
+  const pendingMotionRef = useRef<{ rotateX: number; rotateY: number } | null>(null);
   const [tags, setTags] = useState(() => subject.tags.slice(0, 8));
   const primaryTitle = subject.titleCn || subject.title;
   const secondaryTitle = subject.titleCn && subject.titleCn !== subject.title ? subject.title : null;
@@ -213,12 +223,38 @@ export function SubjectCard({
     };
   }, [deviceId, subject.bangumiSubjectId, subject.tags, userToken]);
 
+  useEffect(() => {
+    return () => {
+      if (frameRef.current != null) {
+        window.cancelAnimationFrame(frameRef.current);
+      }
+    };
+  }, []);
+
+  function applyMotion(rotateX: number, rotateY: number) {
+    const link = linkRef.current;
+    if (!link) {
+      return;
+    }
+
+    link.style.setProperty("--card-lift", "-8px");
+    link.style.setProperty("--card-rotate-x", `${rotateX.toFixed(2)}deg`);
+    link.style.setProperty("--card-rotate-y", `${rotateY.toFixed(2)}deg`);
+    link.style.setProperty("--poster-scale", "1.035");
+  }
+
   function resetHoverMotion() {
     const link = linkRef.current;
     if (!link) {
       return;
     }
 
+    if (frameRef.current != null) {
+      window.cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+
+    pendingMotionRef.current = null;
     link.style.setProperty("--card-lift", "0px");
     link.style.setProperty("--card-rotate-x", "0deg");
     link.style.setProperty("--card-rotate-y", "0deg");
@@ -230,16 +266,10 @@ export function SubjectCard({
       return;
     }
 
-    const link = linkRef.current;
-    if (!link) {
-      return;
-    }
-
-    link.style.setProperty("--card-lift", "-8px");
-    link.style.setProperty("--poster-scale", "1.035");
+    applyMotion(0, 0);
   }
 
-  function handleMouseMove(event: React.MouseEvent<HTMLAnchorElement>) {
+  function handleMouseMove(event: ReactMouseEvent<HTMLAnchorElement>) {
     if (prefersReducedMotion()) {
       return;
     }
@@ -255,10 +285,21 @@ export function SubjectCard({
     const rotateY = (x / rect.width - 0.5) * 7;
     const rotateX = (0.5 - y / rect.height) * 7;
 
-    link.style.setProperty("--card-lift", "-8px");
-    link.style.setProperty("--card-rotate-x", `${rotateX.toFixed(2)}deg`);
-    link.style.setProperty("--card-rotate-y", `${rotateY.toFixed(2)}deg`);
-    link.style.setProperty("--poster-scale", "1.035");
+    pendingMotionRef.current = { rotateX, rotateY };
+
+    if (frameRef.current != null) {
+      return;
+    }
+
+    frameRef.current = window.requestAnimationFrame(() => {
+      frameRef.current = null;
+      const motion = pendingMotionRef.current;
+      if (!motion) {
+        return;
+      }
+
+      applyMotion(motion.rotateX, motion.rotateY);
+    });
   }
 
   return (

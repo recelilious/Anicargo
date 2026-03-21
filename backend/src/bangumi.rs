@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Context;
+use chrono::{Local, NaiveDate};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -123,10 +124,6 @@ pub struct SearchResponseRaw {
     pub data: Vec<SubjectRaw>,
     #[serde(default)]
     pub total: Option<usize>,
-    #[serde(default)]
-    pub limit: Option<usize>,
-    #[serde(default)]
-    pub offset: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -292,7 +289,19 @@ impl CalendarDayRaw {
 }
 
 impl SubjectRaw {
+    pub fn to_calendar_card(&self) -> SubjectCardDto {
+        let mut card = self.base_card();
+        card.release_status = self.calendar_release_status().to_owned();
+        card
+    }
+
     pub fn to_card(&self) -> SubjectCardDto {
+        let mut card = self.base_card();
+        card.release_status = self.search_release_status().to_owned();
+        card
+    }
+
+    fn base_card(&self) -> SubjectCardDto {
         let tags = self
             .tags
             .iter()
@@ -305,14 +314,17 @@ impl SubjectRaw {
             title: self.name.clone(),
             title_cn: self.name_cn.clone(),
             summary: self.summary.clone(),
-            release_status: self.release_status().to_owned(),
+            release_status: "completed".to_owned(),
             air_date: self.air_date.clone().or(self.date.clone()),
             broadcast_time: None,
             air_weekday: self.air_weekday,
-            image_portrait: self
-                .images
-                .as_ref()
-                .and_then(|images| images.large.clone().or(images.common.clone()).or(images.medium.clone())),
+            image_portrait: self.images.as_ref().and_then(|images| {
+                images
+                    .large
+                    .clone()
+                    .or(images.common.clone())
+                    .or(images.medium.clone())
+            }),
             image_banner: self
                 .images
                 .as_ref()
@@ -341,7 +353,12 @@ impl SubjectRaw {
                 .images
                 .as_ref()
                 .and_then(|images| images.common.clone().or(images.large.clone())),
-            tags: self.tags.iter().map(|tag| tag.name.clone()).take(8).collect(),
+            tags: self
+                .tags
+                .iter()
+                .map(|tag| tag.name.clone())
+                .take(8)
+                .collect(),
             infobox: self
                 .infobox
                 .iter()
@@ -356,24 +373,47 @@ impl SubjectRaw {
         }
     }
 
-    fn release_status(&self) -> &'static str {
-        let has_end_marker = self.infobox.iter().any(|item| {
-            let key = item.key.to_lowercase();
-            let value = flatten_infobox_value(&item.value);
-
-            !value.is_empty()
-                && (key.contains("结束")
-                    || key.contains("完结")
-                    || key.contains("終了")
-                    || key.contains("final")
-                    || key.contains("终了"))
-        });
-
-        if has_end_marker {
-            "completed"
+    fn calendar_release_status(&self) -> &'static str {
+        if self.is_upcoming() {
+            "upcoming"
         } else {
             "airing"
         }
+    }
+
+    fn search_release_status(&self) -> &'static str {
+        if self.is_upcoming() {
+            return "upcoming";
+        }
+
+        if self.has_explicit_airing_marker() {
+            return "airing";
+        }
+
+        "completed"
+    }
+
+    fn is_upcoming(&self) -> bool {
+        parse_subject_date(self.air_date.as_ref().or(self.date.as_ref()))
+            .is_some_and(|date| date > Local::now().date_naive())
+    }
+
+    fn has_explicit_airing_marker(&self) -> bool {
+        self.infobox.iter().any(|item| {
+            let key = item.key.to_lowercase();
+            let value = flatten_infobox_value(&item.value).to_lowercase();
+            let combined = format!("{key} {value}");
+
+            combined.contains("放送中")
+                || combined.contains("播出中")
+                || combined.contains("播放中")
+                || combined.contains("连载中")
+                || combined.contains("連載中")
+                || combined.contains("上映中")
+                || combined.contains("配信中")
+                || combined.contains("airing")
+                || combined.contains("ongoing")
+        })
     }
 }
 
@@ -392,7 +432,7 @@ impl EpisodeRaw {
             },
             duration_seconds: self.duration_seconds,
             is_available: false,
-            availability_note: Some("资源尚未入库，后续会由订阅和下载规则驱动。".to_owned()),
+            availability_note: Some("资源尚未入库，后续会由订阅与下载策略驱动。".to_owned()),
         }
     }
 }
@@ -417,7 +457,17 @@ fn flatten_infobox_value(value: &Value) -> String {
     }
 }
 
-fn build_range_filter<T, F>(min: Option<T>, max: Option<T>, formatter: Option<F>) -> Option<Vec<String>>
+fn parse_subject_date(value: Option<&String>) -> Option<NaiveDate> {
+    let date = value?;
+    let date_part = date.split_once('T').map(|(left, _)| left).unwrap_or(date);
+    NaiveDate::parse_from_str(date_part, "%Y-%m-%d").ok()
+}
+
+fn build_range_filter<T, F>(
+    min: Option<T>,
+    max: Option<T>,
+    formatter: Option<F>,
+) -> Option<Vec<String>>
 where
     T: Clone + ToString,
     F: Fn(T) -> String,

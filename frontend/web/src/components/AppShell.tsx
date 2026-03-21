@@ -6,18 +6,21 @@ import { useSession } from "../session";
 
 const useStyles = makeStyles({
   layout: {
-    minHeight: "100vh",
+    height: "100vh",
     display: "grid",
     gridTemplateColumns: "220px 1fr",
-    backgroundColor: "var(--app-bg)"
+    backgroundColor: "var(--app-bg)",
+    overflow: "hidden"
   },
   rail: {
     display: "flex",
     flexDirection: "column",
     gap: "18px",
+    height: "100vh",
     padding: "22px 14px",
     borderRight: `1px solid ${tokens.colorNeutralStroke2}`,
-    backgroundColor: "var(--app-rail)"
+    backgroundColor: "var(--app-rail)",
+    overflow: "hidden"
   },
   brand: {
     display: "flex",
@@ -72,7 +75,11 @@ const useStyles = makeStyles({
     color: "var(--app-muted)"
   },
   content: {
-    padding: "24px 28px 40px"
+    minWidth: 0,
+    height: "100vh",
+    padding: "24px 28px 40px",
+    overflowY: "auto",
+    overflowX: "hidden"
   }
 });
 
@@ -129,7 +136,7 @@ export function AppShell() {
         </div>
       </aside>
 
-      <main className={styles.content}>
+      <main id="app-scroll-root" className={styles.content}>
         <Outlet />
       </main>
     </div>

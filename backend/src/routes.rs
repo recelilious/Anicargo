@@ -9,18 +9,20 @@ use sqlx::SqlitePool;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::{
-    auth::{AdminIdentity, ViewerIdentity, extract_admin_token, extract_device_id, extract_user_token},
+    auth::{
+        AdminIdentity, ViewerIdentity, extract_admin_token, extract_device_id, extract_user_token,
+    },
     bangumi::{BangumiClient, BangumiSearchQuery, SearchFacets},
     config::AppConfig,
     db,
-    yuc::YucClient,
     types::{
         AdminDashboardResponse, ApiEnvelope, AppError, AuthResponse, BootstrapResponse,
         CalendarDayDto, CalendarResponse, CredentialsRequest, FansubRuleDto, HealthResponse,
         SearchRequest, SearchResponse, SubjectCardDto, SubjectDetailDto, SubjectDetailResponse,
-        SubscriptionStateDto,
-        ToggleSubscriptionResponse, UpdatePolicyRequest, UpsertFansubRuleRequest, ViewerSummary,
+        SubscriptionStateDto, ToggleSubscriptionResponse, UpdatePolicyRequest,
+        UpsertFansubRuleRequest, ViewerSummary,
     },
+    yuc::YucClient,
 };
 
 #[derive(Clone)]
@@ -88,13 +90,15 @@ async fn calendar(
 
     for day in state.bangumi.fetch_calendar().await? {
         let weekday = day.to_weekday();
-        let cards = day.items.into_iter().map(|item| item.to_card()).collect();
-        let items = enrich_cards(&state.yuc, cards).await;
+        let cards = day
+            .items
+            .into_iter()
+            .map(|item| item.to_calendar_card())
+            .collect();
+        let mut items = enrich_cards(&state.yuc, cards).await;
+        sort_cards_by_broadcast_time(&mut items);
 
-        days.push(CalendarDayDto {
-            weekday,
-            items,
-        });
+        days.push(CalendarDayDto { weekday, items });
     }
 
     Ok(Json(ApiEnvelope::new(CalendarResponse { days })))
@@ -153,7 +157,11 @@ async fn search(
     let total = response.total.unwrap_or(response.data.len());
     let paged_items = enrich_cards(
         &state.yuc,
-        response.data.into_iter().map(|subject| subject.to_card()).collect(),
+        response
+            .data
+            .into_iter()
+            .map(|subject| subject.to_card())
+            .collect(),
     )
     .await;
 
@@ -195,7 +203,10 @@ async fn subject_detail(
 
     Ok(Json(ApiEnvelope::new(SubjectDetailResponse {
         subject,
-        episodes: episodes.into_iter().map(|episode| episode.to_dto()).collect(),
+        episodes: episodes
+            .into_iter()
+            .map(|episode| episode.to_dto())
+            .collect(),
         subscription: SubscriptionStateDto {
             is_subscribed,
             subscription_count,
@@ -237,9 +248,13 @@ async fn register(
     Json(payload): Json<CredentialsRequest>,
 ) -> Result<Json<ApiEnvelope<AuthResponse>>, AppError> {
     validate_credentials(&payload.username, &payload.password)?;
-    let (viewer, token) =
-        db::register_user(&state.pool, &payload.username, &payload.password, &state.config.auth)
-            .await?;
+    let (viewer, token) = db::register_user(
+        &state.pool,
+        &payload.username,
+        &payload.password,
+        &state.config.auth,
+    )
+    .await?;
 
     Ok(Json(ApiEnvelope::new(AuthResponse {
         token,
@@ -252,9 +267,13 @@ async fn login(
     Json(payload): Json<CredentialsRequest>,
 ) -> Result<Json<ApiEnvelope<AuthResponse>>, AppError> {
     validate_credentials(&payload.username, &payload.password)?;
-    let (viewer, token) =
-        db::login_user(&state.pool, &payload.username, &payload.password, &state.config.auth)
-            .await?;
+    let (viewer, token) = db::login_user(
+        &state.pool,
+        &payload.username,
+        &payload.password,
+        &state.config.auth,
+    )
+    .await?;
 
     Ok(Json(ApiEnvelope::new(AuthResponse {
         token,
@@ -295,9 +314,13 @@ async fn admin_login(
     Json(payload): Json<CredentialsRequest>,
 ) -> Result<Json<ApiEnvelope<crate::types::AdminAuthResponse>>, AppError> {
     validate_credentials(&payload.username, &payload.password)?;
-    let (admin, token) =
-        db::login_admin(&state.pool, &payload.username, &payload.password, &state.config.auth)
-            .await?;
+    let (admin, token) = db::login_admin(
+        &state.pool,
+        &payload.username,
+        &payload.password,
+        &state.config.auth,
+    )
+    .await?;
 
     Ok(Json(ApiEnvelope::new(crate::types::AdminAuthResponse {
         token,
@@ -392,9 +415,7 @@ async fn resolve_optional_viewer(
         }
     }
 
-    Ok(fallback_device_id.map(|id| ViewerIdentity::Device {
-        id: id.to_owned(),
-    }))
+    Ok(fallback_device_id.map(|id| ViewerIdentity::Device { id: id.to_owned() }))
 }
 
 async fn require_admin(pool: &SqlitePool, headers: &HeaderMap) -> Result<AdminIdentity, AppError> {
@@ -420,11 +441,15 @@ fn viewer_to_summary(viewer: &ViewerIdentity) -> ViewerSummary {
 
 fn validate_credentials(username: &str, password: &str) -> Result<(), AppError> {
     if username.trim().len() < 3 {
-        return Err(AppError::bad_request("username must be at least 3 characters"));
+        return Err(AppError::bad_request(
+            "username must be at least 3 characters",
+        ));
     }
 
     if password.len() < 8 {
-        return Err(AppError::bad_request("password must be at least 8 characters"));
+        return Err(AppError::bad_request(
+            "password must be at least 8 characters",
+        ));
     }
 
     Ok(())
@@ -466,4 +491,29 @@ fn normalize_nsfw_mode(mode: Option<&str>) -> Option<bool> {
         "safe" => Some(false),
         _ => None,
     }
+}
+
+fn sort_cards_by_broadcast_time(items: &mut [SubjectCardDto]) {
+    items.sort_by(|left, right| {
+        match (
+            parse_broadcast_time(left.broadcast_time.as_deref()),
+            parse_broadcast_time(right.broadcast_time.as_deref()),
+        ) {
+            (Some(left_key), Some(right_key)) => left_key.cmp(&right_key),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => left
+                .title_cn
+                .cmp(&right.title_cn)
+                .then_with(|| left.title.cmp(&right.title)),
+        }
+    });
+}
+
+fn parse_broadcast_time(value: Option<&str>) -> Option<u16> {
+    let value = value?.trim();
+    let (hour, minute) = value.split_once(':')?;
+    let hour = hour.parse::<u16>().ok()?;
+    let minute = minute.parse::<u16>().ok()?;
+    Some(hour * 60 + minute)
 }

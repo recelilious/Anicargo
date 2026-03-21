@@ -1,10 +1,4 @@
-use argon2::{
-    Argon2,
-    PasswordHash,
-    PasswordHasher,
-    PasswordVerifier,
-    password_hash::SaltString,
-};
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
 use axum::http::HeaderMap;
 use rand_core::OsRng;
 use uuid::Uuid;
@@ -16,18 +10,13 @@ pub const DEVICE_ID_HEADER: &str = "x-anicargo-device-id";
 
 #[derive(Debug, Clone)]
 pub enum ViewerIdentity {
-    Device {
-        id: String,
-    },
-    User {
-        id: i64,
-        username: String
-    },
+    Device { id: String },
+    User { id: i64, username: String },
 }
 
 #[derive(Debug, Clone)]
 pub struct AdminIdentity {
-    pub username: String
+    pub username: String,
 }
 
 pub fn hash_password(password: &str) -> Result<String, AppError> {
