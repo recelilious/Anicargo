@@ -2,6 +2,9 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { FluentProvider } from "@fluentui/react-components";
 import { BrowserRouter } from "react-router-dom";
+import "@fontsource-variable/jetbrains-mono";
+import "@chinese-fonts/maple-mono-cn/dist/MapleMono-CN-Regular/result.css";
+import "@chinese-fonts/maple-mono-cn/dist/MapleMono-CN-SemiBold/result.css";
 
 import App from "./App";
 import { AppearanceProvider, useAppearance } from "./appearance";
