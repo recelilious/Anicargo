@@ -344,6 +344,35 @@ export function SearchPage() {
   const querySignature = JSON.stringify(requestModel);
   const [activeQuerySignature, setActiveQuerySignature] = useState(querySignature);
 
+  function requestNextPage() {
+    if (loadLockRef.current) {
+      return;
+    }
+
+    loadLockRef.current = true;
+    setPage((current) => current + 1);
+  }
+
+  function handleReachLoadThreshold(scrollRoot: HTMLElement) {
+    if (isInitialLoading || isLoadingMore || !response.hasNextPage || error) {
+      return;
+    }
+
+    const distanceToBottom =
+      scrollRoot.scrollHeight - scrollRoot.clientHeight - scrollRoot.scrollTop;
+
+    if (distanceToBottom > LOAD_MORE_DISTANCE) {
+      return;
+    }
+
+    if (!autoLoadUnlocked) {
+      setShowLoadMoreButton(true);
+      return;
+    }
+
+    requestNextPage();
+  }
+
   useEffect(() => {
     const element = gridHostRef.current;
     if (!element || typeof ResizeObserver === "undefined") {
@@ -465,29 +494,7 @@ export function SearchPage() {
       ticking = true;
       window.requestAnimationFrame(() => {
         ticking = false;
-
-        if (isInitialLoading || isLoadingMore || !response.hasNextPage || error) {
-          return;
-        }
-
-        const distanceToBottom =
-          scrollRoot.scrollHeight - scrollRoot.clientHeight - scrollRoot.scrollTop;
-
-        if (distanceToBottom > LOAD_MORE_DISTANCE) {
-          return;
-        }
-
-        if (!autoLoadUnlocked) {
-          setShowLoadMoreButton(true);
-          return;
-        }
-
-        if (loadLockRef.current) {
-          return;
-        }
-
-        loadLockRef.current = true;
-        setPage((current) => current + 1);
+        handleReachLoadThreshold(scrollRoot);
       });
     };
 
@@ -496,6 +503,32 @@ export function SearchPage() {
       scrollRoot.removeEventListener("scroll", handleScroll);
     };
   }, [autoLoadUnlocked, error, isInitialLoading, isLoadingMore, response.hasNextPage]);
+
+  useEffect(() => {
+    const scrollRoot = document.getElementById("app-scroll-root");
+    if (!scrollRoot) {
+      return;
+    }
+
+    if (isInitialLoading || isLoadingMore || !response.hasNextPage || error) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      handleReachLoadThreshold(scrollRoot);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [
+    autoLoadUnlocked,
+    error,
+    isInitialLoading,
+    isLoadingMore,
+    items.length,
+    response.hasNextPage,
+  ]);
 
   function updateForm<K extends keyof SearchFormState>(key: K, value: SearchFormState[K]) {
     setForm((current) => ({
@@ -513,10 +546,9 @@ export function SearchPage() {
       return;
     }
 
-    loadLockRef.current = true;
     setAutoLoadUnlocked(true);
     setShowLoadMoreButton(false);
-    setPage((current) => current + 1);
+    requestNextPage();
   }
 
   return (
