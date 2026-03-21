@@ -6,13 +6,15 @@ import { fetchSubjectDetail } from "../api";
 import { useSession } from "../session";
 import type { SubjectCard as SubjectCardModel } from "../types";
 
+type SubjectCardMetaVariant = "schedule" | "catalog";
+
 const useStyles = makeStyles({
   link: {
     display: "block",
     textDecorationLine: "none",
     color: "inherit",
     height: "100%",
-    perspective: "1200px"
+    perspective: "1200px",
   },
   card: {
     height: "414px",
@@ -27,13 +29,13 @@ const useStyles = makeStyles({
     transformStyle: "preserve-3d",
     transition: "transform 180ms ease, box-shadow 180ms ease",
     willChange: "transform",
-    cursor: "pointer"
+    cursor: "pointer",
   },
   posterWrap: {
     position: "relative",
     overflow: "hidden",
     borderRadius: tokens.borderRadiusLarge,
-    backgroundColor: "var(--app-fallback-hero)"
+    backgroundColor: "var(--app-fallback-hero)",
   },
   poster: {
     position: "absolute",
@@ -41,13 +43,13 @@ const useStyles = makeStyles({
     backgroundSize: "cover",
     backgroundPosition: "center center",
     transform: "scale(var(--poster-scale, 1))",
-    transition: "transform 180ms ease"
+    transition: "transform 180ms ease",
   },
   status: {
     position: "absolute",
     left: "10px",
     top: "10px",
-    zIndex: 1
+    zIndex: 1,
   },
   tagRail: {
     position: "absolute",
@@ -59,24 +61,24 @@ const useStyles = makeStyles({
     flexWrap: "wrap",
     gap: "6px",
     padding: "10px",
-    backgroundColor: "rgba(24, 14, 11, 0.70)"
+    backgroundColor: "rgba(24, 14, 11, 0.70)",
   },
   tag: {
     backgroundColor: "rgba(255, 248, 241, 0.16)",
-    color: "#fff7f1"
+    color: "#fff7f1",
   },
   body: {
     display: "flex",
     flexDirection: "column",
     gap: "6px",
     padding: "8px 12px 12px",
-    minHeight: 0
+    minHeight: 0,
   },
   titleGroup: {
     display: "flex",
     flexDirection: "column",
     gap: "2px",
-    minHeight: 0
+    minHeight: 0,
   },
   title: {
     display: "-webkit-box",
@@ -85,7 +87,7 @@ const useStyles = makeStyles({
     WebkitLineClamp: "2",
     lineHeight: "1.42",
     overflowWrap: "anywhere",
-    wordBreak: "break-word"
+    wordBreak: "break-word",
   },
   subtitle: {
     color: tokens.colorNeutralForeground3,
@@ -95,38 +97,33 @@ const useStyles = makeStyles({
     WebkitLineClamp: "2",
     lineHeight: "1.42",
     overflowWrap: "anywhere",
-    wordBreak: "break-word"
+    wordBreak: "break-word",
   },
   meta: {
     marginTop: "auto",
     paddingTop: "10px",
-    paddingInline: "4px",
+    paddingInline: "8px",
     display: "flex",
     gap: "12px",
     alignItems: "center",
     justifyContent: "space-between",
-    borderTop: `1px solid ${tokens.colorNeutralStroke2}`
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   metaRatingOnly: {
-    justifyContent: "flex-end"
+    justifyContent: "flex-end",
   },
   rating: {
     color: tokens.colorBrandForeground1,
-    fontVariantNumeric: "tabular-nums"
+    fontVariantNumeric: "tabular-nums",
   },
-  time: {
+  metaValue: {
     color: tokens.colorNeutralForeground2,
-    fontVariantNumeric: "tabular-nums"
-  }
+    fontVariantNumeric: "tabular-nums",
+  },
 });
 
 const detailTagCache = new Map<number, string[]>();
 const detailTagRequests = new Map<number, Promise<string[]>>();
-
-function extractBroadcastTime(broadcastTime: string | null) {
-  const value = broadcastTime?.trim();
-  return value ? value : null;
-}
 
 function prefersReducedMotion() {
   return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -140,7 +137,26 @@ function formatStatus(status: SubjectCardModel["releaseStatus"]) {
   return status === "completed" ? "已完结" : "放送中";
 }
 
-export function SubjectCard({ subject }: { subject: SubjectCardModel }) {
+function extractCatalogYear(airDate: string | null) {
+  const year = airDate?.match(/\d{4}/)?.[0];
+  return year ?? null;
+}
+
+function resolveMetaValue(subject: SubjectCardModel, variant: SubjectCardMetaVariant) {
+  if (variant === "schedule") {
+    return subject.broadcastTime?.trim() || "--:--";
+  }
+
+  return extractCatalogYear(subject.airDate);
+}
+
+export function SubjectCard({
+  subject,
+  metaVariant = "schedule",
+}: {
+  subject: SubjectCardModel;
+  metaVariant?: SubjectCardMetaVariant;
+}) {
   const styles = useStyles();
   const { deviceId, userToken } = useSession();
   const linkRef = useRef<HTMLAnchorElement | null>(null);
@@ -148,7 +164,7 @@ export function SubjectCard({ subject }: { subject: SubjectCardModel }) {
   const primaryTitle = subject.titleCn || subject.title;
   const secondaryTitle = subject.titleCn && subject.titleCn !== subject.title ? subject.title : null;
   const displayedTags = tags.slice(0, 8);
-  const broadcastTime = extractBroadcastTime(subject.broadcastTime);
+  const metaValue = resolveMetaValue(subject, metaVariant);
 
   useEffect(() => {
     const nextTags = subject.tags.slice(0, 8);
@@ -260,7 +276,7 @@ export function SubjectCard({ subject }: { subject: SubjectCardModel }) {
           <div
             className={styles.poster}
             style={{
-              backgroundImage: subject.imagePortrait ? `url(${subject.imagePortrait})` : undefined
+              backgroundImage: subject.imagePortrait ? `url(${subject.imagePortrait})` : undefined,
             }}
           />
 
@@ -291,12 +307,10 @@ export function SubjectCard({ subject }: { subject: SubjectCardModel }) {
             ) : null}
           </div>
 
-          <div
-            className={`${styles.meta} ${broadcastTime ? "" : styles.metaRatingOnly}`.trim()}
-          >
-            {broadcastTime ? (
-              <Text size={300} className={styles.time}>
-                {broadcastTime}
+          <div className={`${styles.meta} ${metaValue ? "" : styles.metaRatingOnly}`.trim()}>
+            {metaValue ? (
+              <Text size={300} className={styles.metaValue}>
+                {metaValue}
               </Text>
             ) : null}
             <Text weight="semibold" className={styles.rating}>

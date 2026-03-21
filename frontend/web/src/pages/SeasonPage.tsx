@@ -194,7 +194,7 @@ export function SeasonPage() {
                 <div key={day.weekday.id} className={styles.panel}>
                   <div className={styles.grid}>
                     {day.items.map((subject) => (
-                      <SubjectCard key={subject.bangumiSubjectId} subject={subject} />
+                      <SubjectCard key={subject.bangumiSubjectId} subject={subject} metaVariant="schedule" />
                     ))}
                   </div>
                 </div>

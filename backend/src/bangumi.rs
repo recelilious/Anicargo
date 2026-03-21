@@ -3,7 +3,7 @@ use std::time::Duration;
 use anyhow::Context;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::{
     config::BangumiConfig,
@@ -47,21 +47,16 @@ impl BangumiClient {
 
     pub async fn search_subjects(
         &self,
-        keyword: &str,
+        request: &BangumiSearchQuery,
+        limit: usize,
         offset: usize,
     ) -> Result<SearchResponseRaw, AppError> {
-        let payload = json!({
-            "keyword": keyword,
-            "sort": "rank",
-            "filter": {
-                "type": [2]
-            }
-        });
+        let payload = request.to_payload();
 
         self.http
             .post(format!(
-                "{}/v0/search/subjects?limit=20&offset={}",
-                self.base_url, offset
+                "{}/v0/search/subjects?limit={}&offset={}",
+                self.base_url, limit, offset
             ))
             .header(reqwest::header::USER_AGENT, &self.user_agent)
             .json(&payload)
@@ -132,6 +127,80 @@ pub struct SearchResponseRaw {
     pub limit: Option<usize>,
     #[serde(default)]
     pub offset: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BangumiSearchQuery {
+    pub keyword: String,
+    pub sort: String,
+    pub tags: Vec<String>,
+    pub meta_tags: Vec<String>,
+    pub air_date_start: Option<String>,
+    pub air_date_end: Option<String>,
+    pub rating_min: Option<f64>,
+    pub rating_max: Option<f64>,
+    pub rating_count_min: Option<u32>,
+    pub rating_count_max: Option<u32>,
+    pub rank_min: Option<u32>,
+    pub rank_max: Option<u32>,
+    pub nsfw: Option<bool>,
+}
+
+impl BangumiSearchQuery {
+    fn to_payload(&self) -> Value {
+        let mut filter = Map::new();
+        filter.insert("type".to_owned(), json!([2]));
+
+        if !self.tags.is_empty() {
+            filter.insert("tag".to_owned(), json!(self.tags));
+        }
+
+        if !self.meta_tags.is_empty() {
+            filter.insert("meta_tags".to_owned(), json!(self.meta_tags));
+        }
+
+        if let Some(values) = build_range_filter(
+            self.air_date_start.as_deref(),
+            self.air_date_end.as_deref(),
+            None::<fn(&str) -> String>,
+        ) {
+            filter.insert("air_date".to_owned(), json!(values));
+        }
+
+        if let Some(values) = build_range_filter(
+            self.rating_min,
+            self.rating_max,
+            Some(|value: f64| trim_float(value)),
+        ) {
+            filter.insert("rating".to_owned(), json!(values));
+        }
+
+        if let Some(values) = build_range_filter(
+            self.rating_count_min,
+            self.rating_count_max,
+            Some(|value: u32| value.to_string()),
+        ) {
+            filter.insert("rating_count".to_owned(), json!(values));
+        }
+
+        if let Some(values) = build_range_filter(
+            self.rank_min,
+            self.rank_max,
+            Some(|value: u32| value.to_string()),
+        ) {
+            filter.insert("rank".to_owned(), json!(values));
+        }
+
+        if let Some(nsfw) = self.nsfw {
+            filter.insert("nsfw".to_owned(), json!(nsfw));
+        }
+
+        json!({
+            "keyword": self.keyword,
+            "sort": self.sort,
+            "filter": Value::Object(filter),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -346,6 +415,47 @@ fn flatten_infobox_value(value: &Value) -> String {
             .or_else(|| map.get("name").map(flatten_infobox_value))
             .unwrap_or_default(),
     }
+}
+
+fn build_range_filter<T, F>(min: Option<T>, max: Option<T>, formatter: Option<F>) -> Option<Vec<String>>
+where
+    T: Clone + ToString,
+    F: Fn(T) -> String,
+{
+    let mut values = Vec::new();
+
+    if let Some(min) = min {
+        let value = formatter
+            .as_ref()
+            .map(|format| format(min.clone()))
+            .unwrap_or_else(|| min.to_string());
+        values.push(format!(">={value}"));
+    }
+
+    if let Some(max) = max {
+        let value = formatter
+            .as_ref()
+            .map(|format| format(max.clone()))
+            .unwrap_or_else(|| max.to_string());
+        values.push(format!("<={value}"));
+    }
+
+    if values.is_empty() {
+        None
+    } else {
+        Some(values)
+    }
+}
+
+fn trim_float(value: f64) -> String {
+    let mut text = format!("{value:.2}");
+    while text.contains('.') && text.ends_with('0') {
+        text.pop();
+    }
+    if text.ends_with('.') {
+        text.pop();
+    }
+    text
 }
 
 #[derive(Debug, Clone, Serialize)]

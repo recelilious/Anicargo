@@ -1,5 +1,3 @@
-use std::{cmp::Ordering, collections::HashSet};
-
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -12,7 +10,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::{
     auth::{AdminIdentity, ViewerIdentity, extract_admin_token, extract_device_id, extract_user_token},
-    bangumi::{BangumiClient, SearchFacets},
+    bangumi::{BangumiClient, BangumiSearchQuery, SearchFacets},
     config::AppConfig,
     db,
     yuc::YucClient,
@@ -106,79 +104,31 @@ async fn search(
     State(state): State<AppState>,
     Query(request): Query<SearchRequest>,
 ) -> Result<Json<ApiEnvelope<SearchResponse>>, AppError> {
-    const SEARCH_WINDOW_PAGES: usize = 5;
-    const SEARCH_REMOTE_PAGE_SIZE: usize = 20;
-
     let page = request.page.unwrap_or(1).max(1);
-    let page_size = request.page_size.unwrap_or(20).clamp(1, 20);
-    let tag_filter = request.tag.as_ref().map(|value| value.to_lowercase());
-    let mut seen_ids = HashSet::new();
-    let mut items = Vec::new();
+    let page_size = request.page_size.unwrap_or(20).clamp(1, 60);
+    let offset = (page - 1) * page_size;
+    let query = BangumiSearchQuery {
+        keyword: request.keyword.trim().to_owned(),
+        sort: normalize_sort(request.sort.as_deref()),
+        tags: normalize_terms(&request.tag),
+        meta_tags: normalize_terms(&request.meta_tag),
+        air_date_start: request.air_date_start.clone(),
+        air_date_end: request.air_date_end.clone(),
+        rating_min: request.rating_min,
+        rating_max: request.rating_max,
+        rating_count_min: request.rating_count_min,
+        rating_count_max: request.rating_count_max,
+        rank_min: request.rank_min,
+        rank_max: request.rank_max,
+        nsfw: normalize_nsfw_mode(request.nsfw_mode.as_deref()),
+    };
+    let response = state
+        .bangumi
+        .search_subjects(&query, page_size, offset)
+        .await?;
 
-    for page_index in 0..SEARCH_WINDOW_PAGES {
-        let response = state
-            .bangumi
-            .search_subjects(request.keyword.trim(), page_index * SEARCH_REMOTE_PAGE_SIZE)
-            .await?;
-
-        let page_items = response
-            .data
-            .into_iter()
-            .filter(|subject| seen_ids.insert(subject.id))
-            .collect::<Vec<_>>();
-
-        if page_items.is_empty() {
-            break;
-        }
-
-        let page_count = page_items.len();
-        items.extend(page_items);
-
-        if page_count < SEARCH_REMOTE_PAGE_SIZE {
-            break;
-        }
-    }
-
-    items.retain(|subject| {
-        request.year.is_none_or(|year| {
-            subject
-                .date
-                .as_ref()
-                .or(subject.air_date.as_ref())
-                .and_then(|date| date.split('-').next())
-                .and_then(|year_text| year_text.parse::<i32>().ok())
-                == Some(year)
-        })
-    });
-
-    items.retain(|subject| {
-        tag_filter.as_ref().is_none_or(|tag| {
-            subject
-                .tags
-                .iter()
-                .any(|subject_tag| subject_tag.name.to_lowercase().contains(tag))
-        })
-    });
-
-    match request.sort.as_deref() {
-        Some("title") => items.sort_by(|left, right| {
-            left.name_cn
-                .cmp(&right.name_cn)
-                .then_with(|| left.name.cmp(&right.name))
-        }),
-        _ => items.sort_by(|left, right| {
-            let left_score = left.rating.as_ref().and_then(|rating| rating.score);
-            let right_score = right.rating.as_ref().and_then(|rating| rating.score);
-
-            right_score
-                .partial_cmp(&left_score)
-                .unwrap_or(Ordering::Equal)
-                .then_with(|| left.name_cn.cmp(&right.name_cn))
-                .then_with(|| left.name.cmp(&right.name))
-        }),
-    }
-
-    let mut years = items
+    let mut years = response
+        .data
         .iter()
         .filter_map(|subject| {
             subject
@@ -192,25 +142,20 @@ async fn search(
     years.sort_unstable();
     years.dedup();
 
-    let mut tags = items
+    let mut tags = response
+        .data
         .iter()
         .flat_map(|subject| subject.tags.iter().map(|tag| tag.name.clone()))
         .collect::<Vec<_>>();
     tags.sort_unstable();
     tags.dedup();
 
-    let total = items.len();
-    let start = (page - 1) * page_size;
-    let paged_items = if start >= total {
-        Vec::new()
-    } else {
-        items.into_iter()
-            .skip(start)
-            .take(page_size)
-            .map(|subject| subject.to_card())
-            .collect()
-    };
-    let paged_items = enrich_cards(&state.yuc, paged_items).await;
+    let total = response.total.unwrap_or(response.data.len());
+    let paged_items = enrich_cards(
+        &state.yuc,
+        response.data.into_iter().map(|subject| subject.to_card()).collect(),
+    )
+    .await;
 
     Ok(Json(ApiEnvelope::new(SearchResponse {
         items: paged_items,
@@ -218,7 +163,7 @@ async fn search(
         total,
         page,
         page_size,
-        has_next_page: start + page_size < total,
+        has_next_page: offset + page_size < total,
     })))
 }
 
@@ -497,4 +442,28 @@ async fn enrich_cards(yuc: &YucClient, cards: Vec<SubjectCardDto>) -> Vec<Subjec
 
 async fn enrich_detail(yuc: &YucClient, detail: SubjectDetailDto) -> SubjectDetailDto {
     yuc.enrich_detail(detail).await
+}
+
+fn normalize_terms(values: &[String]) -> Vec<String> {
+    values
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn normalize_sort(sort: Option<&str>) -> String {
+    match sort.unwrap_or("score") {
+        "match" | "heat" | "rank" | "score" => sort.unwrap_or("score").to_owned(),
+        _ => "score".to_owned(),
+    }
+}
+
+fn normalize_nsfw_mode(mode: Option<&str>) -> Option<bool> {
+    match mode.unwrap_or("any") {
+        "only" => Some(true),
+        "safe" => Some(false),
+        _ => None,
+    }
 }

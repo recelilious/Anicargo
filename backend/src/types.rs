@@ -171,11 +171,29 @@ pub struct SearchRequest {
     #[serde(default)]
     pub keyword: String,
     #[serde(default)]
-    pub year: Option<i32>,
+    pub tag: Vec<String>,
     #[serde(default)]
-    pub tag: Option<String>,
+    pub meta_tag: Vec<String>,
     #[serde(default)]
     pub sort: Option<String>,
+    #[serde(default)]
+    pub air_date_start: Option<String>,
+    #[serde(default)]
+    pub air_date_end: Option<String>,
+    #[serde(default)]
+    pub rating_min: Option<f64>,
+    #[serde(default)]
+    pub rating_max: Option<f64>,
+    #[serde(default)]
+    pub rating_count_min: Option<u32>,
+    #[serde(default)]
+    pub rating_count_max: Option<u32>,
+    #[serde(default)]
+    pub rank_min: Option<u32>,
+    #[serde(default)]
+    pub rank_max: Option<u32>,
+    #[serde(default)]
+    pub nsfw_mode: Option<String>,
     #[serde(default)]
     pub page: Option<usize>,
     #[serde(default)]
