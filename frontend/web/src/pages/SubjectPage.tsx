@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import { ArrowLeftRegular } from "@fluentui/react-icons";
 import { Badge, Button, Card, Spinner, Text, makeStyles, tokens } from "@fluentui/react-components";
-import { useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { fetchSubjectDetail, toggleSubscription } from "../api";
 import { EpisodeCard } from "../components/EpisodeCard";
+import { resolveReturnScrollTop, type RouteState } from "../navigation";
 import { useSession } from "../session";
 import type { SubjectDetailResponse } from "../types";
 
@@ -41,6 +43,10 @@ const useStyles = makeStyles({
     flexDirection: "column",
     gap: "16px",
   },
+  heroTopRow: {
+    display: "flex",
+    justifyContent: "flex-start",
+  },
   titleGroup: {
     display: "flex",
     flexDirection: "column",
@@ -63,6 +69,9 @@ const useStyles = makeStyles({
   subscribeButton: {
     alignSelf: "flex-start",
     minWidth: "132px",
+  },
+  backButton: {
+    minWidth: "108px",
   },
   heroInfo: {
     display: "flex",
@@ -105,7 +114,7 @@ const useStyles = makeStyles({
   },
   infoGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     gap: "12px",
   },
   infoCard: {
@@ -158,12 +167,15 @@ function formatSubscriptionSource(source: SubjectDetailResponse["subscription"][
 
 export function SubjectPage() {
   const styles = useStyles();
+  const navigate = useNavigate();
+  const location = useLocation();
   const { subjectId } = useParams();
   const { deviceId, userToken } = useSession();
   const [detail, setDetail] = useState<SubjectDetailResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubscribing, setIsSubscribing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const routeState = (location.state as RouteState | null) ?? null;
 
   useEffect(() => {
     if (!subjectId) {
@@ -217,6 +229,21 @@ export function SubjectPage() {
     }
   }
 
+  function handleBack() {
+    if (!routeState?.fromPath) {
+      navigate(-1);
+      return;
+    }
+
+    const restoreScrollTop = resolveReturnScrollTop(routeState.fromPath);
+    navigate(routeState.fromPath, {
+      state:
+        typeof restoreScrollTop === "number"
+          ? ({ restoreScrollTop } satisfies RouteState)
+          : undefined,
+    });
+  }
+
   if (isLoading) {
     return <Spinner label="正在加载条目..." />;
   }
@@ -242,6 +269,17 @@ export function SubjectPage() {
         <div className={styles.heroOverlay} />
 
         <div className={styles.heroContent}>
+          <div className={styles.heroTopRow}>
+            <Button
+              appearance="primary"
+              className={styles.backButton}
+              icon={<ArrowLeftRegular />}
+              onClick={handleBack}
+            >
+              返回
+            </Button>
+          </div>
+
           <div className={styles.titleGroup}>
             <Text weight="semibold" size={900}>
               {detail.subject.titleCn || detail.subject.title}

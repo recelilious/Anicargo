@@ -1,7 +1,9 @@
+import { useEffect } from "react";
 import { BoxRegular, CalendarLtrRegular, SearchRegular, SettingsRegular } from "@fluentui/react-icons";
 import { Badge, Button, Text, makeStyles, tokens } from "@fluentui/react-components";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 
+import type { RouteState } from "../navigation";
 import { useSession } from "../session";
 
 const useStyles = makeStyles({
@@ -92,7 +94,21 @@ const navItems = [
 
 export function AppShell() {
   const styles = useStyles();
+  const location = useLocation();
   const { displayName, viewerModeLabel, viewerSubline } = useSession();
+
+  useEffect(() => {
+    const scrollRoot = document.getElementById("app-scroll-root");
+    if (!scrollRoot) {
+      return;
+    }
+
+    const restoreScrollTop = (location.state as RouteState | null)?.restoreScrollTop;
+    scrollRoot.scrollTo({
+      top: typeof restoreScrollTop === "number" ? restoreScrollTop : 0,
+      behavior: "auto",
+    });
+  }, [location.key, location.state]);
 
   return (
     <div className={styles.layout}>

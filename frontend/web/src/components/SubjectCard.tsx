@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Badge, Card, Text, makeStyles, tokens } from "@fluentui/react-components";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 import { fetchSubjectDetail } from "../api";
+import { buildRoutePath, rememberReturnTarget, type RouteState } from "../navigation";
 import { useSession } from "../session";
 import type { SubjectCard as SubjectCardModel } from "../types";
 
@@ -58,14 +59,21 @@ const useStyles = makeStyles({
     bottom: 0,
     zIndex: 1,
     display: "flex",
-    flexWrap: "wrap",
+    flexWrap: "nowrap",
     gap: "6px",
     padding: "10px",
     backgroundColor: "rgba(24, 14, 11, 0.7)",
+    overflow: "hidden",
   },
   tag: {
+    flex: "0 1 auto",
+    minWidth: 0,
+    maxWidth: "100%",
     backgroundColor: "rgba(255, 248, 241, 0.16)",
     color: "#fff7f1",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
   },
   body: {
     display: "flex",
@@ -166,6 +174,7 @@ export function SubjectCard({
   metaVariant?: SubjectCardMetaVariant;
 }) {
   const styles = useStyles();
+  const location = useLocation();
   const { deviceId, userToken } = useSession();
   const linkRef = useRef<HTMLAnchorElement | null>(null);
   const frameRef = useRef<number | null>(null);
@@ -175,6 +184,7 @@ export function SubjectCard({
   const secondaryTitle = subject.titleCn && subject.titleCn !== subject.title ? subject.title : null;
   const displayedTags = tags.slice(0, 8);
   const metaValue = resolveMetaValue(subject, metaVariant);
+  const fromPath = buildRoutePath(location);
 
   useEffect(() => {
     const nextTags = subject.tags.slice(0, 8);
@@ -302,11 +312,18 @@ export function SubjectCard({
     });
   }
 
+  function handleCardClick() {
+    const scrollTop = document.getElementById("app-scroll-root")?.scrollTop ?? 0;
+    rememberReturnTarget(fromPath, scrollTop);
+  }
+
   return (
     <Link
       ref={linkRef}
       to={`/title/${subject.bangumiSubjectId}`}
+      state={{ fromPath } satisfies RouteState}
       className={styles.link}
+      onClick={handleCardClick}
       onMouseEnter={handleMouseEnter}
       onMouseMove={handleMouseMove}
       onMouseLeave={resetHoverMotion}

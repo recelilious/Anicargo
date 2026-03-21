@@ -51,6 +51,17 @@ type SearchRequestModel = {
   pageSize: number;
 };
 
+type SearchPageCache = {
+  form: SearchFormState;
+  pageSize: number;
+  page: number;
+  items: SubjectCardModel[];
+  response: SearchResponse;
+  activeQuerySignature: string;
+  autoLoadUnlocked: boolean;
+  showLoadMoreButton: boolean;
+};
+
 const EMPTY_RESPONSE: SearchResponse = {
   items: [],
   facets: { years: [], tags: [] },
@@ -81,6 +92,8 @@ const DEFAULT_FORM: SearchFormState = {
 const CARD_MIN_WIDTH = 210;
 const CARD_GAP = 16;
 const LOAD_MORE_DISTANCE = 160;
+
+const searchPageStateCache = new Map<string, SearchPageCache>();
 
 const useStyles = makeStyles({
   page: {
@@ -312,21 +325,31 @@ function useDebouncedValue<T>(value: T, delayMs: number) {
   return debounced;
 }
 
+function createSearchCacheKey(deviceId: string, userToken: string | null) {
+  return `${deviceId}:${userToken ?? "guest"}`;
+}
+
 export function SearchPage() {
   const styles = useStyles();
   const { deviceId, userToken } = useSession();
+  const cacheKey = createSearchCacheKey(deviceId, userToken);
+  const cachedState = searchPageStateCache.get(cacheKey);
   const gridHostRef = useRef<HTMLDivElement | null>(null);
   const loadLockRef = useRef(false);
-  const [form, setForm] = useState<SearchFormState>(DEFAULT_FORM);
-  const [pageSize, setPageSize] = useState(20);
-  const [page, setPage] = useState(1);
-  const [items, setItems] = useState<SubjectCardModel[]>([]);
-  const [response, setResponse] = useState<SearchResponse>(EMPTY_RESPONSE);
-  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [form, setForm] = useState<SearchFormState>(() => cachedState?.form ?? DEFAULT_FORM);
+  const [pageSize, setPageSize] = useState(() => cachedState?.pageSize ?? 20);
+  const [page, setPage] = useState(() => cachedState?.page ?? 1);
+  const [items, setItems] = useState<SubjectCardModel[]>(() => cachedState?.items ?? []);
+  const [response, setResponse] = useState<SearchResponse>(() => cachedState?.response ?? EMPTY_RESPONSE);
+  const [isInitialLoading, setIsInitialLoading] = useState(() => cachedState == null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [autoLoadUnlocked, setAutoLoadUnlocked] = useState(false);
-  const [showLoadMoreButton, setShowLoadMoreButton] = useState(false);
+  const [autoLoadUnlocked, setAutoLoadUnlocked] = useState(
+    () => cachedState?.autoLoadUnlocked ?? false,
+  );
+  const [showLoadMoreButton, setShowLoadMoreButton] = useState(
+    () => cachedState?.showLoadMoreButton ?? false,
+  );
 
   const debouncedKeyword = useDebouncedValue(form.keyword, 280);
   const debouncedTagInput = useDebouncedValue(form.tagInput, 280);
@@ -342,7 +365,9 @@ export function SearchPage() {
     pageSize,
   );
   const querySignature = JSON.stringify(requestModel);
-  const [activeQuerySignature, setActiveQuerySignature] = useState(querySignature);
+  const [activeQuerySignature, setActiveQuerySignature] = useState(
+    () => cachedState?.activeQuerySignature ?? querySignature,
+  );
 
   function requestNextPage() {
     if (loadLockRef.current) {
@@ -550,6 +575,29 @@ export function SearchPage() {
     setShowLoadMoreButton(false);
     requestNextPage();
   }
+
+  useEffect(() => {
+    searchPageStateCache.set(cacheKey, {
+      form,
+      pageSize,
+      page,
+      items,
+      response,
+      activeQuerySignature,
+      autoLoadUnlocked,
+      showLoadMoreButton,
+    });
+  }, [
+    activeQuerySignature,
+    autoLoadUnlocked,
+    cacheKey,
+    form,
+    items,
+    page,
+    pageSize,
+    response,
+    showLoadMoreButton,
+  ]);
 
   return (
     <section className={styles.page}>
