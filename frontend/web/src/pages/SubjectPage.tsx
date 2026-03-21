@@ -62,6 +62,7 @@ const useStyles = makeStyles({
   },
   subscribeButton: {
     alignSelf: "flex-start",
+    minWidth: "132px",
   },
   heroInfo: {
     display: "flex",
@@ -104,6 +105,7 @@ const useStyles = makeStyles({
     gap: "12px",
   },
   infoCard: {
+    minWidth: 0,
     padding: "14px 16px",
     borderRadius: tokens.borderRadiusXLarge,
     backgroundColor: "rgba(255, 248, 241, 0.08)",
@@ -114,8 +116,13 @@ const useStyles = makeStyles({
     gap: "6px",
   },
   infoValue: {
+    display: "block",
+    maxWidth: "100%",
     color: "rgba(255, 245, 238, 0.92)",
     lineHeight: "1.5",
+    whiteSpace: "normal",
+    wordBreak: "normal",
+    overflowWrap: "anywhere",
   },
   episodesSection: {
     display: "flex",
