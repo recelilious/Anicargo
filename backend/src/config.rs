@@ -9,9 +9,7 @@ pub struct AppConfig {
     pub server: ServerConfig,
     pub storage: StorageConfig,
     pub bangumi: BangumiConfig,
-    pub syoboi: SyoboiConfig,
     pub yuc: YucConfig,
-    pub anilist: AniListConfig,
     pub auth: AuthConfig,
 }
 
@@ -35,19 +33,7 @@ pub struct BangumiConfig {
 }
 
 #[derive(Debug, Clone)]
-pub struct SyoboiConfig {
-    pub base_url: String,
-    pub request_timeout_secs: u64,
-}
-
-#[derive(Debug, Clone)]
 pub struct YucConfig {
-    pub base_url: String,
-    pub request_timeout_secs: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct AniListConfig {
     pub base_url: String,
     pub request_timeout_secs: u64,
 }
@@ -80,9 +66,7 @@ struct PartialConfig {
     server: Option<PartialServerConfig>,
     storage: Option<PartialStorageConfig>,
     bangumi: Option<PartialBangumiConfig>,
-    syoboi: Option<PartialSyoboiConfig>,
     yuc: Option<PartialYucConfig>,
-    anilist: Option<PartialAniListConfig>,
     auth: Option<PartialAuthConfig>,
 }
 
@@ -106,19 +90,7 @@ struct PartialBangumiConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
-struct PartialSyoboiConfig {
-    base_url: Option<String>,
-    request_timeout_secs: Option<u64>,
-}
-
-#[derive(Debug, Deserialize, Default)]
 struct PartialYucConfig {
-    base_url: Option<String>,
-    request_timeout_secs: Option<u64>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct PartialAniListConfig {
     base_url: Option<String>,
     request_timeout_secs: Option<u64>,
 }
@@ -147,16 +119,8 @@ impl Default for AppConfig {
                 user_agent: "Anicargo/0.1 (+https://github.com/recelilious/Anicargo)".to_owned(),
                 request_timeout_secs: 15,
             },
-            syoboi: SyoboiConfig {
-                base_url: "http://cal.syoboi.jp".to_owned(),
-                request_timeout_secs: 10,
-            },
             yuc: YucConfig {
                 base_url: "https://yuc.wiki".to_owned(),
-                request_timeout_secs: 10,
-            },
-            anilist: AniListConfig {
-                base_url: "https://graphql.anilist.co".to_owned(),
                 request_timeout_secs: 10,
             },
             auth: AuthConfig {
@@ -244,30 +208,12 @@ impl AppConfig {
             }
         }
 
-        if let Some(syoboi) = partial.syoboi {
-            if let Some(base_url) = syoboi.base_url {
-                self.syoboi.base_url = base_url;
-            }
-            if let Some(request_timeout_secs) = syoboi.request_timeout_secs {
-                self.syoboi.request_timeout_secs = request_timeout_secs;
-            }
-        }
-
         if let Some(yuc) = partial.yuc {
             if let Some(base_url) = yuc.base_url {
                 self.yuc.base_url = base_url;
             }
             if let Some(request_timeout_secs) = yuc.request_timeout_secs {
                 self.yuc.request_timeout_secs = request_timeout_secs;
-            }
-        }
-
-        if let Some(anilist) = partial.anilist {
-            if let Some(base_url) = anilist.base_url {
-                self.anilist.base_url = base_url;
-            }
-            if let Some(request_timeout_secs) = anilist.request_timeout_secs {
-                self.anilist.request_timeout_secs = request_timeout_secs;
             }
         }
 

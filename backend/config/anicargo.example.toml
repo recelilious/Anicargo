@@ -11,16 +11,8 @@ base_url = "https://api.bgm.tv"
 user_agent = "Anicargo/0.1 (+https://github.com/recelilious/Anicargo)"
 request_timeout_secs = 15
 
-[syoboi]
-base_url = "http://cal.syoboi.jp"
-request_timeout_secs = 10
-
 [yuc]
 base_url = "https://yuc.wiki"
-request_timeout_secs = 10
-
-[anilist]
-base_url = "https://graphql.anilist.co"
 request_timeout_secs = 10
 
 [auth]

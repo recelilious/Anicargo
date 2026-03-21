@@ -69,7 +69,7 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: "6px",
-    paddingTop: "8px",
+    padding: "8px 12px 12px",
     minHeight: 0
   },
   titleGroup: {
@@ -100,11 +100,15 @@ const useStyles = makeStyles({
   meta: {
     marginTop: "auto",
     paddingTop: "10px",
-    display: "grid",
-    gridTemplateColumns: "1fr auto",
+    paddingInline: "4px",
+    display: "flex",
     gap: "12px",
     alignItems: "center",
+    justifyContent: "space-between",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`
+  },
+  metaRatingOnly: {
+    justifyContent: "flex-end"
   },
   rating: {
     color: tokens.colorBrandForeground1,
@@ -119,21 +123,9 @@ const useStyles = makeStyles({
 const detailTagCache = new Map<number, string[]>();
 const detailTagRequests = new Map<number, Promise<string[]>>();
 
-function extractBroadcastTime(broadcastTime: string | null, airDate: string | null) {
-  if (broadcastTime) {
-    return broadcastTime;
-  }
-
-  if (!airDate) {
-    return "--:--";
-  }
-
-  const match = airDate.match(/(\d{1,2}):(\d{2})/);
-  if (!match) {
-    return "--:--";
-  }
-
-  return `${match[1].padStart(2, "0")}:${match[2]}`;
+function extractBroadcastTime(broadcastTime: string | null) {
+  const value = broadcastTime?.trim();
+  return value ? value : null;
 }
 
 function prefersReducedMotion() {
@@ -156,6 +148,7 @@ export function SubjectCard({ subject }: { subject: SubjectCardModel }) {
   const primaryTitle = subject.titleCn || subject.title;
   const secondaryTitle = subject.titleCn && subject.titleCn !== subject.title ? subject.title : null;
   const displayedTags = tags.slice(0, 8);
+  const broadcastTime = extractBroadcastTime(subject.broadcastTime);
 
   useEffect(() => {
     const nextTags = subject.tags.slice(0, 8);
@@ -298,12 +291,16 @@ export function SubjectCard({ subject }: { subject: SubjectCardModel }) {
             ) : null}
           </div>
 
-          <div className={styles.meta}>
+          <div
+            className={`${styles.meta} ${broadcastTime ? "" : styles.metaRatingOnly}`.trim()}
+          >
+            {broadcastTime ? (
+              <Text size={300} className={styles.time}>
+                {broadcastTime}
+              </Text>
+            ) : null}
             <Text weight="semibold" className={styles.rating}>
               {formatRating(subject.ratingScore)}
-            </Text>
-            <Text size={300} className={styles.time}>
-              {extractBroadcastTime(subject.broadcastTime, subject.airDate)}
             </Text>
           </div>
         </div>
