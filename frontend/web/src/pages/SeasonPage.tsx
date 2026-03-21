@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Card, Spinner, Tab, TabList, Text, makeStyles } from "@fluentui/react-components";
+import { Card, Spinner, Text, makeStyles, tokens } from "@fluentui/react-components";
 
 import { fetchCalendar } from "../api";
 import { SubjectCard } from "../components/SubjectCard";
@@ -18,10 +18,69 @@ const useStyles = makeStyles({
     border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)"
   },
+  weekSwitch: {
+    display: "grid",
+    gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+    gap: "8px",
+    padding: "8px",
+    backgroundColor: "var(--app-surface-1)",
+    border: "1px solid var(--app-border)",
+    boxShadow: "var(--app-card-shadow)"
+  },
+  weekButton: {
+    position: "relative",
+    appearance: "none",
+    border: "none",
+    backgroundColor: "transparent",
+    color: "var(--app-muted)",
+    padding: "10px 8px 14px",
+    cursor: "pointer",
+    font: "inherit",
+    transition: "color 160ms ease",
+    "&:hover": {
+      color: "var(--app-text)"
+    },
+    "&:focus-visible": {
+      outlineOffset: "-2px"
+    },
+    "&::after": {
+      content: '""',
+      position: "absolute",
+      left: "10px",
+      right: "10px",
+      bottom: "0",
+      height: "3px",
+      borderRadius: tokens.borderRadiusCircular,
+      backgroundColor: "transparent",
+      transition: "background-color 160ms ease"
+    }
+  },
+  weekButtonActive: {
+    color: "var(--app-text)",
+    fontWeight: tokens.fontWeightSemibold,
+    "&::after": {
+      backgroundColor: "var(--app-selected-fg)"
+    }
+  },
+  viewport: {
+    overflow: "hidden"
+  },
+  track: {
+    display: "flex",
+    alignItems: "flex-start",
+    willChange: "transform",
+    transitionProperty: "transform",
+    transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)"
+  },
+  panel: {
+    flex: "0 0 100%",
+    minWidth: "100%"
+  },
   grid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))",
-    gap: "16px"
+    gap: "16px",
+    paddingTop: "4px"
   }
 });
 
@@ -35,6 +94,7 @@ export function SeasonPage() {
   const { deviceId, userToken } = useSession();
   const [days, setDays] = useState<CalendarDay[]>([]);
   const [selectedDay, setSelectedDay] = useState<number>(currentBangumiWeekday());
+  const [slideDurationMs, setSlideDurationMs] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,6 +112,7 @@ export function SeasonPage() {
         const today = currentBangumiWeekday();
         const fallback = response.days[0]?.weekday.id ?? today;
         setSelectedDay(response.days.some((day) => day.weekday.id === today) ? today : fallback);
+        setSlideDurationMs(0);
         setError(null);
       })
       .catch((nextError: Error) => {
@@ -70,7 +131,24 @@ export function SeasonPage() {
     };
   }, [deviceId, userToken]);
 
-  const activeDay = days.find((day) => day.weekday.id === selectedDay);
+  const selectedIndex = Math.max(
+    0,
+    days.findIndex((day) => day.weekday.id === selectedDay)
+  );
+
+  function handleSelectDay(nextDay: number) {
+    if (nextDay === selectedDay) {
+      return;
+    }
+
+    const currentIndex = days.findIndex((day) => day.weekday.id === selectedDay);
+    const nextIndex = days.findIndex((day) => day.weekday.id === nextDay);
+    const distance =
+      currentIndex === -1 || nextIndex === -1 ? 1 : Math.abs(nextIndex - currentIndex);
+
+    setSlideDurationMs(Math.min(220 + distance * 55, 520));
+    setSelectedDay(nextDay);
+  }
 
   return (
     <section className={styles.page}>
@@ -85,18 +163,43 @@ export function SeasonPage() {
 
       {days.length > 0 ? (
         <>
-          <TabList selectedValue={String(selectedDay)} onTabSelect={(_, data) => setSelectedDay(Number(data.value))}>
-            {days.map((day) => (
-              <Tab key={day.weekday.id} value={String(day.weekday.id)}>
-                {day.weekday.cn}
-              </Tab>
-            ))}
-          </TabList>
+          <div className={styles.weekSwitch} role="tablist" aria-label="新番时间表星期切换">
+            {days.map((day) => {
+              const isActive = day.weekday.id === selectedDay;
 
-          <div className={styles.grid}>
-            {(activeDay?.items ?? []).map((subject) => (
-              <SubjectCard key={subject.bangumiSubjectId} subject={subject} />
-            ))}
+              return (
+                <button
+                  key={day.weekday.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  className={`${styles.weekButton} ${isActive ? styles.weekButtonActive : ""}`.trim()}
+                  onClick={() => handleSelectDay(day.weekday.id)}
+                >
+                  {day.weekday.cn}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className={styles.viewport}>
+            <div
+              className={styles.track}
+              style={{
+                transform: `translateX(-${selectedIndex * 100}%)`,
+                transitionDuration: `${slideDurationMs}ms`
+              }}
+            >
+              {days.map((day) => (
+                <div key={day.weekday.id} className={styles.panel}>
+                  <div className={styles.grid}>
+                    {day.items.map((subject) => (
+                      <SubjectCard key={subject.bangumiSubjectId} subject={subject} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </>
       ) : null}

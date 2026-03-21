@@ -17,6 +17,7 @@ use crate::{
     config::AppConfig,
     db,
     syoboi::SyoboiClient,
+    yuc::YucClient,
     types::{
         AdminDashboardResponse, ApiEnvelope, AppError, AuthResponse, BootstrapResponse,
         CalendarDayDto, CalendarResponse, CredentialsRequest, FansubRuleDto, HealthResponse,
@@ -32,6 +33,7 @@ pub struct AppState {
     pub pool: SqlitePool,
     pub bangumi: BangumiClient,
     pub syoboi: SyoboiClient,
+    pub yuc: YucClient,
     pub anilist: AniListClient,
 }
 
@@ -93,7 +95,7 @@ async fn calendar(
     for day in state.bangumi.fetch_calendar().await? {
         let weekday = day.to_weekday();
         let cards = day.items.into_iter().map(|item| item.to_card()).collect();
-        let items = enrich_cards(&state.syoboi, &state.anilist, cards).await;
+        let items = enrich_cards(&state.yuc, &state.syoboi, &state.anilist, cards).await;
 
         days.push(CalendarDayDto {
             weekday,
@@ -212,7 +214,7 @@ async fn search(
             .map(|subject| subject.to_card())
             .collect()
     };
-    let paged_items = enrich_cards(&state.syoboi, &state.anilist, paged_items).await;
+    let paged_items = enrich_cards(&state.yuc, &state.syoboi, &state.anilist, paged_items).await;
 
     Ok(Json(ApiEnvelope::new(SearchResponse {
         items: paged_items,
@@ -248,7 +250,7 @@ async fn subject_detail(
         (false, 0)
     };
 
-    let subject = enrich_detail(&state.syoboi, &state.anilist, subject.to_detail()).await;
+    let subject = enrich_detail(&state.yuc, &state.syoboi, &state.anilist, subject.to_detail()).await;
 
     Ok(Json(ApiEnvelope::new(SubjectDetailResponse {
         subject,
@@ -488,14 +490,17 @@ fn validate_credentials(username: &str, password: &str) -> Result<(), AppError> 
 }
 
 async fn enrich_cards(
+    yuc: &YucClient,
     syoboi: &SyoboiClient,
     anilist: &AniListClient,
     cards: Vec<SubjectCardDto>,
 ) -> Vec<SubjectCardDto> {
     stream::iter(cards.into_iter().map(|card| {
+        let yuc = yuc.clone();
         let syoboi = syoboi.clone();
         let anilist = anilist.clone();
         async move {
+            let card = yuc.enrich_card(card).await;
             let card = syoboi.enrich_card(card).await;
             anilist.enrich_card(card).await
         }
@@ -506,10 +511,12 @@ async fn enrich_cards(
 }
 
 async fn enrich_detail(
+    yuc: &YucClient,
     syoboi: &SyoboiClient,
     anilist: &AniListClient,
     detail: SubjectDetailDto,
 ) -> SubjectDetailDto {
+    let detail = yuc.enrich_detail(detail).await;
     let detail = syoboi.enrich_detail(detail).await;
     anilist.enrich_detail(detail).await
 }

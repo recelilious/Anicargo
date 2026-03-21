@@ -15,6 +15,10 @@ request_timeout_secs = 15
 base_url = "http://cal.syoboi.jp"
 request_timeout_secs = 10
 
+[yuc]
+base_url = "https://yuc.wiki"
+request_timeout_secs = 10
+
 [anilist]
 base_url = "https://graphql.anilist.co"
 request_timeout_secs = 10

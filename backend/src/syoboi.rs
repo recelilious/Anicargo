@@ -36,6 +36,10 @@ impl SyoboiClient {
     }
 
     pub async fn enrich_card(&self, mut card: SubjectCardDto) -> SubjectCardDto {
+        if card.broadcast_time.is_some() {
+            return card;
+        }
+
         card.broadcast_time = self
             .resolve_broadcast_time(&card.title, &card.title_cn, card.air_date.as_deref())
             .await;
@@ -43,6 +47,10 @@ impl SyoboiClient {
     }
 
     pub async fn enrich_detail(&self, mut detail: SubjectDetailDto) -> SubjectDetailDto {
+        if detail.broadcast_time.is_some() {
+            return detail;
+        }
+
         detail.broadcast_time = self
             .resolve_broadcast_time(&detail.title, &detail.title_cn, detail.air_date.as_deref())
             .await;
