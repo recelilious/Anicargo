@@ -1,0 +1,54 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vs/
+*.swp
+*.swo
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+!.env.local.example
+
+# Logs
+*.log
+logs/
+
+# Node / frontend
+node_modules/
+.pnpm-store/
+.npm/
+.yarn/
+dist/
+build/
+coverage/
+.next/
+
+# Rust / backend
+target/
+**/*.rs.bk
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Runtime data
+tmp/
+temp/
+cache/
+runtime/
+downloads/
+data/
+*.sqlite
+*.sqlite3
+*.db
+
+# WinUI / .NET
+bin/
+obj/
+
