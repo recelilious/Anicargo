@@ -76,6 +76,9 @@ const useStyles = makeStyles({
     gap: "12px",
   },
   statCard: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
     padding: "14px 16px",
     borderRadius: tokens.borderRadiusXLarge,
     backgroundColor: "rgba(255, 248, 241, 0.1)",
@@ -83,6 +86,7 @@ const useStyles = makeStyles({
     backdropFilter: "blur(10px)",
   },
   statLabel: {
+    display: "block",
     color: "rgba(255, 245, 238, 0.72)",
   },
   summaryCard: {
@@ -301,7 +305,9 @@ export function SubjectPage() {
 
             {detail.subject.summary ? (
               <div className={styles.summaryCard}>
-                <Text weight="semibold">简介</Text>
+                <Text size={200} className={styles.statLabel}>
+                  简介
+                </Text>
                 <Text className={styles.summaryText}>{detail.subject.summary}</Text>
               </div>
             ) : null}
