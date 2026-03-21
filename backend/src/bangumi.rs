@@ -144,6 +144,8 @@ pub struct SubjectRaw {
     pub tags: Vec<TagRaw>,
     #[serde(default)]
     pub infobox: Vec<InfoboxRaw>,
+    #[serde(default)]
+    pub rating: Option<RatingRaw>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -182,6 +184,12 @@ pub struct ImageSetRaw {
 #[derive(Debug, Clone, Deserialize)]
 pub struct TagRaw {
     pub name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RatingRaw {
+    #[serde(default)]
+    pub score: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -228,6 +236,7 @@ impl SubjectRaw {
                 .and_then(|images| images.common.clone().or(images.large.clone())),
             tags,
             total_episodes: self.total_episodes,
+            rating_score: self.rating.as_ref().and_then(|rating| rating.score),
         }
     }
 
@@ -259,6 +268,7 @@ impl SubjectRaw {
                 })
                 .filter(|item| !item.value.is_empty())
                 .collect(),
+            rating_score: self.rating.as_ref().and_then(|rating| rating.score),
         }
     }
 }

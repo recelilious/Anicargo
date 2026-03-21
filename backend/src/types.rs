@@ -160,6 +160,7 @@ pub struct SubjectCardDto {
     pub image_banner: Option<String>,
     pub tags: Vec<String>,
     pub total_episodes: Option<i64>,
+    pub rating_score: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -202,6 +203,7 @@ pub struct SubjectDetailDto {
     pub image_banner: Option<String>,
     pub tags: Vec<String>,
     pub infobox: Vec<InfoboxItemDto>,
+    pub rating_score: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -4,7 +4,7 @@ import {
   SearchRegular,
   SettingsRegular
 } from "@fluentui/react-icons";
-import { Badge, Button, Text, makeStyles, tokens } from "@fluentui/react-components";
+import { Avatar, Badge, Button, Text, makeStyles, tokens } from "@fluentui/react-components";
 import { NavLink, Outlet } from "react-router-dom";
 
 import { useSession } from "../session";
@@ -23,6 +23,29 @@ const useStyles = makeStyles({
     padding: "28px 20px",
     borderRight: `1px solid ${tokens.colorNeutralStroke2}`,
     background: "linear-gradient(180deg, #f7fbff 0%, #eef6ff 100%)"
+  },
+  profileCard: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "14px",
+    padding: "16px",
+    borderRadius: tokens.borderRadiusXLarge,
+    background: "linear-gradient(135deg, rgba(15, 108, 189, 0.12) 0%, rgba(255, 185, 95, 0.20) 100%)",
+    border: `1px solid ${tokens.colorNeutralStroke2}`
+  },
+  profileRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px"
+  },
+  profileMeta: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+    minWidth: 0
+  },
+  profileSubtitle: {
+    color: tokens.colorNeutralForeground3
   },
   brand: {
     display: "flex",
@@ -51,6 +74,9 @@ const useStyles = makeStyles({
     flexDirection: "column",
     gap: "12px"
   },
+  adminHint: {
+    color: tokens.colorNeutralForeground3
+  },
   content: {
     padding: "24px 28px 40px"
   }
@@ -64,18 +90,29 @@ const navItems = [
 
 export function AppShell() {
   const styles = useStyles();
-  const { bootstrap } = useSession();
+  const { displayName, viewerModeLabel, viewerSubline } = useSession();
 
   return (
     <div className={styles.layout}>
       <aside className={styles.rail}>
+        <div className={styles.profileCard}>
+          <div className={styles.profileRow}>
+            <Avatar name={displayName} color="colorful" size={48} />
+            <div className={styles.profileMeta}>
+              <Text weight="semibold">{displayName}</Text>
+              <Text size={200} className={styles.profileSubtitle}>
+                {viewerSubline}
+              </Text>
+            </div>
+          </div>
+          <Badge appearance="tint">{viewerModeLabel}</Badge>
+        </div>
+
         <div className={styles.brand}>
           <Text weight="semibold" size={700}>
             Anicargo
           </Text>
-          <Text size={300}>
-            面向朋友间私有部署的动漫订阅、下载与播放平台。
-          </Text>
+          <Text size={300}>面向朋友间私有部署的动漫订阅、下载与播放平台。</Text>
         </div>
 
         <nav className={styles.nav}>
@@ -95,17 +132,12 @@ export function AppShell() {
         </nav>
 
         <div className={styles.footer}>
-          <Badge appearance="outline">
-            {bootstrap?.viewer.kind === "user" ? "账号订阅" : "设备订阅"}
-          </Badge>
-          <Text size={300}>
-            {bootstrap?.viewer.kind === "user"
-              ? `当前账号：${bootstrap.viewer.label}`
-              : `当前设备：${bootstrap?.deviceId ?? "初始化中"}`}
+          <Text size={200} className={styles.adminHint}>
+            管理员请使用 `/admin` 独立入口登录。
           </Text>
           <NavLink to="/settings" className={styles.navLink}>
             <Button appearance="secondary" icon={<ArrowSwapRegular />}>
-              切换到设置
+              打开设置
             </Button>
           </NavLink>
         </div>

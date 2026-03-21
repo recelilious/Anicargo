@@ -36,6 +36,7 @@ export type SubjectCard = {
   imageBanner: string | null;
   tags: string[];
   totalEpisodes: number | null;
+  ratingScore: number | null;
 };
 
 export type CalendarDay = {
@@ -92,6 +93,7 @@ export type SubjectDetailResponse = {
     imageBanner: string | null;
     tags: string[];
     infobox: InfoboxItem[];
+    ratingScore: number | null;
   };
   episodes: Episode[];
   subscription: SubscriptionState;
