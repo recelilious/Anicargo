@@ -1,10 +1,5 @@
-import {
-  BoxRegular,
-  CalendarLtrRegular,
-  SearchRegular,
-  SettingsRegular
-} from "@fluentui/react-icons";
-import { Avatar, Badge, Button, Text, makeStyles, tokens } from "@fluentui/react-components";
+import { BoxRegular, CalendarLtrRegular, SearchRegular, SettingsRegular } from "@fluentui/react-icons";
+import { Badge, Button, Text, makeStyles, tokens } from "@fluentui/react-components";
 import { NavLink, Outlet } from "react-router-dom";
 
 import { useSession } from "../session";
@@ -13,14 +8,14 @@ const useStyles = makeStyles({
   layout: {
     minHeight: "100vh",
     display: "grid",
-    gridTemplateColumns: "248px 1fr",
+    gridTemplateColumns: "220px 1fr",
     backgroundColor: "var(--app-bg)"
   },
   rail: {
     display: "flex",
     flexDirection: "column",
-    gap: "20px",
-    padding: "24px 18px",
+    gap: "18px",
+    padding: "22px 14px",
     borderRight: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: "var(--app-rail)"
   },
@@ -33,17 +28,12 @@ const useStyles = makeStyles({
   profileCard: {
     display: "flex",
     flexDirection: "column",
-    gap: "14px",
-    padding: "16px",
+    gap: "10px",
+    padding: "14px",
     borderRadius: tokens.borderRadiusXLarge,
     backgroundColor: "var(--app-panel)",
     border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)"
-  },
-  profileRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: "12px"
   },
   profileMeta: {
     display: "flex",
@@ -107,14 +97,11 @@ export function AppShell() {
         </div>
 
         <div className={styles.profileCard}>
-          <div className={styles.profileRow}>
-            <Avatar name={displayName} color="brand" size={48} />
-            <div className={styles.profileMeta}>
-              <Text weight="semibold">{displayName}</Text>
-              <Text size={200} className={styles.profileSubtitle}>
-                {viewerSubline}
-              </Text>
-            </div>
+          <div className={styles.profileMeta}>
+            <Text weight="semibold">{displayName}</Text>
+            <Text size={200} className={styles.profileSubtitle}>
+              {viewerSubline}
+            </Text>
           </div>
           <Badge appearance="tint">{viewerModeLabel}</Badge>
         </div>

@@ -154,6 +154,7 @@ pub struct SubjectCardDto {
     pub title: String,
     pub title_cn: String,
     pub summary: String,
+    pub release_status: String,
     pub air_date: Option<String>,
     pub air_weekday: Option<u8>,
     pub image_portrait: Option<String>,

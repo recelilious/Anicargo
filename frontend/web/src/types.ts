@@ -30,6 +30,7 @@ export type SubjectCard = {
   title: string;
   titleCn: string;
   summary: string;
+  releaseStatus: "airing" | "completed";
   airDate: string | null;
   airWeekday: number | null;
   imagePortrait: string | null;

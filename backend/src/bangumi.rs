@@ -227,7 +227,7 @@ impl SubjectRaw {
         let tags = self
             .tags
             .iter()
-            .take(4)
+            .take(8)
             .map(|tag| tag.name.clone())
             .collect();
 
@@ -236,6 +236,7 @@ impl SubjectRaw {
             title: self.name.clone(),
             title_cn: self.name_cn.clone(),
             summary: self.summary.clone(),
+            release_status: self.release_status().to_owned(),
             air_date: self.air_date.clone().or(self.date.clone()),
             air_weekday: self.air_weekday,
             image_portrait: self
@@ -281,6 +282,26 @@ impl SubjectRaw {
                 .filter(|item| !item.value.is_empty())
                 .collect(),
             rating_score: self.rating.as_ref().and_then(|rating| rating.score),
+        }
+    }
+
+    fn release_status(&self) -> &'static str {
+        let has_end_marker = self.infobox.iter().any(|item| {
+            let key = item.key.to_lowercase();
+            let value = flatten_infobox_value(&item.value);
+
+            !value.is_empty()
+                && (key.contains("结束")
+                    || key.contains("完结")
+                    || key.contains("終了")
+                    || key.contains("final")
+                    || key.contains("终了"))
+        });
+
+        if has_end_marker {
+            "completed"
+        } else {
+            "airing"
         }
     }
 }
