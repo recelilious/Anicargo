@@ -1,3 +1,5 @@
+use std::{cmp::Ordering, collections::HashSet};
+
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -98,48 +100,77 @@ async fn search(
     State(state): State<AppState>,
     Query(request): Query<SearchRequest>,
 ) -> Result<Json<ApiEnvelope<SearchResponse>>, AppError> {
-    if request.keyword.trim().is_empty() {
-        return Ok(Json(ApiEnvelope::new(SearchResponse {
-            items: Vec::new(),
-            facets: SearchFacets {
-                years: Vec::new(),
-                tags: Vec::new(),
-            },
-        })));
+    const SEARCH_WINDOW_PAGES: usize = 5;
+    const SEARCH_REMOTE_PAGE_SIZE: usize = 20;
+
+    let page = request.page.unwrap_or(1).max(1);
+    let page_size = request.page_size.unwrap_or(20).clamp(1, 20);
+    let tag_filter = request.tag.as_ref().map(|value| value.to_lowercase());
+    let mut seen_ids = HashSet::new();
+    let mut items = Vec::new();
+
+    for page_index in 0..SEARCH_WINDOW_PAGES {
+        let response = state
+            .bangumi
+            .search_subjects(request.keyword.trim(), page_index * SEARCH_REMOTE_PAGE_SIZE)
+            .await?;
+
+        let page_items = response
+            .data
+            .into_iter()
+            .filter(|subject| seen_ids.insert(subject.id))
+            .collect::<Vec<_>>();
+
+        if page_items.is_empty() {
+            break;
+        }
+
+        let page_count = page_items.len();
+        items.extend(page_items);
+
+        if page_count < SEARCH_REMOTE_PAGE_SIZE {
+            break;
+        }
     }
 
-    let tag_filter = request.tag.as_ref().map(|value| value.to_lowercase());
-    let mut items = state
-        .bangumi
-        .search_subjects(request.keyword.trim())
-        .await?
-        .into_iter()
-        .filter(|subject| {
-            request.year.is_none_or(|year| {
-                subject
-                    .date
-                    .as_ref()
-                    .or(subject.air_date.as_ref())
-                    .and_then(|date| date.split('-').next())
-                    .and_then(|year_text| year_text.parse::<i32>().ok())
-                    == Some(year)
-            })
+    items.retain(|subject| {
+        request.year.is_none_or(|year| {
+            subject
+                .date
+                .as_ref()
+                .or(subject.air_date.as_ref())
+                .and_then(|date| date.split('-').next())
+                .and_then(|year_text| year_text.parse::<i32>().ok())
+                == Some(year)
         })
-        .filter(|subject| {
-            tag_filter.as_ref().is_none_or(|tag| {
-                subject
-                    .tags
-                    .iter()
-                    .any(|subject_tag| subject_tag.name.to_lowercase().contains(tag))
-            })
-        })
-        .collect::<Vec<_>>();
-
-    items.sort_by(|left, right| {
-        left.name_cn
-            .cmp(&right.name_cn)
-            .then_with(|| left.name.cmp(&right.name))
     });
+
+    items.retain(|subject| {
+        tag_filter.as_ref().is_none_or(|tag| {
+            subject
+                .tags
+                .iter()
+                .any(|subject_tag| subject_tag.name.to_lowercase().contains(tag))
+        })
+    });
+
+    match request.sort.as_deref() {
+        Some("title") => items.sort_by(|left, right| {
+            left.name_cn
+                .cmp(&right.name_cn)
+                .then_with(|| left.name.cmp(&right.name))
+        }),
+        _ => items.sort_by(|left, right| {
+            let left_score = left.rating.as_ref().and_then(|rating| rating.score);
+            let right_score = right.rating.as_ref().and_then(|rating| rating.score);
+
+            right_score
+                .partial_cmp(&left_score)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| left.name_cn.cmp(&right.name_cn))
+                .then_with(|| left.name.cmp(&right.name))
+        }),
+    }
 
     let mut years = items
         .iter()
@@ -162,9 +193,25 @@ async fn search(
     tags.sort_unstable();
     tags.dedup();
 
+    let total = items.len();
+    let start = (page - 1) * page_size;
+    let paged_items = if start >= total {
+        Vec::new()
+    } else {
+        items.into_iter()
+            .skip(start)
+            .take(page_size)
+            .map(|subject| subject.to_card())
+            .collect()
+    };
+
     Ok(Json(ApiEnvelope::new(SearchResponse {
-        items: items.into_iter().map(|subject| subject.to_card()).collect(),
+        items: paged_items,
         facets: SearchFacets { years, tags },
+        total,
+        page,
+        page_size,
+        has_next_page: start + page_size < total,
     })))
 }
 

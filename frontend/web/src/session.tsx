@@ -6,8 +6,8 @@ import type { BootstrapResponse, ViewerSummary } from "./types";
 const DEVICE_KEY = "anicargo.device_id";
 const GUEST_NAME_KEY = "anicargo.guest_name";
 const USER_TOKEN_KEY = "anicargo.user_token";
-const GUEST_PREFIXES = ["薄荷", "晴空", "星港", "海盐", "雾岚", "白塔", "琥珀", "月汐"];
-const GUEST_SUFFIXES = ["旅人", "放映员", "观测者", "追番人", "导航员", "收藏家", "编目员", "信使"];
+const GUEST_PREFIXES = ["晨星", "雾海", "白塔", "晴岚", "落樱", "月砂", "霜原", "潮音"];
+const GUEST_SUFFIXES = ["旅人", "观测者", "追番者", "记录员", "领航员", "收藏家", "放映员", "信使"];
 
 type SessionContextValue = {
   bootstrap: BootstrapResponse | null;
@@ -133,7 +133,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             viewer
           }
         : current
-      );
+    );
   }
 
   const isGuestViewer = bootstrap?.viewer.kind !== "user";

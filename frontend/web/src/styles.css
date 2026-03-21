@@ -13,6 +13,7 @@
   --app-selected-fg: #4b2c23;
   --app-muted: #736259;
   --app-text: #251713;
+  --app-focus-ring: #4b2c23;
   --app-card-shadow: 0 1px 2px rgba(75, 44, 35, 0.08), 0 8px 24px rgba(75, 44, 35, 0.06);
   --app-card-shadow-strong: 0 12px 32px rgba(75, 44, 35, 0.10);
   color: var(--app-text);
@@ -28,22 +29,23 @@
 }
 
 :root[data-theme="dark"] {
-  --app-bg: #11100f;
-  --app-rail: #171513;
-  --app-surface-1: #1d1a18;
-  --app-surface-2: #231f1c;
-  --app-surface-3: #2c2723;
-  --app-panel: #1d1a18;
-  --app-panel-subtle: #26211e;
-  --app-fallback-hero: #38231c;
-  --app-border: #352e2a;
-  --app-border-strong: #54453c;
-  --app-selected-bg: #342c27;
-  --app-selected-fg: #f3e5d8;
-  --app-muted: #b6a394;
-  --app-text: #f3e8de;
-  --app-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.28), 0 12px 28px rgba(0, 0, 0, 0.30);
-  --app-card-shadow-strong: 0 18px 40px rgba(0, 0, 0, 0.34);
+  --app-bg: #140d0b;
+  --app-rail: #1b110e;
+  --app-surface-1: #4b2c23;
+  --app-surface-2: #40261f;
+  --app-surface-3: #321d17;
+  --app-panel: #4b2c23;
+  --app-panel-subtle: #3a221b;
+  --app-fallback-hero: #4b2c23;
+  --app-border: #896d60;
+  --app-border-strong: #b89b8d;
+  --app-selected-bg: #6a4337;
+  --app-selected-fg: #fff2e7;
+  --app-muted: #dbc7b7;
+  --app-text: #fff2e7;
+  --app-focus-ring: #d6c3b2;
+  --app-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.32), 0 16px 32px rgba(0, 0, 0, 0.34);
+  --app-card-shadow-strong: 0 22px 48px rgba(0, 0, 0, 0.38);
   color-scheme: dark;
 }
 
@@ -79,6 +81,11 @@ img {
 
 a {
   color: inherit;
+}
+
+:where(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid var(--app-focus-ring);
+  outline-offset: 2px;
 }
 
 ::selection {

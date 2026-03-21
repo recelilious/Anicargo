@@ -10,9 +10,9 @@ const useStyles = makeStyles({
     height: "100%"
   },
   card: {
-    height: "420px",
+    height: "452px",
     display: "grid",
-    gridTemplateRows: "248px minmax(0, 1fr)",
+    gridTemplateRows: "252px minmax(0, 1fr)",
     overflow: "hidden",
     backgroundColor: tokens.colorNeutralBackground1,
     border: "1px solid var(--app-border)",
@@ -22,34 +22,42 @@ const useStyles = makeStyles({
     backgroundSize: "cover",
     backgroundPosition: "center center",
     borderRadius: tokens.borderRadiusLarge,
-    minHeight: "248px",
+    minHeight: "252px",
     backgroundColor: "var(--app-fallback-hero)"
   },
   body: {
     display: "flex",
     flexDirection: "column",
     gap: "12px",
-    paddingTop: "6px",
+    paddingTop: "8px",
     minHeight: 0
   },
   titleGroup: {
     display: "flex",
     flexDirection: "column",
-    gap: "4px",
-    minHeight: "72px"
+    gap: "6px",
+    minHeight: "108px"
   },
   title: {
     display: "-webkit-box",
     overflow: "hidden",
     WebkitBoxOrient: "vertical",
-    WebkitLineClamp: "2"
+    WebkitLineClamp: "2",
+    lineHeight: "1.4",
+    minHeight: "2.8em",
+    overflowWrap: "anywhere",
+    wordBreak: "break-word"
   },
   subtitle: {
     color: tokens.colorNeutralForeground3,
     display: "-webkit-box",
     overflow: "hidden",
     WebkitBoxOrient: "vertical",
-    WebkitLineClamp: "2"
+    WebkitLineClamp: "2",
+    lineHeight: "1.4",
+    minHeight: "2.8em",
+    overflowWrap: "anywhere",
+    wordBreak: "break-word"
   },
   tags: {
     display: "flex",
@@ -61,7 +69,7 @@ const useStyles = makeStyles({
   },
   meta: {
     marginTop: "auto",
-    paddingTop: "10px",
+    paddingTop: "12px",
     display: "grid",
     gridTemplateColumns: "1fr auto",
     gap: "12px",
@@ -91,13 +99,14 @@ function extractBroadcastTime(airDate: string | null) {
 }
 
 function formatRating(score: number | null) {
-  return score == null ? "暂无评分" : `${score.toFixed(1)} 分`;
+  return score == null ? "暂无评分" : score.toFixed(1);
 }
 
 export function SubjectCard({ subject }: { subject: SubjectCardModel }) {
   const styles = useStyles();
   const primaryTitle = subject.titleCn || subject.title;
   const secondaryTitle = subject.titleCn && subject.titleCn !== subject.title ? subject.title : null;
+  const tags = subject.tags.length > 0 ? subject.tags : ["连载中"];
 
   return (
     <Link to={`/title/${subject.bangumiSubjectId}`} className={styles.link}>
@@ -122,7 +131,7 @@ export function SubjectCard({ subject }: { subject: SubjectCardModel }) {
           </div>
 
           <div className={styles.tags}>
-            {(subject.tags.length > 0 ? subject.tags : ["连载中"]).map((tag) => (
+            {tags.map((tag) => (
               <Badge key={tag} appearance="tint">
                 {tag}
               </Badge>

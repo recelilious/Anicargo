@@ -54,6 +54,10 @@ export type SearchResponse = {
     years: number[];
     tags: string[];
   };
+  total: number;
+  page: number;
+  pageSize: number;
+  hasNextPage: boolean;
 };
 
 export type InfoboxItem = {

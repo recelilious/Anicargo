@@ -35,7 +35,7 @@ const useStyles = makeStyles({
   heroOverlay: {
     position: "absolute",
     inset: 0,
-    background: "linear-gradient(180deg, rgba(18, 16, 15, 0.14) 0%, rgba(18, 16, 15, 0.78) 100%)"
+    backgroundColor: "rgba(18, 10, 8, 0.64)"
   },
   heroContent: {
     position: "relative",
@@ -62,11 +62,16 @@ const useStyles = makeStyles({
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     gap: "12px"
+  },
+  surfaceCard: {
+    backgroundColor: "var(--app-surface-1)",
+    border: "1px solid var(--app-border)",
+    boxShadow: "var(--app-card-shadow)"
   }
 });
 
 function formatRating(score: number | null) {
-  return score == null ? "暂无评分" : `${score.toFixed(1)} 分`;
+  return score == null ? "暂无评分" : score.toFixed(1);
 }
 
 export function SubjectPage() {
@@ -169,28 +174,28 @@ export function SubjectPage() {
       </Card>
 
       <div className={styles.stats}>
-        <Card>
+        <Card className={styles.surfaceCard}>
           <Text weight="semibold">订阅</Text>
           <Text>
             {detail.subscription.subscriptionCount} / {detail.subscription.threshold}
           </Text>
         </Card>
-        <Card>
+        <Card className={styles.surfaceCard}>
           <Text weight="semibold">归属</Text>
           <Text>{detail.subscription.source.kind === "user" ? "账号订阅" : "设备订阅"}</Text>
         </Card>
-        <Card>
+        <Card className={styles.surfaceCard}>
           <Text weight="semibold">放送</Text>
           <Text>{detail.subject.airDate ?? "未知"}</Text>
         </Card>
-        <Card>
+        <Card className={styles.surfaceCard}>
           <Text weight="semibold">评分</Text>
           <Text>{formatRating(detail.subject.ratingScore)}</Text>
         </Card>
       </div>
 
       {detail.subject.summary ? (
-        <Card>
+        <Card className={styles.surfaceCard}>
           <Text weight="semibold" size={700}>
             简介
           </Text>
@@ -201,7 +206,7 @@ export function SubjectPage() {
       {detail.subject.infobox.length > 0 ? (
         <div className={styles.infoGrid}>
           {detail.subject.infobox.map((item) => (
-            <Card key={`${item.key}-${item.value}`}>
+            <Card key={`${item.key}-${item.value}`} className={styles.surfaceCard}>
               <Text weight="semibold">{item.key}</Text>
               <Text>{item.value}</Text>
             </Card>

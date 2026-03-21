@@ -22,6 +22,11 @@ const useStyles = makeStyles({
   },
   muted: {
     color: "var(--app-muted)"
+  },
+  card: {
+    backgroundColor: "var(--app-surface-1)",
+    border: "1px solid var(--app-border)",
+    boxShadow: "var(--app-card-shadow)"
   }
 });
 
@@ -62,7 +67,7 @@ export function SettingsPage() {
       {error ? <Text>{error}</Text> : null}
 
       <div className={styles.cards}>
-        <Card>
+        <Card className={styles.card}>
           <Text weight="semibold">身份</Text>
           <Text>{isGuestViewer ? `游客：${displayName}` : `账号：${displayName}`}</Text>
           <Text className={styles.muted}>{bootstrap?.deviceId}</Text>
@@ -73,7 +78,7 @@ export function SettingsPage() {
           ) : null}
         </Card>
 
-        <Card>
+        <Card className={styles.card}>
           <Text weight="semibold">外观</Text>
           <RadioGroup
             value={themePreference}
@@ -92,7 +97,7 @@ export function SettingsPage() {
       {isGuestViewer ? (
         <div className={styles.cards}>
           <form onSubmit={(event) => void onRegisterSubmit(event)}>
-            <Card className={styles.form}>
+            <Card className={`${styles.card} ${styles.form}`}>
               <Text weight="semibold">注册账号</Text>
               <Field label="用户名">
                 <Input
@@ -114,7 +119,7 @@ export function SettingsPage() {
           </form>
 
           <form onSubmit={(event) => void onLoginSubmit(event)}>
-            <Card className={styles.form}>
+            <Card className={`${styles.card} ${styles.form}`}>
               <Text weight="semibold">登录账号</Text>
               <Field label="用户名">
                 <Input

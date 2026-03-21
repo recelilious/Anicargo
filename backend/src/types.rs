@@ -172,6 +172,12 @@ pub struct SearchRequest {
     pub year: Option<i32>,
     #[serde(default)]
     pub tag: Option<String>,
+    #[serde(default)]
+    pub sort: Option<String>,
+    #[serde(default)]
+    pub page: Option<usize>,
+    #[serde(default)]
+    pub page_size: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -179,6 +185,10 @@ pub struct SearchRequest {
 pub struct SearchResponse {
     pub items: Vec<SubjectCardDto>,
     pub facets: SearchFacets,
+    pub total: usize,
+    pub page: usize,
+    pub page_size: usize,
+    pub has_next_page: bool,
 }
 
 #[derive(Debug, Serialize)]

@@ -20,6 +20,11 @@ const useStyles = makeStyles({
     color: "var(--app-text)",
     border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)"
+  },
+  surfaceCard: {
+    backgroundColor: "var(--app-surface-1)",
+    border: "1px solid var(--app-border)",
+    boxShadow: "var(--app-card-shadow)"
   }
 });
 
@@ -69,10 +74,10 @@ export function WatchPage() {
         <Text weight="semibold" size={800}>
           {episode?.isAvailable ? "播放器占位" : "资源未入库"}
         </Text>
-        <Text>{episode?.availabilityNote ?? "播放链路接入后会直接进入按集播放。"}</Text>
+        <Text>{episode?.availabilityNote ?? "播放器接入后会直接进入按集播放。"}</Text>
       </Card>
 
-      <Card>
+      <Card className={styles.surfaceCard}>
         <Text weight="semibold">{detail?.subject.titleCn || detail?.subject.title}</Text>
         <Text>
           第 {episode?.episodeNumber ?? episode?.sort ?? "?"} 集 · {episode?.titleCn || episode?.title || "未命名剧集"}

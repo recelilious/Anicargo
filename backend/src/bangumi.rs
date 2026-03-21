@@ -45,7 +45,11 @@ impl BangumiClient {
             .map_err(|_| AppError::upstream("failed to parse Bangumi calendar response"))
     }
 
-    pub async fn search_subjects(&self, keyword: &str) -> Result<Vec<SubjectRaw>, AppError> {
+    pub async fn search_subjects(
+        &self,
+        keyword: &str,
+        offset: usize,
+    ) -> Result<SearchResponseRaw, AppError> {
         let payload = json!({
             "keyword": keyword,
             "sort": "rank",
@@ -55,7 +59,10 @@ impl BangumiClient {
         });
 
         self.http
-            .post(format!("{}/v0/search/subjects", self.base_url))
+            .post(format!(
+                "{}/v0/search/subjects?limit=20&offset={}",
+                self.base_url, offset
+            ))
             .header(reqwest::header::USER_AGENT, &self.user_agent)
             .json(&payload)
             .send()
@@ -66,7 +73,6 @@ impl BangumiClient {
             .json::<SearchResponseRaw>()
             .await
             .map_err(|_| AppError::upstream("failed to parse Bangumi search response"))
-            .map(|response| response.data)
     }
 
     pub async fn fetch_subject(&self, subject_id: i64) -> Result<SubjectRaw, AppError> {
@@ -120,6 +126,12 @@ pub struct WeekdayRaw {
 pub struct SearchResponseRaw {
     #[serde(default)]
     pub data: Vec<SubjectRaw>,
+    #[serde(default)]
+    pub total: Option<usize>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub offset: Option<usize>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
