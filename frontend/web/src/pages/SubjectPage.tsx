@@ -21,20 +21,21 @@ const useStyles = makeStyles({
     display: "grid",
     alignContent: "end",
     color: "#ffffff",
-    boxShadow: "var(--app-card-shadow)"
+    boxShadow: "var(--app-card-shadow-strong)",
+    border: "1px solid var(--app-border)"
   },
   heroBackdrop: {
     position: "absolute",
     inset: 0,
     backgroundSize: "cover",
     backgroundPosition: "center center",
-    filter: "blur(16px)",
-    transform: "scale(1.08)"
+    filter: "blur(14px)",
+    transform: "scale(1.06)"
   },
   heroOverlay: {
     position: "absolute",
     inset: 0,
-    background: "linear-gradient(180deg, rgba(18, 14, 17, 0.08) 0%, rgba(18, 14, 17, 0.82) 100%)"
+    background: "linear-gradient(180deg, rgba(18, 16, 15, 0.14) 0%, rgba(18, 16, 15, 0.78) 100%)"
   },
   heroContent: {
     position: "relative",
@@ -143,7 +144,8 @@ export function SubjectPage() {
         <div
           className={styles.heroBackdrop}
           style={{
-            backgroundImage: detail.subject.imageBanner ? `url(${detail.subject.imageBanner})` : "var(--app-fallback-hero)"
+            backgroundImage: detail.subject.imageBanner ? `url(${detail.subject.imageBanner})` : undefined,
+            backgroundColor: "var(--app-fallback-hero)"
           }}
         />
         <div className={styles.heroOverlay} />

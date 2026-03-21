@@ -16,8 +16,9 @@ const useStyles = makeStyles({
     minHeight: "360px",
     display: "grid",
     placeItems: "center",
-    background: "var(--app-panel)",
+    backgroundColor: "var(--app-surface-1)",
     color: "var(--app-text)",
+    border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)"
   }
 });

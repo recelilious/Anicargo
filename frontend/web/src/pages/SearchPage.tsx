@@ -14,7 +14,8 @@ const useStyles = makeStyles({
   },
   searchBar: {
     padding: "24px",
-    background: "var(--app-panel)",
+    backgroundColor: "var(--app-surface-1)",
+    border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)"
   },
   filters: {

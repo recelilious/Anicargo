@@ -14,7 +14,7 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: "18px",
-    background: "var(--app-bg)"
+    backgroundColor: "var(--app-bg)"
   },
   grid: {
     display: "grid",
@@ -31,8 +31,9 @@ const useStyles = makeStyles({
     gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
     gap: "12px"
   },
-  hero: {
-    background: "var(--app-panel)",
+  header: {
+    backgroundColor: "var(--app-surface-1)",
+    border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)"
   }
 });
@@ -146,7 +147,7 @@ export function AdminPage() {
     return (
       <section className={styles.page}>
         <form onSubmit={(event) => void onAdminLogin(event)}>
-          <Card className={`${styles.form} ${styles.hero}`}>
+          <Card className={`${styles.form} ${styles.header}`}>
             <Text weight="semibold" size={800}>
               管理登录
             </Text>
@@ -175,7 +176,7 @@ export function AdminPage() {
 
   return (
     <section className={styles.page}>
-      <Card className={styles.hero}>
+      <Card className={styles.header}>
         <Text weight="semibold" size={800}>
           管理面板
         </Text>

@@ -20,9 +20,14 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: "20px",
-    padding: "28px 20px",
+    padding: "24px 18px",
     borderRight: `1px solid ${tokens.colorNeutralStroke2}`,
-    background: "var(--app-rail)"
+    backgroundColor: "var(--app-rail)"
+  },
+  brand: {
+    display: "flex",
+    flexDirection: "column",
+    padding: "2px 6px 0"
   },
   profileCard: {
     display: "flex",
@@ -30,7 +35,7 @@ const useStyles = makeStyles({
     gap: "14px",
     padding: "16px",
     borderRadius: tokens.borderRadiusXLarge,
-    background: "var(--app-panel-soft)",
+    backgroundColor: "var(--app-panel)",
     border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)"
   },
@@ -48,11 +53,6 @@ const useStyles = makeStyles({
   profileSubtitle: {
     color: "var(--app-muted)"
   },
-  brand: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px"
-  },
   nav: {
     display: "flex",
     flexDirection: "column",
@@ -63,7 +63,8 @@ const useStyles = makeStyles({
   },
   navButton: {
     width: "100%",
-    justifyContent: "flex-start"
+    justifyContent: "flex-start",
+    borderRadius: tokens.borderRadiusLarge
   },
   active: {
     backgroundColor: "var(--app-selected-bg)",
@@ -96,6 +97,12 @@ export function AppShell() {
   return (
     <div className={styles.layout}>
       <aside className={styles.rail}>
+        <div className={styles.brand}>
+          <Text weight="semibold" size={700}>
+            Anicargo
+          </Text>
+        </div>
+
         <div className={styles.profileCard}>
           <div className={styles.profileRow}>
             <Avatar name={displayName} color="colorful" size={48} />
@@ -107,12 +114,6 @@ export function AppShell() {
             </div>
           </div>
           <Badge appearance="tint">{viewerModeLabel}</Badge>
-        </div>
-
-        <div className={styles.brand}>
-          <Text weight="semibold" size={700}>
-            Anicargo
-          </Text>
         </div>
 
         <nav className={styles.nav}>

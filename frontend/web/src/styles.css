@@ -1,17 +1,20 @@
 :root {
-  --app-bg: #f4ece5;
-  --app-bg-spot-1: rgba(75, 44, 35, 0.16);
-  --app-bg-spot-2: rgba(214, 195, 178, 0.34);
-  --app-rail: linear-gradient(180deg, #faf4ee 0%, #ede0d3 100%);
-  --app-panel: linear-gradient(135deg, #e4d4c7 0%, #faf4ed 58%, #eaddd1 100%);
-  --app-panel-soft: linear-gradient(135deg, rgba(75, 44, 35, 0.14) 0%, rgba(214, 195, 178, 0.26) 100%);
-  --app-fallback-hero: linear-gradient(135deg, #6a4638 0%, #4b2c23 50%, #d6c3b2 100%);
-  --app-border: rgba(75, 44, 35, 0.18);
-  --app-selected-bg: rgba(75, 44, 35, 0.10);
+  --app-bg: #f5f0eb;
+  --app-rail: #fbf6f1;
+  --app-surface-1: #fffaf6;
+  --app-surface-2: #f4ece4;
+  --app-surface-3: #ede1d6;
+  --app-panel: #fffaf6;
+  --app-panel-subtle: #f6eee7;
+  --app-fallback-hero: #4b2c23;
+  --app-border: #dfd1c5;
+  --app-border-strong: #c8b4a3;
+  --app-selected-bg: #ece2d9;
   --app-selected-fg: #4b2c23;
-  --app-muted: #7a655a;
-  --app-text: #241511;
-  --app-card-shadow: 0 18px 40px rgba(75, 44, 35, 0.10);
+  --app-muted: #736259;
+  --app-text: #251713;
+  --app-card-shadow: 0 1px 2px rgba(75, 44, 35, 0.08), 0 8px 24px rgba(75, 44, 35, 0.06);
+  --app-card-shadow-strong: 0 12px 32px rgba(75, 44, 35, 0.10);
   color: var(--app-text);
   background: var(--app-bg);
   font-family: "JetBrains Mono Variable", "Maple Mono CN", monospace;
@@ -25,19 +28,22 @@
 }
 
 :root[data-theme="dark"] {
-  --app-bg: #120c0a;
-  --app-bg-spot-1: rgba(214, 195, 178, 0.10);
-  --app-bg-spot-2: rgba(75, 44, 35, 0.34);
-  --app-rail: linear-gradient(180deg, #1c130f 0%, #120c0a 100%);
-  --app-panel: linear-gradient(135deg, #2d1c16 0%, #17100d 58%, #3a2922 100%);
-  --app-panel-soft: linear-gradient(135deg, rgba(214, 195, 178, 0.10) 0%, rgba(75, 44, 35, 0.38) 100%);
-  --app-fallback-hero: linear-gradient(135deg, #d6c3b2 0%, #8d6f61 40%, #221612 100%);
-  --app-border: rgba(214, 195, 178, 0.16);
-  --app-selected-bg: rgba(214, 195, 178, 0.14);
-  --app-selected-fg: #d6c3b2;
-  --app-muted: #b7a393;
-  --app-text: #f4e9de;
-  --app-card-shadow: 0 18px 42px rgba(0, 0, 0, 0.30);
+  --app-bg: #11100f;
+  --app-rail: #171513;
+  --app-surface-1: #1d1a18;
+  --app-surface-2: #231f1c;
+  --app-surface-3: #2c2723;
+  --app-panel: #1d1a18;
+  --app-panel-subtle: #26211e;
+  --app-fallback-hero: #38231c;
+  --app-border: #352e2a;
+  --app-border-strong: #54453c;
+  --app-selected-bg: #342c27;
+  --app-selected-fg: #f3e5d8;
+  --app-muted: #b6a394;
+  --app-text: #f3e8de;
+  --app-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.28), 0 12px 28px rgba(0, 0, 0, 0.30);
+  --app-card-shadow-strong: 0 18px 40px rgba(0, 0, 0, 0.34);
   color-scheme: dark;
 }
 
@@ -63,10 +69,7 @@ textarea {
 body {
   margin: 0;
   color: var(--app-text);
-  background:
-    radial-gradient(circle at top left, var(--app-bg-spot-1), transparent 30%),
-    radial-gradient(circle at bottom right, var(--app-bg-spot-2), transparent 28%),
-    var(--app-bg);
+  background: var(--app-bg);
 }
 
 img {
@@ -80,11 +83,5 @@ a {
 
 ::selection {
   color: #fcf7f2;
-  background: #705247;
-}
-
-@media (max-width: 900px) {
-  body {
-    background: var(--app-bg);
-  }
+  background: #6b4d40;
 }

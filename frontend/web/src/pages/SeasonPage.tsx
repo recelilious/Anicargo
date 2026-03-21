@@ -13,8 +13,9 @@ const useStyles = makeStyles({
     gap: "20px"
   },
   header: {
-    padding: "20px 24px",
-    background: "var(--app-panel)",
+    padding: "18px 22px",
+    backgroundColor: "var(--app-surface-1)",
+    border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)"
   },
   grid: {

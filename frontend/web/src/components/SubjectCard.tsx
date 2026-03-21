@@ -14,13 +14,16 @@ const useStyles = makeStyles({
     display: "grid",
     gridTemplateRows: "248px minmax(0, 1fr)",
     overflow: "hidden",
-    backgroundColor: tokens.colorNeutralBackground1
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: "1px solid var(--app-border)",
+    boxShadow: "var(--app-card-shadow)"
   },
   poster: {
     backgroundSize: "cover",
     backgroundPosition: "center center",
     borderRadius: tokens.borderRadiusLarge,
-    minHeight: "248px"
+    minHeight: "248px",
+    backgroundColor: "var(--app-fallback-hero)"
   },
   body: {
     display: "flex",
@@ -102,7 +105,7 @@ export function SubjectCard({ subject }: { subject: SubjectCardModel }) {
         <div
           className={styles.poster}
           style={{
-            backgroundImage: subject.imagePortrait ? `url(${subject.imagePortrait})` : "var(--app-fallback-hero)"
+            backgroundImage: subject.imagePortrait ? `url(${subject.imagePortrait})` : undefined
           }}
         />
 
