@@ -1,0 +1,208 @@
+use std::{fs, path::PathBuf};
+
+use anyhow::Context;
+use clap::Parser;
+use serde::Deserialize;
+
+#[derive(Debug, Clone)]
+pub struct AppConfig {
+    pub server: ServerConfig,
+    pub storage: StorageConfig,
+    pub bangumi: BangumiConfig,
+    pub auth: AuthConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct ServerConfig {
+    pub host: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone)]
+pub struct StorageConfig {
+    pub database_path: PathBuf,
+    pub media_root: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct BangumiConfig {
+    pub base_url: String,
+    pub user_agent: String,
+    pub request_timeout_secs: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthConfig {
+    pub default_admin_username: String,
+    pub default_admin_password: String,
+    pub user_session_days: i64,
+    pub admin_session_hours: i64,
+}
+
+#[derive(Debug, Parser)]
+#[command(name = "anicargo-server")]
+pub struct CliArgs {
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+    #[arg(long)]
+    pub host: Option<String>,
+    #[arg(long)]
+    pub port: Option<u16>,
+    #[arg(long)]
+    pub database_path: Option<PathBuf>,
+    #[arg(long)]
+    pub media_root: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PartialConfig {
+    server: Option<PartialServerConfig>,
+    storage: Option<PartialStorageConfig>,
+    bangumi: Option<PartialBangumiConfig>,
+    auth: Option<PartialAuthConfig>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PartialServerConfig {
+    host: Option<String>,
+    port: Option<u16>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PartialStorageConfig {
+    database_path: Option<PathBuf>,
+    media_root: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PartialBangumiConfig {
+    base_url: Option<String>,
+    user_agent: Option<String>,
+    request_timeout_secs: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PartialAuthConfig {
+    default_admin_username: Option<String>,
+    default_admin_password: Option<String>,
+    user_session_days: Option<i64>,
+    admin_session_hours: Option<i64>,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            server: ServerConfig {
+                host: "0.0.0.0".to_owned(),
+                port: 4000,
+            },
+            storage: StorageConfig {
+                database_path: PathBuf::from("runtime/anicargo.db"),
+                media_root: PathBuf::from("runtime/media"),
+            },
+            bangumi: BangumiConfig {
+                base_url: "https://api.bgm.tv".to_owned(),
+                user_agent: "Anicargo/0.1 (+https://github.com/recelilious/Anicargo)".to_owned(),
+                request_timeout_secs: 15,
+            },
+            auth: AuthConfig {
+                default_admin_username: "admin".to_owned(),
+                default_admin_password: "change-me-admin".to_owned(),
+                user_session_days: 14,
+                admin_session_hours: 12,
+            },
+        }
+    }
+}
+
+impl AppConfig {
+    pub fn load() -> anyhow::Result<Self> {
+        let cli = CliArgs::parse();
+        let mut config = Self::default();
+
+        let config_path = cli
+            .config
+            .clone()
+            .or_else(|| {
+                let default_path = PathBuf::from("anicargo.toml");
+                default_path.exists().then_some(default_path)
+            })
+            .or_else(|| {
+                let backend_path = PathBuf::from("backend/config/anicargo.example.toml");
+                backend_path.exists().then_some(backend_path)
+            });
+
+        if let Some(path) = config_path {
+            let raw = fs::read_to_string(&path)
+                .with_context(|| format!("failed to read config file at {}", path.display()))?;
+            let partial = toml::from_str::<PartialConfig>(&raw)
+                .with_context(|| format!("failed to parse config file at {}", path.display()))?;
+            config.apply_partial(partial);
+        }
+
+        if let Some(host) = cli.host {
+            config.server.host = host;
+        }
+
+        if let Some(port) = cli.port {
+            config.server.port = port;
+        }
+
+        if let Some(database_path) = cli.database_path {
+            config.storage.database_path = database_path;
+        }
+
+        if let Some(media_root) = cli.media_root {
+            config.storage.media_root = media_root;
+        }
+
+        Ok(config)
+    }
+
+    fn apply_partial(&mut self, partial: PartialConfig) {
+        if let Some(server) = partial.server {
+            if let Some(host) = server.host {
+                self.server.host = host;
+            }
+            if let Some(port) = server.port {
+                self.server.port = port;
+            }
+        }
+
+        if let Some(storage) = partial.storage {
+            if let Some(database_path) = storage.database_path {
+                self.storage.database_path = database_path;
+            }
+            if let Some(media_root) = storage.media_root {
+                self.storage.media_root = media_root;
+            }
+        }
+
+        if let Some(bangumi) = partial.bangumi {
+            if let Some(base_url) = bangumi.base_url {
+                self.bangumi.base_url = base_url;
+            }
+            if let Some(user_agent) = bangumi.user_agent {
+                self.bangumi.user_agent = user_agent;
+            }
+            if let Some(request_timeout_secs) = bangumi.request_timeout_secs {
+                self.bangumi.request_timeout_secs = request_timeout_secs;
+            }
+        }
+
+        if let Some(auth) = partial.auth {
+            if let Some(username) = auth.default_admin_username {
+                self.auth.default_admin_username = username;
+            }
+            if let Some(password) = auth.default_admin_password {
+                self.auth.default_admin_password = password;
+            }
+            if let Some(days) = auth.user_session_days {
+                self.auth.user_session_days = days;
+            }
+            if let Some(hours) = auth.admin_session_hours {
+                self.auth.admin_session_hours = hours;
+            }
+        }
+    }
+}

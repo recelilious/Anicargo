@@ -1,0 +1,18 @@
+[server]
+host = "0.0.0.0"
+port = 4000
+
+[storage]
+database_path = "runtime/anicargo.db"
+media_root = "runtime/media"
+
+[bangumi]
+base_url = "https://api.bgm.tv"
+user_agent = "Anicargo/0.1 (+https://github.com/recelilious/Anicargo)"
+request_timeout_secs = 15
+
+[auth]
+default_admin_username = "admin"
+default_admin_password = "change-me-admin"
+user_session_days = 14
+admin_session_hours = 12

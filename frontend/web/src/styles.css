@@ -1,0 +1,42 @@
+:root {
+  color: #122033;
+  background: #eef4fb;
+  font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: light;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, rgba(15, 108, 189, 0.12), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(255, 170, 94, 0.12), transparent 25%),
+    #eef4fb;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
+@media (max-width: 900px) {
+  body {
+    background: #eef4fb;
+  }
+}
