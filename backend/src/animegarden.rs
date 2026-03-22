@@ -139,6 +139,27 @@ impl AnimeGardenClient {
         profile: &AnimeGardenSearchProfile,
         episode_number: f64,
     ) -> Result<AnimeGardenSearchResult, AppError> {
+        let subject_episode_params =
+            build_subject_episode_params(profile.bangumi_subject_id, episode_number);
+        let subject_episode_results = self
+            .fetch_resources_with_limits(subject_episode_params, 100, 1)
+            .await?;
+        info!(
+            subject_id = profile.bangumi_subject_id,
+            episode = episode_number,
+            resource_count = subject_episode_results.len(),
+            "AnimeGarden subject+keyword episode search finished"
+        );
+        if !subject_episode_results.is_empty() {
+            return Ok(AnimeGardenSearchResult {
+                strategy: format!(
+                    "subject_keyword:{}",
+                    format_episode_fragment(episode_number)
+                ),
+                resources: dedup_resources(subject_episode_results),
+            });
+        }
+
         let search_terms = build_episode_search_terms(profile, episode_number);
         if search_terms.is_empty() {
             return self.search_resources(profile).await;
@@ -163,22 +184,13 @@ impl AnimeGardenClient {
                 "AnimeGarden targeted episode search finished"
             );
             if !fetched.is_empty() {
-                let mut seen = HashSet::<(String, String)>::new();
-                let mut resources = Vec::new();
-                for resource in fetched {
-                    let key = (resource.provider.clone(), resource.provider_id.clone());
-                    if seen.insert(key) {
-                        resources.push(resource);
-                    }
-                }
-
                 return Ok(AnimeGardenSearchResult {
                     strategy: format!(
                         "episode:{}:{}",
                         format_episode_fragment(episode_number),
                         keyword
                     ),
-                    resources,
+                    resources: dedup_resources(fetched),
                 });
             }
         }
@@ -193,13 +205,23 @@ impl AnimeGardenClient {
         &self,
         extra_params: Vec<(String, String)>,
     ) -> Result<Vec<AnimeGardenResource>, AppError> {
+        self.fetch_resources_with_limits(extra_params, self.page_size, self.max_pages)
+            .await
+    }
+
+    async fn fetch_resources_with_limits(
+        &self,
+        extra_params: Vec<(String, String)>,
+        page_size: usize,
+        max_pages: usize,
+    ) -> Result<Vec<AnimeGardenResource>, AppError> {
         let mut merged = Vec::new();
         const MAX_ATTEMPTS: usize = 4;
 
-        for page in 1..=self.max_pages {
+        for page in 1..=max_pages.max(1) {
             let mut query = vec![
                 ("page".to_owned(), page.to_string()),
-                ("pageSize".to_owned(), self.page_size.to_string()),
+                ("pageSize".to_owned(), page_size.max(1).to_string()),
                 ("metadata".to_owned(), "true".to_owned()),
             ];
             query.extend(extra_params.clone());
@@ -284,6 +306,15 @@ impl AnimeGardenClient {
 
 fn build_subject_params(subject_id: i64) -> Vec<(String, String)> {
     vec![("subject".to_owned(), subject_id.to_string())]
+}
+
+fn build_subject_episode_params(subject_id: i64, episode_number: f64) -> Vec<(String, String)> {
+    let mut params = build_subject_params(subject_id);
+    params.push((
+        "keyword".to_owned(),
+        format_padded_episode_number(episode_number),
+    ));
+    params
 }
 
 fn build_search_params(keyword: String) -> Vec<(String, String)> {
@@ -391,6 +422,14 @@ fn format_episode_fragment(value: f64) -> String {
     }
 }
 
+fn format_padded_episode_number(value: f64) -> String {
+    if value.fract().abs() < f64::EPSILON {
+        format!("{:02}", value.round() as i64)
+    } else {
+        format_episode_fragment(value)
+    }
+}
+
 fn format_english_ordinal(value: i64) -> String {
     let suffix = match value % 100 {
         11..=13 => "th",
@@ -432,6 +471,18 @@ fn format_chinese_number(value: i64) -> Option<String> {
         }
         _ => None,
     }
+}
+
+fn dedup_resources(resources: Vec<AnimeGardenResource>) -> Vec<AnimeGardenResource> {
+    let mut seen = HashSet::<(String, String)>::new();
+    let mut deduped = Vec::new();
+    for resource in resources {
+        let key = (resource.provider.clone(), resource.provider_id.clone());
+        if seen.insert(key) {
+            deduped.push(resource);
+        }
+    }
+    deduped
 }
 
 #[derive(Debug, Deserialize)]
