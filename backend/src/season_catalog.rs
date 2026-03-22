@@ -4,7 +4,7 @@ use std::{
     sync::OnceLock,
 };
 
-use chrono::{Datelike, Local, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Utc};
 use futures::stream::{self, StreamExt};
 use regex::Regex;
 use sqlx::{FromRow, SqlitePool};
@@ -19,6 +19,7 @@ use crate::{
 const CATALOG_REFRESH_TTL_HOURS: i64 = 12;
 const MATCH_CONCURRENCY: usize = 6;
 const STATUS_REFRESH_CONCURRENCY: usize = 6;
+const INITIAL_STATUS_REFRESH_AT: &str = "1970-01-01T00:00:00Z";
 
 #[derive(Debug, Clone)]
 struct YucCatalog {
@@ -58,6 +59,12 @@ struct CatalogMatchRow {
     title: String,
     title_cn: String,
     title_original: Option<String>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct StatusRefreshCandidateRow {
+    bangumi_subject_id: i64,
+    status_refreshed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -202,6 +209,15 @@ pub async fn load_current_season_calendar(
     Ok(days)
 }
 
+pub async fn sync_current_season_catalog_now(
+    yuc: &YucClient,
+    pool: &SqlitePool,
+    bangumi: &BangumiClient,
+) -> Result<(), AppError> {
+    let catalog_key = yuc.current_season_key();
+    sync_current_season_catalog(yuc, pool, bangumi, &catalog_key).await
+}
+
 async fn sync_current_season_catalog(
     yuc: &YucClient,
     pool: &SqlitePool,
@@ -236,7 +252,7 @@ async fn sync_current_season_catalog(
 
 fn parse_catalog(yuc: &YucClient, catalog_key: &str, html: &str) -> YucCatalog {
     let (season_year, season_month) =
-        parse_catalog_key(catalog_key).unwrap_or((Utc::now().year(), 1));
+        parse_catalog_key(catalog_key).unwrap_or((tokyo_now().year(), 1));
     let mut entries = parse_weekday_entries(html);
     let details = parse_detail_entries(html);
     attach_detail_entries(&mut entries, &details);
@@ -434,7 +450,7 @@ async fn populate_missing_matches(
 
     for (entry_id, resolution) in resolutions {
         if let Some(card) = resolution.card.as_ref() {
-            upsert_subject_cache(pool, card, &matched_at).await?;
+            upsert_subject_cache(pool, card, &matched_at, INITIAL_STATUS_REFRESH_AT).await?;
         }
 
         sqlx::query(
@@ -464,10 +480,14 @@ async fn refresh_subject_statuses(
     bangumi: &BangumiClient,
     catalog_key: &str,
 ) -> Result<(), AppError> {
-    let subject_ids = sqlx::query_scalar::<_, i64>(
-        "SELECT DISTINCT yuc_catalog_entries.bangumi_subject_id
+    let subject_ids = sqlx::query_as::<_, StatusRefreshCandidateRow>(
+        "SELECT DISTINCT
+            yuc_catalog_entries.bangumi_subject_id,
+            bangumi_subject_cache.status_refreshed_at
          FROM yuc_catalog_entries
          INNER JOIN yuc_catalogs ON yuc_catalogs.id = yuc_catalog_entries.yuc_catalog_id
+         LEFT JOIN bangumi_subject_cache
+            ON bangumi_subject_cache.bangumi_subject_id = yuc_catalog_entries.bangumi_subject_id
          WHERE yuc_catalogs.catalog_key = ?1
            AND yuc_catalog_entries.bangumi_subject_id IS NOT NULL",
     )
@@ -475,6 +495,12 @@ async fn refresh_subject_statuses(
     .fetch_all(pool)
     .await
     .map_err(|_| AppError::internal("failed to list Bangumi status refresh candidates"))?;
+
+    let subject_ids = subject_ids
+        .into_iter()
+        .filter(|row| status_refresh_due(row.status_refreshed_at.as_deref()))
+        .map(|row| row.bangumi_subject_id)
+        .collect::<Vec<_>>();
 
     if subject_ids.is_empty() {
         return Ok(());
@@ -519,7 +545,7 @@ async fn refresh_subject_statuses(
     .await;
 
     for card in cards {
-        upsert_subject_cache(pool, &card, &refreshed_at).await?;
+        upsert_subject_cache(pool, &card, &refreshed_at, &refreshed_at).await?;
     }
 
     Ok(())
@@ -528,7 +554,8 @@ async fn refresh_subject_statuses(
 async fn upsert_subject_cache(
     pool: &SqlitePool,
     card: &SubjectCardDto,
-    refreshed_at: &str,
+    metadata_refreshed_at: &str,
+    status_refreshed_at: &str,
 ) -> Result<(), AppError> {
     let tags_json = serde_json::to_string(&card.tags)
         .map_err(|_| AppError::internal("failed to serialize Bangumi cache tags"))?;
@@ -549,7 +576,7 @@ async fn upsert_subject_cache(
             release_status,
             metadata_refreshed_at,
             status_refreshed_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
          ON CONFLICT(bangumi_subject_id) DO UPDATE SET
             title = excluded.title,
             title_cn = excluded.title_cn,
@@ -577,7 +604,8 @@ async fn upsert_subject_cache(
     .bind(tags_json)
     .bind(card.rating_score)
     .bind(&card.release_status)
-    .bind(refreshed_at)
+    .bind(metadata_refreshed_at)
+    .bind(status_refreshed_at)
     .execute(pool)
     .await
     .map_err(|_| AppError::internal("failed to upsert Bangumi subject cache"))?;
@@ -1107,8 +1135,8 @@ fn parse_broadcast_time(value: Option<&str>) -> Option<u16> {
     Some(hour * 60 + minute)
 }
 
-fn derive_release_status(subject: &SubjectRaw, episodes: &[EpisodeRaw]) -> &'static str {
-    let today = Local::now().date_naive();
+pub(crate) fn derive_release_status(subject: &SubjectRaw, episodes: &[EpisodeRaw]) -> &'static str {
+    let today = tokyo_today();
 
     if parse_subject_date(subject.air_date.as_ref().or(subject.date.as_ref()))
         .is_some_and(|date| date > today)
@@ -1182,6 +1210,30 @@ fn fallback_release_status(subject: &SubjectRaw, today: NaiveDate) -> &'static s
 fn parse_subject_date(value: Option<&String>) -> Option<NaiveDate> {
     let value = value?;
     parse_episode_airdate(value)
+}
+
+fn tokyo_now() -> DateTime<FixedOffset> {
+    Utc::now().with_timezone(&tokyo_offset())
+}
+
+fn tokyo_today() -> NaiveDate {
+    tokyo_now().date_naive()
+}
+
+fn tokyo_offset() -> FixedOffset {
+    FixedOffset::east_opt(9 * 3600).expect("valid tokyo utc offset")
+}
+
+fn status_refresh_due(value: Option<&str>) -> bool {
+    let Some(value) = value else {
+        return true;
+    };
+
+    let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(value) else {
+        return true;
+    };
+
+    parsed.with_timezone(&tokyo_offset()).date_naive() < tokyo_today()
 }
 
 fn parse_episode_airdate(value: &str) -> Option<NaiveDate> {

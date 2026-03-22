@@ -466,9 +466,6 @@ export function ResourcesPage() {
                           <Text className={styles.subtitleLine}>
                             {download.titleCn || download.title}
                           </Text>
-                          <Text className={styles.subtitleLine}>
-                            {download.sourceFansubName ?? download.sourceTitle}
-                          </Text>
                         </div>
                         <Text className={styles.muted}>{formatDownloadState(download.state)}</Text>
                       </div>

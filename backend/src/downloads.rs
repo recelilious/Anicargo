@@ -923,6 +923,10 @@ fn should_refresh_media_index(execution: &DownloadExecutionDto, state: &str) -> 
         return false;
     }
 
+    if execution.state != state && matches!(state, "seeding" | "completed") {
+        return true;
+    }
+
     let Some(last_indexed_at) = execution.last_indexed_at.as_deref() else {
         return true;
     };

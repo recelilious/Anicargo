@@ -495,7 +495,7 @@ async fn toggle_subscription(
     let policy = db::load_policy(&state.pool).await?;
     let (is_subscribed, subscription_count) =
         db::toggle_subscription(&state.pool, &viewer, subject_id).await?;
-    let profile = resolve_subject_search_profile(&state.bangumi, subject_id).await;
+    let profile = resolve_subject_search_profile(&state.pool, &state.bangumi, subject_id).await;
     let download = state
         .downloads
         .reconcile_subscription_demand(
@@ -801,7 +801,7 @@ async fn force_download_job(
     let admin = require_admin(&state.pool, &headers).await?;
     let policy = db::load_policy(&state.pool).await?;
     let subscription_count = db::total_subscription_count(&state.pool, subject_id).await?;
-    let profile = resolve_subject_search_profile(&state.bangumi, subject_id).await;
+    let profile = resolve_subject_search_profile(&state.pool, &state.bangumi, subject_id).await;
     let decision = state
         .downloads
         .reconcile_subscription_demand(
@@ -956,16 +956,51 @@ async fn enrich_detail(yuc: &YucClient, detail: SubjectDetailDto) -> SubjectDeta
 }
 
 async fn resolve_subject_search_profile(
+    pool: &SqlitePool,
     bangumi: &BangumiClient,
     subject_id: i64,
 ) -> AnimeGardenSearchProfileWithStatus {
+    match db::cached_bangumi_subject_summary(pool, subject_id).await {
+        Ok(Some(cached)) => {
+            return AnimeGardenSearchProfileWithStatus {
+                bangumi_subject_id: subject_id,
+                title: cached.title,
+                title_cn: cached.title_cn,
+                release_status: cached.release_status,
+            };
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(
+                subject_id,
+                error = %error,
+                "Failed to read cached Bangumi subject summary for resource discovery"
+            );
+        }
+    }
+
     match bangumi.fetch_subject(subject_id).await {
-        Ok(subject) => AnimeGardenSearchProfileWithStatus {
-            bangumi_subject_id: subject_id,
-            title: subject.name.clone(),
-            title_cn: subject.name_cn.clone(),
-            release_status: subject.to_card().release_status,
-        },
+        Ok(subject) => {
+            let episodes = match bangumi.fetch_episodes(subject_id).await {
+                Ok(episodes) => episodes,
+                Err(error) => {
+                    tracing::warn!(
+                        subject_id,
+                        error = %error,
+                        "Failed to fetch Bangumi episodes while resolving subject status for discovery"
+                    );
+                    Vec::new()
+                }
+            };
+
+            AnimeGardenSearchProfileWithStatus {
+                bangumi_subject_id: subject_id,
+                title: subject.name.clone(),
+                title_cn: subject.name_cn.clone(),
+                release_status: season_catalog::derive_release_status(&subject, &episodes)
+                    .to_owned(),
+            }
+        }
         Err(error) => {
             tracing::warn!(
                 subject_id,

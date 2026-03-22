@@ -206,6 +206,13 @@ struct PlaybackHistoryRow {
     play_count: i64,
 }
 
+#[derive(Debug, FromRow)]
+struct CachedBangumiSubjectSummaryRow {
+    title: String,
+    title_cn: String,
+    release_status: String,
+}
+
 pub struct NewDownloadJob {
     pub bangumi_subject_id: i64,
     pub trigger_kind: String,
@@ -341,6 +348,13 @@ pub struct PlaybackHistoryEntry {
     pub source_fansub_name: Option<String>,
     pub last_played_at: String,
     pub play_count: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CachedBangumiSubjectSummary {
+    pub title: String,
+    pub title_cn: String,
+    pub release_status: String,
 }
 
 pub async fn connect_and_migrate(config: &AppConfig) -> anyhow::Result<SqlitePool> {
@@ -1141,6 +1155,31 @@ pub async fn mark_download_subject_queued(
     Ok(())
 }
 
+pub async fn cached_bangumi_subject_summary(
+    pool: &SqlitePool,
+    bangumi_subject_id: i64,
+) -> Result<Option<CachedBangumiSubjectSummary>, AppError> {
+    let row = sqlx::query_as::<_, CachedBangumiSubjectSummaryRow>(
+        "SELECT
+            title,
+            title_cn,
+            release_status
+         FROM bangumi_subject_cache
+         WHERE bangumi_subject_id = ?1
+         LIMIT 1",
+    )
+    .bind(bangumi_subject_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to read cached Bangumi subject summary"))?;
+
+    Ok(row.map(|row| CachedBangumiSubjectSummary {
+        title: row.title,
+        title_cn: row.title_cn,
+        release_status: row.release_status,
+    }))
+}
+
 pub async fn subject_download_status(
     pool: &SqlitePool,
     bangumi_subject_id: i64,
@@ -1894,7 +1933,7 @@ pub async fn list_active_download_executions(
         "SELECT *
          FROM download_executions
          WHERE engine_name = ?1
-           AND state IN ('staged', 'starting', 'downloading')
+           AND state IN ('staged', 'starting', 'downloading', 'seeding', 'completed')
          ORDER BY updated_at DESC, created_at DESC
          LIMIT ?2",
     )

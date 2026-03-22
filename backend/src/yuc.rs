@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::Context;
-use chrono::{Datelike, Local};
+use chrono::{DateTime, Datelike, FixedOffset, Utc};
 use regex::Regex;
 use reqwest::Client;
 
@@ -64,7 +64,7 @@ impl YucClient {
     }
 
     pub fn current_season_key(&self) -> String {
-        let now = Local::now();
+        let now = tokyo_now();
         let quarter_month = match now.month() {
             1..=3 => 1,
             4..=6 => 4,
@@ -422,6 +422,10 @@ fn season_key_from_air_date(air_date: Option<&str>) -> Option<String> {
     };
 
     Some(format!("{year}{quarter_month:02}"))
+}
+
+fn tokyo_now() -> DateTime<FixedOffset> {
+    Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).expect("valid tokyo utc offset"))
 }
 
 fn sanitize_title(raw: &str) -> String {

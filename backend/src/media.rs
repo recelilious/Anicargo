@@ -33,6 +33,15 @@ pub fn infer_release_slot(
     provider_resource_id: &str,
     release_status: &str,
 ) -> ParsedReleaseSlot {
+    if let Some(episode) = extract_single_episode(title) {
+        return ParsedReleaseSlot {
+            slot_key: format!("episode:{}", format_episode_number(episode)),
+            episode_index: Some(episode),
+            episode_end_index: Some(episode),
+            is_collection: false,
+        };
+    }
+
     if let Some((start, end)) = extract_collection_span(title) {
         return ParsedReleaseSlot {
             slot_key: format!(
@@ -43,15 +52,6 @@ pub fn infer_release_slot(
             episode_index: Some(start),
             episode_end_index: Some(end),
             is_collection: true,
-        };
-    }
-
-    if let Some(episode) = extract_single_episode(title) {
-        return ParsedReleaseSlot {
-            slot_key: format!("episode:{}", format_episode_number(episode)),
-            episode_index: Some(episode),
-            episode_end_index: Some(episode),
-            is_collection: false,
         };
     }
 
@@ -160,6 +160,15 @@ fn infer_file_slot(file_name: &str, fallback_slot: &ParsedReleaseSlot) -> Parsed
         .unwrap_or(file_name)
         .to_owned();
 
+    if let Some(episode) = extract_single_episode(&stem) {
+        return ParsedReleaseSlot {
+            slot_key: format!("episode:{}", format_episode_number(episode)),
+            episode_index: Some(episode),
+            episode_end_index: Some(episode),
+            is_collection: false,
+        };
+    }
+
     if let Some((start, end)) = extract_collection_span(&stem) {
         return ParsedReleaseSlot {
             slot_key: format!(
@@ -170,15 +179,6 @@ fn infer_file_slot(file_name: &str, fallback_slot: &ParsedReleaseSlot) -> Parsed
             episode_index: Some(start),
             episode_end_index: Some(end),
             is_collection: true,
-        };
-    }
-
-    if let Some(episode) = extract_single_episode(&stem) {
-        return ParsedReleaseSlot {
-            slot_key: format!("episode:{}", format_episode_number(episode)),
-            episode_index: Some(episode),
-            episode_end_index: Some(episode),
-            is_collection: false,
         };
     }
 
@@ -207,6 +207,7 @@ fn extract_collection_span(title: &str) -> Option<(f64, f64)> {
 fn extract_single_episode(title: &str) -> Option<f64> {
     for regex in [
         explicit_episode_regex(),
+        dashed_episode_regex(),
         bracket_episode_regex(),
         suffix_episode_regex(),
     ] {
@@ -226,7 +227,8 @@ fn extract_single_episode(title: &str) -> Option<f64> {
 }
 
 fn parse_episode_capture(value: &str) -> Option<f64> {
-    let trimmed = value.trim().trim_matches('0');
+    let trimmed = value.trim();
+    let trimmed = trimmed.trim_start_matches('0');
     let normalized = if trimmed.is_empty() { "0" } else { trimmed };
     let parsed = normalized.parse::<f64>().ok()?;
     (parsed > 0.0 && parsed <= 500.0).then_some(parsed)
@@ -265,7 +267,7 @@ fn is_video_extension(extension: &str) -> bool {
 fn collection_range_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
-        Regex::new(r"(?i)(?:^|[^0-9])(\d{1,3}(?:\.\d+)?)\s*[-~]\s*(\d{1,3}(?:\.\d+)?)(?:\s*(?:END|FIN))?(?:[^0-9]|$)")
+        Regex::new(r"(?i)(?:^|[^0-9A-Za-z])(\d{1,3}(?:\.\d+)?)\s*[-~]\s*(\d{1,3}(?:\.\d+)?)(?:\s*(?:END|FIN))?(?:[^0-9A-Za-z]|$)")
             .expect("valid collection range regex")
     })
 }
@@ -298,10 +300,66 @@ fn bracket_episode_regex() -> &'static Regex {
     })
 }
 
+fn dashed_episode_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(
+            r"(?ix)(?:^|[^0-9A-Za-z])-\s*(\d{1,3}(?:\.\d+)?)(?:\s*(?:END|FIN))?(?:\s*(?:[\[\(].*)?)$",
+        )
+            .expect("valid dashed episode regex")
+    })
+}
+
 fn suffix_episode_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
         Regex::new(r"(?i)\b(\d{1,3}(?:\.\d+)?)\s*(?:END|FIN)\b")
             .expect("valid suffix episode regex")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_collection_span, extract_single_episode, infer_release_slot};
+
+    #[test]
+    fn parses_bracket_episode_without_dropping_trailing_zero() {
+        assert_eq!(
+            extract_single_episode(
+                "[桜都字幕组] 我推的孩子 第三季 / Oshi no Ko 3rd Season [10][1080P][简繁日内封]"
+            ),
+            Some(10.0)
+        );
+    }
+
+    #[test]
+    fn parses_dashed_episode_titles() {
+        assert_eq!(
+            extract_single_episode(
+                "[ANi] 公主殿下，「拷問」的時間到了 第二季 - 22 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]"
+            ),
+            Some(22.0)
+        );
+    }
+
+    #[test]
+    fn does_not_treat_season_marker_as_collection_range() {
+        let slot = infer_release_slot(
+            "[LoliHouse] 【我推的孩子】 第三季 / Oshi no Ko S3 - 10 [WebRip 1080p HEVC-10bit AAC][简繁内封字幕]",
+            "single",
+            "715220",
+            "airing",
+        );
+        assert_eq!(slot.slot_key, "episode:10");
+        assert_eq!(slot.episode_index, Some(10.0));
+        assert!(!slot.is_collection);
+    }
+
+    #[test]
+    fn still_parses_real_collection_ranges() {
+        assert_eq!(
+            extract_collection_span("[SubsPlease] Example Title [01-12] [1080p]"),
+            Some((1.0, 12.0))
+        );
+    }
 }

@@ -13,6 +13,7 @@ mod types;
 mod yuc;
 
 use anyhow::Context;
+use chrono::{FixedOffset, Utc};
 use std::sync::Arc;
 use tokio::signal;
 use tokio::time::{self, Duration, MissedTickBehavior};
@@ -56,6 +57,8 @@ async fn main() -> anyhow::Result<()> {
     let address = format!("{}:{}", config.server.host, config.server.port);
     let metrics = RuntimeMetrics::new(address.clone());
     let downloads_for_app = downloads.clone();
+    let bangumi_for_sync = bangumi.clone();
+    let yuc_for_sync = yuc.clone();
     let router = routes::build_router(AppState {
         config: config.clone(),
         pool: pool.clone(),
@@ -70,6 +73,7 @@ async fn main() -> anyhow::Result<()> {
         pool.clone(),
         config.torrent.sync_interval_secs,
     );
+    spawn_current_season_refresh_loop(yuc_for_sync, bangumi_for_sync, pool.clone());
     telemetry::spawn_terminal_dashboard(
         &config.telemetry,
         metrics,
@@ -126,6 +130,48 @@ fn spawn_download_sync_loop(
             }
         }
     });
+}
+
+fn spawn_current_season_refresh_loop(
+    yuc: YucClient,
+    bangumi: BangumiClient,
+    pool: sqlx::SqlitePool,
+) {
+    tokio::spawn(async move {
+        if let Err(error) =
+            season_catalog::sync_current_season_catalog_now(&yuc, &pool, &bangumi).await
+        {
+            warn!(error = %error, "Current season refresh loop failed during startup");
+        }
+
+        loop {
+            time::sleep(next_tokyo_midnight_delay()).await;
+
+            if let Err(error) =
+                season_catalog::sync_current_season_catalog_now(&yuc, &pool, &bangumi).await
+            {
+                warn!(error = %error, "Current season refresh loop failed");
+            }
+        }
+    });
+}
+
+fn next_tokyo_midnight_delay() -> Duration {
+    let tokyo_offset = FixedOffset::east_opt(9 * 3600).expect("valid tokyo utc offset");
+    let now_tokyo = Utc::now().with_timezone(&tokyo_offset);
+    let next_day = now_tokyo
+        .date_naive()
+        .succ_opt()
+        .expect("valid next tokyo date");
+    let next_midnight = next_day
+        .and_hms_opt(0, 0, 0)
+        .expect("valid tokyo midnight")
+        .and_local_timezone(tokyo_offset)
+        .single()
+        .expect("valid tokyo midnight with fixed offset")
+        .with_timezone(&Utc);
+    let wait_seconds = (next_midnight - Utc::now()).num_seconds().max(60) as u64;
+    Duration::from_secs(wait_seconds)
 }
 
 async fn shutdown_signal() {
