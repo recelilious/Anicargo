@@ -169,6 +169,14 @@ struct ResourceLibraryRow {
     updated_at: String,
 }
 
+#[derive(Debug, FromRow)]
+struct SubjectEpisodeAvailabilityRow {
+    episode_index: Option<f64>,
+    episode_end_index: Option<f64>,
+    is_collection: i64,
+    status: String,
+}
+
 pub struct NewDownloadJob {
     pub bangumi_subject_id: i64,
     pub trigger_kind: String,
@@ -279,6 +287,14 @@ pub struct RuntimeOverview {
     pub download_rate_bytes: i64,
     pub upload_rate_bytes: i64,
     pub peer_count: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct SubjectEpisodeAvailability {
+    pub episode_index: Option<f64>,
+    pub episode_end_index: Option<f64>,
+    pub is_collection: bool,
+    pub status: String,
 }
 
 pub async fn connect_and_migrate(config: &AppConfig) -> anyhow::Result<SqlitePool> {
@@ -1790,6 +1806,45 @@ pub async fn list_download_execution_events(
     .map_err(|_| AppError::internal("failed to list download execution events"))?;
 
     Ok(rows.into_iter().map(map_download_execution_event).collect())
+}
+
+pub async fn list_subject_episode_availability(
+    pool: &SqlitePool,
+    bangumi_subject_id: i64,
+) -> Result<Vec<SubjectEpisodeAvailability>, AppError> {
+    let rows = sqlx::query_as::<_, SubjectEpisodeAvailabilityRow>(
+        "SELECT
+            media_inventory.episode_index,
+            media_inventory.episode_end_index,
+            media_inventory.is_collection,
+            media_inventory.status
+         FROM media_inventory
+         INNER JOIN download_executions
+            ON download_executions.id = media_inventory.download_execution_id
+         WHERE media_inventory.bangumi_subject_id = ?1
+           AND media_inventory.status IN ('ready', 'partial')
+           AND download_executions.state IN ('starting', 'downloading', 'completed', 'seeding')
+         ORDER BY CASE media_inventory.status
+             WHEN 'ready' THEN 0
+             ELSE 1
+         END ASC,
+         media_inventory.updated_at DESC,
+         media_inventory.id DESC",
+    )
+    .bind(bangumi_subject_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to list subject episode availability"))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| SubjectEpisodeAvailability {
+            episode_index: row.episode_index,
+            episode_end_index: row.episode_end_index,
+            is_collection: row.is_collection != 0,
+            status: row.status,
+        })
+        .collect())
 }
 
 pub async fn list_resource_library_items(

@@ -15,7 +15,7 @@ use crate::{
     auth::{
         AdminIdentity, ViewerIdentity, extract_admin_token, extract_device_id, extract_user_token,
     },
-    bangumi::{BangumiClient, BangumiSearchQuery, SearchFacets},
+    bangumi::{BangumiClient, BangumiSearchQuery, EpisodeRaw, SearchFacets},
     config::AppConfig,
     db,
     discovery::ResourceDiscoveryCoordinator,
@@ -249,9 +249,10 @@ async fn subject_detail(
     let viewer = resolve_optional_viewer(&state.pool, &headers, device_id.as_deref()).await?;
     let policy = db::load_policy(&state.pool).await?;
 
-    let (subject, episodes) = tokio::try_join!(
+    let (subject, episodes, episode_availability) = tokio::try_join!(
         state.bangumi.fetch_subject(subject_id),
-        state.bangumi.fetch_episodes(subject_id)
+        state.bangumi.fetch_episodes(subject_id),
+        db::list_subject_episode_availability(&state.pool, subject_id)
     )?;
 
     let (is_subscribed, subscription_count) = if let Some(viewer) = viewer.as_ref() {
@@ -266,7 +267,11 @@ async fn subject_detail(
         subject,
         episodes: episodes
             .into_iter()
-            .map(|episode| episode.to_dto())
+            .map(|episode| {
+                let (is_available, availability_note) =
+                    resolve_episode_availability(&episode, &episode_availability);
+                episode.to_dto(is_available, availability_note)
+            })
             .collect(),
         subscription: SubscriptionStateDto {
             is_subscribed,
@@ -866,6 +871,45 @@ fn parse_broadcast_time(value: Option<&str>) -> Option<u16> {
     let hour = hour.parse::<u16>().ok()?;
     let minute = minute.parse::<u16>().ok()?;
     Some(hour * 60 + minute)
+}
+
+fn resolve_episode_availability(
+    episode: &EpisodeRaw,
+    availability: &[db::SubjectEpisodeAvailability],
+) -> (bool, Option<String>) {
+    let Some(episode_number) = episode.preferred_episode_number() else {
+        return (false, Some("资源尚未建立剧集映射".to_owned()));
+    };
+
+    if availability
+        .iter()
+        .any(|item| item.status == "ready" && availability_covers_episode(item, episode_number))
+    {
+        return (true, Some("已入库".to_owned()));
+    }
+
+    if availability
+        .iter()
+        .any(|item| item.status == "partial" && availability_covers_episode(item, episode_number))
+    {
+        return (false, Some("资源下载中".to_owned()));
+    }
+
+    (false, Some("资源尚未入库".to_owned()))
+}
+
+fn availability_covers_episode(item: &db::SubjectEpisodeAvailability, episode_number: f64) -> bool {
+    let Some(start) = item.episode_index else {
+        return false;
+    };
+    let end = item.episode_end_index.unwrap_or(start);
+    let epsilon = if item.is_collection {
+        0.001
+    } else {
+        f64::EPSILON
+    };
+
+    episode_number + epsilon >= start && episode_number - epsilon <= end
 }
 
 fn format_runtime_duration(duration: std::time::Duration) -> String {

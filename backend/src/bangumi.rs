@@ -624,7 +624,11 @@ impl SubjectRaw {
 }
 
 impl EpisodeRaw {
-    pub fn to_dto(&self) -> EpisodeDto {
+    pub fn preferred_episode_number(&self) -> Option<f64> {
+        self.ep.or(self.sort).filter(|value| *value > 0.0)
+    }
+
+    pub fn to_dto(&self, is_available: bool, availability_note: Option<String>) -> EpisodeDto {
         EpisodeDto {
             bangumi_episode_id: self.id,
             sort: self.sort.unwrap_or_default(),
@@ -637,8 +641,8 @@ impl EpisodeRaw {
                 Some(self.airdate.clone())
             },
             duration_seconds: self.duration_seconds,
-            is_available: false,
-            availability_note: Some("资源尚未入库，后续会由订阅与下载策略驱动。".to_owned()),
+            is_available,
+            availability_note,
         }
     }
 }
