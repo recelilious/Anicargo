@@ -14,6 +14,7 @@ mod yuc;
 
 use anyhow::Context;
 use std::sync::Arc;
+use tokio::signal;
 use tokio::time::{self, Duration, MissedTickBehavior};
 use tracing::warn;
 
@@ -76,8 +77,12 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Anicargo backend listening on http://{}", address);
     axum::serve(listener, router)
+        .with_graceful_shutdown(shutdown_signal())
         .await
-        .context("server exited unexpectedly")
+        .context("server exited unexpectedly")?;
+
+    tracing::info!("Anicargo backend stopped");
+    Ok(())
 }
 
 async fn build_download_engine(
@@ -115,4 +120,54 @@ fn spawn_download_sync_loop(
             }
         }
     });
+}
+
+async fn shutdown_signal() {
+    #[cfg(windows)]
+    {
+        let ctrl_break = async {
+            match signal::windows::ctrl_break() {
+                Ok(mut stream) => {
+                    stream.recv().await;
+                }
+                Err(error) => {
+                    warn!(error = %error, "Failed to install Ctrl+Break shutdown handler");
+                    std::future::pending::<()>().await;
+                }
+            }
+        };
+
+        tokio::select! {
+            result = signal::ctrl_c() => {
+                if let Err(error) = result {
+                    warn!(error = %error, "Failed to listen for Ctrl+C shutdown signal");
+                }
+            }
+            _ = ctrl_break => {}
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let terminate = async {
+            match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+                Ok(mut stream) => {
+                    stream.recv().await;
+                }
+                Err(error) => {
+                    warn!(error = %error, "Failed to install SIGTERM shutdown handler");
+                    std::future::pending::<()>().await;
+                }
+            }
+        };
+
+        tokio::select! {
+            result = signal::ctrl_c() => {
+                if let Err(error) = result {
+                    warn!(error = %error, "Failed to listen for Ctrl+C shutdown signal");
+                }
+            }
+            _ = terminate => {}
+        }
+    }
 }

@@ -1,7 +1,4 @@
-use std::{
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
-};
+use std::time::Duration;
 
 use anyhow::Context;
 use chrono::{Local, NaiveDate};
@@ -12,7 +9,7 @@ use tracing::warn;
 
 use crate::{
     config::BangumiConfig,
-    types::{AppError, EpisodeDto, InfoboxItemDto, SubjectCardDto, SubjectDetailDto, WeekdayDto},
+    types::{AppError, EpisodeDto, InfoboxItemDto, SubjectCardDto, SubjectDetailDto},
 };
 
 #[derive(Clone)]
@@ -20,16 +17,7 @@ pub struct BangumiClient {
     base_url: String,
     http: Client,
     user_agent: String,
-    calendar_cache: Arc<Mutex<Option<CachedCalendar>>>,
 }
-
-#[derive(Clone)]
-struct CachedCalendar {
-    fetched_at: Instant,
-    days: Vec<CalendarDayRaw>,
-}
-
-const CALENDAR_CACHE_TTL: Duration = Duration::from_secs(300);
 
 impl BangumiClient {
     pub fn new(config: &BangumiConfig) -> anyhow::Result<Self> {
@@ -42,49 +30,7 @@ impl BangumiClient {
             base_url: config.base_url.trim_end_matches('/').to_owned(),
             http,
             user_agent: config.user_agent.clone(),
-            calendar_cache: Arc::new(Mutex::new(None)),
         })
-    }
-
-    pub async fn fetch_calendar(&self) -> Result<Vec<CalendarDayRaw>, AppError> {
-        if let Some(days) = self.load_fresh_calendar_cache() {
-            return Ok(days);
-        }
-
-        let url = format!("{}/calendar", self.base_url);
-        let response = self
-            .send_request(
-                self.http
-                    .get(&url)
-                    .header(reqwest::header::USER_AGENT, &self.user_agent),
-                "calendar",
-                &url,
-            )
-            .await;
-
-        let days = match response {
-            Ok(response) => self.parse_calendar_response(response, &url).await,
-            Err(error) => Err(error),
-        };
-
-        match days {
-            Ok(days) => {
-                self.store_calendar_cache(&days);
-                Ok(days)
-            }
-            Err(error) => {
-                if let Some(days) = self.load_any_calendar_cache() {
-                    warn!(
-                        error = %error,
-                        cached_items = days.len(),
-                        "Bangumi calendar fetch failed; serving stale calendar cache"
-                    );
-                    return Ok(days);
-                }
-
-                Err(error)
-            }
-        }
     }
 
     pub async fn search_subjects(
@@ -181,46 +127,6 @@ impl BangumiClient {
             .map(|payload| payload.data)
     }
 
-    fn load_fresh_calendar_cache(&self) -> Option<Vec<CalendarDayRaw>> {
-        let cache = self.calendar_cache.lock().ok()?;
-        let cached = cache.as_ref()?;
-        (cached.fetched_at.elapsed() <= CALENDAR_CACHE_TTL).then(|| cached.days.clone())
-    }
-
-    fn load_any_calendar_cache(&self) -> Option<Vec<CalendarDayRaw>> {
-        self.calendar_cache
-            .lock()
-            .ok()
-            .and_then(|cache| cache.as_ref().map(|cached| cached.days.clone()))
-    }
-
-    fn store_calendar_cache(&self, days: &[CalendarDayRaw]) {
-        if let Ok(mut cache) = self.calendar_cache.lock() {
-            *cache = Some(CachedCalendar {
-                fetched_at: Instant::now(),
-                days: days.to_vec(),
-            });
-        }
-    }
-
-    async fn parse_calendar_response(
-        &self,
-        response: Response,
-        url: &str,
-    ) -> Result<Vec<CalendarDayRaw>, AppError> {
-        if !response.status().is_success() {
-            return Err(self.calendar_status_error(response, url).await);
-        }
-
-        response
-            .json::<Vec<CalendarDayRaw>>()
-            .await
-            .map_err(|error| {
-                warn!(url = %url, error = %error, "Failed to parse Bangumi calendar response");
-                AppError::upstream("failed to parse Bangumi calendar response")
-            })
-    }
-
     async fn send_request(
         &self,
         request: reqwest::RequestBuilder,
@@ -231,17 +137,6 @@ impl BangumiClient {
             warn!(action, url = %url, error = %error, "Failed to reach Bangumi");
             AppError::upstream(format!("failed to reach Bangumi {action}"))
         })
-    }
-
-    async fn calendar_status_error(&self, response: Response, url: &str) -> AppError {
-        let (status, body) = read_upstream_error(response).await;
-        warn!(
-            url = %url,
-            status = %status,
-            body = %body,
-            "Bangumi calendar returned an unsuccessful response"
-        );
-        AppError::upstream("Bangumi calendar returned an error")
     }
 
     async fn search_status_error(&self, response: Response, url: &str) -> AppError {
@@ -308,20 +203,6 @@ async fn read_upstream_error(response: Response) -> (StatusCode, String) {
         .take(240)
         .collect::<String>();
     (status, body)
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct CalendarDayRaw {
-    pub weekday: WeekdayRaw,
-    pub items: Vec<SubjectRaw>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct WeekdayRaw {
-    pub id: u8,
-    pub cn: String,
-    pub en: String,
-    pub ja: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -483,24 +364,7 @@ pub struct InfoboxRaw {
     pub value: Value,
 }
 
-impl CalendarDayRaw {
-    pub fn to_weekday(&self) -> WeekdayDto {
-        WeekdayDto {
-            id: self.weekday.id,
-            cn: self.weekday.cn.clone(),
-            en: self.weekday.en.clone(),
-            ja: self.weekday.ja.clone(),
-        }
-    }
-}
-
 impl SubjectRaw {
-    pub fn to_calendar_card(&self) -> SubjectCardDto {
-        let mut card = self.base_card();
-        card.release_status = self.calendar_release_status().to_owned();
-        card
-    }
-
     pub fn to_card(&self) -> SubjectCardDto {
         let mut card = self.base_card();
         card.release_status = self.search_release_status().to_owned();
@@ -576,14 +440,6 @@ impl SubjectRaw {
                 .filter(|item| !item.value.is_empty())
                 .collect(),
             rating_score: self.rating.as_ref().and_then(|rating| rating.score),
-        }
-    }
-
-    fn calendar_release_status(&self) -> &'static str {
-        if self.is_upcoming() {
-            "upcoming"
-        } else {
-            "airing"
         }
     }
 
