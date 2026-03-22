@@ -29,23 +29,23 @@
 }
 
 :root[data-theme="dark"] {
-  --app-bg: #251713;
-  --app-rail: #301d18;
-  --app-surface-1: #4b2c23;
-  --app-surface-2: #40261f;
-  --app-surface-3: #362019;
-  --app-panel: #4b2c23;
-  --app-panel-subtle: #5a372d;
-  --app-fallback-hero: #4b2c23;
-  --app-border: #a38778;
-  --app-border-strong: #d6c3b2;
-  --app-selected-bg: #d6c3b2;
-  --app-selected-fg: #251713;
-  --app-muted: #e5d8cb;
-  --app-text: #fffaf6;
-  --app-focus-ring: #d6c3b2;
-  --app-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.30), 0 16px 32px rgba(0, 0, 0, 0.28);
-  --app-card-shadow-strong: 0 20px 44px rgba(0, 0, 0, 0.34);
+  --app-bg: #10151b;
+  --app-rail: #141b23;
+  --app-surface-1: #1a222d;
+  --app-surface-2: #202a36;
+  --app-surface-3: #263140;
+  --app-panel: #18202a;
+  --app-panel-subtle: #212c38;
+  --app-fallback-hero: #1a222d;
+  --app-border: #2f3a47;
+  --app-border-strong: #425264;
+  --app-selected-bg: #263443;
+  --app-selected-fg: #edf2f7;
+  --app-muted: #9eaab8;
+  --app-text: #edf2f7;
+  --app-focus-ring: #7e97b2;
+  --app-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.34), 0 18px 36px rgba(0, 0, 0, 0.30);
+  --app-card-shadow-strong: 0 24px 52px rgba(0, 0, 0, 0.36);
   color-scheme: dark;
 }
 
@@ -91,4 +91,9 @@ a {
 ::selection {
   color: #fcf7f2;
   background: #6b4d40;
+}
+
+:root[data-theme="dark"] ::selection {
+  color: #eef3f8;
+  background: #324355;
 }
