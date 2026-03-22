@@ -13,6 +13,7 @@ use crate::{
     types::{
         AdminCountsDto, AppError, DownloadExecutionDto, DownloadExecutionEventDto, DownloadJobDto,
         FansubRuleDto, PolicyDto, ResourceCandidateDto, ResourceLibraryItemDto,
+        SubjectDownloadStatusDto,
     },
 };
 
@@ -35,6 +36,17 @@ struct PolicyRow {
     subscription_threshold: i64,
     replacement_window_hours: i64,
     prefer_same_fansub: i64,
+}
+
+#[derive(Debug, FromRow)]
+struct DownloadSubjectRow {
+    bangumi_subject_id: i64,
+    release_status: String,
+    demand_state: String,
+    subscription_count: i64,
+    threshold_snapshot: i64,
+    last_queued_job_id: Option<i64>,
+    last_evaluated_at: String,
 }
 
 #[derive(Debug, FromRow)]
@@ -1046,6 +1058,116 @@ pub async fn mark_download_subject_queued(
     Ok(())
 }
 
+pub async fn subject_download_status(
+    pool: &SqlitePool,
+    bangumi_subject_id: i64,
+) -> Result<Option<SubjectDownloadStatusDto>, AppError> {
+    let subject = sqlx::query_as::<_, DownloadSubjectRow>(
+        "SELECT
+            bangumi_subject_id,
+            release_status,
+            demand_state,
+            subscription_count,
+            threshold_snapshot,
+            last_queued_job_id,
+            last_evaluated_at
+         FROM download_subjects
+         WHERE bangumi_subject_id = ?1",
+    )
+    .bind(bangumi_subject_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to read download subject state"))?;
+
+    let Some(subject) = subject else {
+        return Ok(None);
+    };
+
+    let job = if let Some(job_id) = subject.last_queued_job_id {
+        download_job_by_id(pool, job_id).await?
+    } else {
+        find_open_download_job(pool, bangumi_subject_id).await?
+    };
+    let selected_candidate = if let Some(job) = job.as_ref() {
+        current_selected_candidate_for_job(pool, job.id).await?
+    } else {
+        None
+    };
+    let execution = if let Some(job) = job.as_ref() {
+        list_download_executions(pool, job.id)
+            .await?
+            .into_iter()
+            .find(|item| item.state != "replaced")
+    } else {
+        None
+    };
+    let (ready_media_count, latest_ready_episode, last_ready_at) =
+        sqlx::query_as::<_, (i64, Option<f64>, Option<String>)>(
+            "SELECT
+                COUNT(*),
+                MAX(COALESCE(episode_end_index, episode_index)),
+                MAX(updated_at)
+             FROM media_inventory
+             WHERE bangumi_subject_id = ?1
+               AND status = 'ready'",
+        )
+        .bind(bangumi_subject_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|_| AppError::internal("failed to aggregate subject media readiness"))?;
+
+    Ok(Some(SubjectDownloadStatusDto {
+        bangumi_subject_id: subject.bangumi_subject_id,
+        release_status: subject.release_status,
+        demand_state: subject.demand_state,
+        subscription_count: subject.subscription_count,
+        threshold_snapshot: subject.threshold_snapshot,
+        last_queued_job_id: job
+            .as_ref()
+            .map(|item| item.id)
+            .or(subject.last_queued_job_id),
+        job_lifecycle: job.as_ref().map(|item| item.lifecycle.clone()),
+        search_status: job.as_ref().map(|item| item.search_status.clone()),
+        selected_candidate_id: selected_candidate.as_ref().map(|item| item.id),
+        selected_title: selected_candidate.as_ref().map(|item| item.title.clone()),
+        execution_id: execution.as_ref().map(|item| item.id),
+        execution_state: execution.as_ref().map(|item| item.state.clone()),
+        source_title: execution
+            .as_ref()
+            .map(|item| item.source_title.clone())
+            .or_else(|| selected_candidate.as_ref().map(|item| item.title.clone())),
+        source_fansub_name: execution
+            .as_ref()
+            .and_then(|item| item.source_fansub_name.clone())
+            .or_else(|| {
+                selected_candidate
+                    .as_ref()
+                    .and_then(|item| item.fansub_name.clone())
+            }),
+        downloaded_bytes: execution
+            .as_ref()
+            .map(|item| item.downloaded_bytes)
+            .unwrap_or(0),
+        total_bytes: execution
+            .as_ref()
+            .map(|item| item.source_size_bytes.max(item.downloaded_bytes))
+            .unwrap_or(0),
+        download_rate_bytes: execution
+            .as_ref()
+            .map(|item| item.download_rate_bytes)
+            .unwrap_or(0),
+        upload_rate_bytes: execution
+            .as_ref()
+            .map(|item| item.upload_rate_bytes)
+            .unwrap_or(0),
+        peer_count: execution.as_ref().map(|item| item.peer_count).unwrap_or(0),
+        ready_media_count,
+        latest_ready_episode,
+        last_ready_at,
+        last_evaluated_at: subject.last_evaluated_at,
+    }))
+}
+
 pub async fn list_download_jobs(
     pool: &SqlitePool,
     limit: usize,
@@ -1509,6 +1631,7 @@ pub async fn update_download_execution_metrics(
     execution_id: i64,
     state: &str,
     downloaded_bytes: i64,
+    total_bytes: i64,
     uploaded_bytes: i64,
     download_rate_bytes: i64,
     upload_rate_bytes: i64,
@@ -1521,22 +1644,26 @@ pub async fn update_download_execution_metrics(
         "UPDATE download_executions
          SET state = ?2,
              downloaded_bytes = ?3,
-             uploaded_bytes = ?4,
-             download_rate_bytes = ?5,
-             upload_rate_bytes = ?6,
-             peer_count = ?7,
-             notes = COALESCE(?8, notes),
-             updated_at = ?9,
+             source_size_bytes = CASE
+                WHEN ?4 > 0 THEN MAX(?4, ?3)
+                ELSE MAX(source_size_bytes, ?3)
+             END,
+             uploaded_bytes = ?5,
+             download_rate_bytes = ?6,
+             upload_rate_bytes = ?7,
+             peer_count = ?8,
+             notes = COALESCE(?9, notes),
+             updated_at = ?10,
              started_at = CASE
-                WHEN ?2 IN ('starting', 'downloading', 'seeding') AND started_at IS NULL THEN ?9
+                WHEN ?2 IN ('starting', 'downloading', 'seeding') AND started_at IS NULL THEN ?10
                 ELSE started_at
              END,
              completed_at = CASE
-                WHEN ?2 IN ('completed', 'seeding') THEN COALESCE(completed_at, ?9)
+                WHEN ?2 IN ('completed', 'seeding') THEN COALESCE(completed_at, ?10)
                 ELSE completed_at
              END,
              failed_at = CASE
-                WHEN ?2 = 'failed' THEN COALESCE(failed_at, ?9)
+                WHEN ?2 = 'failed' THEN COALESCE(failed_at, ?10)
                 ELSE failed_at
              END
          WHERE id = ?1",
@@ -1544,6 +1671,7 @@ pub async fn update_download_execution_metrics(
     .bind(execution_id)
     .bind(state)
     .bind(downloaded_bytes)
+    .bind(total_bytes)
     .bind(uploaded_bytes)
     .bind(download_rate_bytes)
     .bind(upload_rate_bytes)

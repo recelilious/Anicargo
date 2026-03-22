@@ -217,6 +217,7 @@ pub struct SubjectDetailResponse {
     pub subject: SubjectDetailDto,
     pub episodes: Vec<EpisodeDto>,
     pub subscription: SubscriptionStateDto,
+    pub download_status: Option<SubjectDownloadStatusDto>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -265,6 +266,34 @@ pub struct SubscriptionStateDto {
     pub subscription_count: i64,
     pub threshold: i64,
     pub source: ViewerSummary,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubjectDownloadStatusDto {
+    pub bangumi_subject_id: i64,
+    pub release_status: String,
+    pub demand_state: String,
+    pub subscription_count: i64,
+    pub threshold_snapshot: i64,
+    pub last_queued_job_id: Option<i64>,
+    pub job_lifecycle: Option<String>,
+    pub search_status: Option<String>,
+    pub selected_candidate_id: Option<i64>,
+    pub selected_title: Option<String>,
+    pub execution_id: Option<i64>,
+    pub execution_state: Option<String>,
+    pub source_title: Option<String>,
+    pub source_fansub_name: Option<String>,
+    pub downloaded_bytes: i64,
+    pub total_bytes: i64,
+    pub download_rate_bytes: i64,
+    pub upload_rate_bytes: i64,
+    pub peer_count: i64,
+    pub ready_media_count: i64,
+    pub latest_ready_episode: Option<f64>,
+    pub last_ready_at: Option<String>,
+    pub last_evaluated_at: String,
 }
 
 #[derive(Debug, Serialize)]

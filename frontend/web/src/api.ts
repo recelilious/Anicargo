@@ -1,12 +1,19 @@
 import type {
   AdminAuthResponse,
   AdminDashboardResponse,
+  AdminRuntimeResponse,
   AuthResponse,
   BootstrapResponse,
   CalendarResponse,
+  DownloadExecution,
+  DownloadExecutionEvent,
+  DownloadJob,
   EpisodePlaybackResponse,
   Policy,
+  ResourceCandidate,
+  ResourceLibraryResponse,
   SearchResponse,
+  SubjectDownloadStatus,
   SubjectDetailResponse
 } from "./types";
 
@@ -69,6 +76,15 @@ export function fetchSubjectDetail(subjectId: number, deviceId: string, userToke
   return request<SubjectDetailResponse>(`/api/public/subjects/${subjectId}`, {}, deviceId, userToken ?? undefined);
 }
 
+export function fetchSubjectDownloadStatus(subjectId: number, deviceId: string, userToken: string | null) {
+  return request<SubjectDownloadStatus | null>(
+    `/api/public/subjects/${subjectId}/download-status`,
+    {},
+    deviceId,
+    userToken ?? undefined
+  );
+}
+
 export function fetchEpisodePlayback(subjectId: number, episodeId: number, deviceId: string, userToken: string | null) {
   return request<EpisodePlaybackResponse>(
     `/api/public/subjects/${subjectId}/episodes/${episodeId}/playback`,
@@ -114,6 +130,68 @@ export function adminLogin(username: string, password: string) {
 
 export function fetchAdminDashboard(deviceId: string, adminToken: string) {
   return request<AdminDashboardResponse>("/api/admin/dashboard", {}, deviceId, undefined, adminToken);
+}
+
+export function fetchAdminRuntime(deviceId: string, adminToken: string) {
+  return request<AdminRuntimeResponse>("/api/admin/runtime", {}, deviceId, undefined, adminToken);
+}
+
+export function fetchAdminDownloads(deviceId: string, adminToken: string) {
+  return request<{ items: DownloadJob[] }>("/api/admin/downloads", {}, deviceId, undefined, adminToken);
+}
+
+export function fetchAdminDownloadCandidates(deviceId: string, adminToken: string, jobId: number) {
+  return request<{ downloadJobId: number; items: ResourceCandidate[] }>(
+    `/api/admin/downloads/${jobId}/candidates`,
+    {},
+    deviceId,
+    undefined,
+    adminToken
+  );
+}
+
+export function fetchAdminDownloadExecutions(deviceId: string, adminToken: string, jobId: number) {
+  return request<{ downloadJobId: number; items: DownloadExecution[] }>(
+    `/api/admin/downloads/${jobId}/executions`,
+    {},
+    deviceId,
+    undefined,
+    adminToken
+  );
+}
+
+export function fetchAdminExecutionEvents(deviceId: string, adminToken: string, executionId: number) {
+  return request<{ downloadExecutionId: number; items: DownloadExecutionEvent[] }>(
+    `/api/admin/executions/${executionId}/events`,
+    {},
+    deviceId,
+    undefined,
+    adminToken
+  );
+}
+
+export function forceAdminDownload(deviceId: string, adminToken: string, subjectId: number) {
+  return request<{ bangumiSubjectId: number }>(
+    `/api/admin/downloads/${subjectId}/force`,
+    { method: "POST" },
+    deviceId,
+    undefined,
+    adminToken
+  );
+}
+
+export function activateAdminDownload(deviceId: string, adminToken: string, jobId: number) {
+  return request<{ downloadJobId: number }>(
+    `/api/admin/downloads/${jobId}/execute`,
+    { method: "POST" },
+    deviceId,
+    undefined,
+    adminToken
+  );
+}
+
+export function fetchResources(params: URLSearchParams, deviceId: string, userToken: string | null) {
+  return request<ResourceLibraryResponse>(`/api/public/resources?${params.toString()}`, {}, deviceId, userToken ?? undefined);
 }
 
 export function updatePolicy(deviceId: string, adminToken: string, policy: Policy) {

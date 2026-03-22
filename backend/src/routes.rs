@@ -59,6 +59,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/public/search", get(search))
         .route("/api/public/resources", get(resources))
         .route(
+            "/api/public/subjects/{subject_id}/download-status",
+            get(subject_download_status),
+        )
+        .route(
             "/api/public/subjects/{subject_id}/episodes/{episode_id}/playback",
             get(episode_playback),
         )
@@ -261,10 +265,11 @@ async fn subject_detail(
     let viewer = resolve_optional_viewer(&state.pool, &headers, device_id.as_deref()).await?;
     let policy = db::load_policy(&state.pool).await?;
 
-    let (subject, episodes, episode_availability) = tokio::try_join!(
+    let (subject, episodes, episode_availability, download_status) = tokio::try_join!(
         state.bangumi.fetch_subject(subject_id),
         state.bangumi.fetch_episodes(subject_id),
-        db::list_subject_episode_availability(&state.pool, subject_id)
+        db::list_subject_episode_availability(&state.pool, subject_id),
+        db::subject_download_status(&state.pool, subject_id)
     )?;
 
     let (is_subscribed, subscription_count) = if let Some(viewer) = viewer.as_ref() {
@@ -294,7 +299,22 @@ async fn subject_detail(
                 .map(viewer_to_summary)
                 .unwrap_or(ViewerSummary::device("guest-device".to_owned())),
         },
+        download_status: download_status,
     })))
+}
+
+async fn subject_download_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(subject_id): Path<i64>,
+) -> Result<Json<ApiEnvelope<Option<crate::types::SubjectDownloadStatusDto>>>, AppError> {
+    let device_id = extract_device_id(&headers);
+    if let Some(id) = device_id.as_ref() {
+        db::touch_device(&state.pool, id).await?;
+    }
+
+    let status = db::subject_download_status(&state.pool, subject_id).await?;
+    Ok(Json(ApiEnvelope::new(status)))
 }
 
 async fn episode_playback(
