@@ -312,11 +312,86 @@ pub struct AdminDownloadQueueResponse {
     pub items: Vec<DownloadJobDto>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadExecutionDto {
+    pub id: i64,
+    pub download_job_id: i64,
+    pub resource_candidate_id: i64,
+    pub bangumi_subject_id: i64,
+    pub engine_name: String,
+    pub engine_execution_ref: Option<String>,
+    pub execution_role: String,
+    pub state: String,
+    pub target_path: String,
+    pub source_title: String,
+    pub source_magnet: String,
+    pub source_size_bytes: i64,
+    pub source_fansub_name: Option<String>,
+    pub downloaded_bytes: i64,
+    pub uploaded_bytes: i64,
+    pub download_rate_bytes: i64,
+    pub upload_rate_bytes: i64,
+    pub peer_count: i64,
+    pub notes: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub replaced_at: Option<String>,
+    pub failed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadExecutionEventDto {
+    pub id: i64,
+    pub download_execution_id: i64,
+    pub level: String,
+    pub event_kind: String,
+    pub message: String,
+    pub downloaded_bytes: Option<i64>,
+    pub uploaded_bytes: Option<i64>,
+    pub download_rate_bytes: Option<i64>,
+    pub upload_rate_bytes: Option<i64>,
+    pub peer_count: Option<i64>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadExecutionDecisionDto {
+    pub reason: String,
+    pub execution: Option<DownloadExecutionDto>,
+    pub replaced_execution_id: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminDownloadExecutionsResponse {
+    pub download_job_id: i64,
+    pub items: Vec<DownloadExecutionDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminDownloadExecutionEventsResponse {
+    pub download_execution_id: i64,
+    pub items: Vec<DownloadExecutionEventDto>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ForceDownloadResponse {
     pub bangumi_subject_id: i64,
     pub decision: DownloadDecisionDto,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivateDownloadResponse {
+    pub download_job_id: i64,
+    pub decision: DownloadExecutionDecisionDto,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -433,6 +508,12 @@ pub struct RuntimeOverviewDto {
     pub jobs_with_selection: i64,
     pub running_searches: i64,
     pub resource_candidates: i64,
+    pub active_executions: i64,
+    pub downloaded_bytes: i64,
+    pub uploaded_bytes: i64,
+    pub download_rate_bytes: i64,
+    pub upload_rate_bytes: i64,
+    pub peer_count: i64,
 }
 
 #[derive(Debug, Serialize)]

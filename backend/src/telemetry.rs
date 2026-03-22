@@ -236,11 +236,17 @@ pub fn spawn_terminal_dashboard(
 
             buffer.push_str("Downloads\n");
             buffer.push_str(&format!(
-                "  Open Jobs       : {}\n  Selected Source : {}\n  Search Running  : {}\n  Candidates      : {}\n\n",
+                "  Open Jobs       : {}\n  Selected Source : {}\n  Search Running  : {}\n  Candidates      : {}\n  Active Exec     : {}\n  DL Total        : {}\n  UL Total        : {}\n  DL Rate         : {}/s\n  UL Rate         : {}/s\n  Peers           : {}\n\n",
                 overview.open_download_jobs,
                 overview.jobs_with_selection,
                 overview.running_searches,
                 overview.resource_candidates,
+                overview.active_executions,
+                human_bytes(overview.downloaded_bytes as u64),
+                human_bytes(overview.uploaded_bytes as u64),
+                human_bytes(overview.download_rate_bytes as u64),
+                human_bytes(overview.upload_rate_bytes as u64),
+                overview.peer_count,
             ));
 
             buffer.push_str("Logs\n");

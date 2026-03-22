@@ -22,12 +22,14 @@ use crate::{
     downloads::{DownloadCoordinator, DownloadDemandInput},
     telemetry::{self, RuntimeMetrics},
     types::{
-        AdminDashboardResponse, AdminDownloadCandidatesResponse, AdminDownloadQueueResponse,
-        AdminRuntimeResponse, ApiEnvelope, AppError, AuthResponse, BootstrapResponse,
-        CalendarDayDto, CalendarResponse, CredentialsRequest, FansubRuleDto, ForceDownloadResponse,
-        HealthResponse, RuntimeHttpStatsDto, RuntimeOverviewDto, SearchRequest, SearchResponse,
-        SubjectCardDto, SubjectDetailDto, SubjectDetailResponse, SubscriptionStateDto,
-        ToggleSubscriptionResponse, UpdatePolicyRequest, UpsertFansubRuleRequest, ViewerSummary,
+        ActivateDownloadResponse, AdminDashboardResponse, AdminDownloadCandidatesResponse,
+        AdminDownloadExecutionEventsResponse, AdminDownloadExecutionsResponse,
+        AdminDownloadQueueResponse, AdminRuntimeResponse, ApiEnvelope, AppError, AuthResponse,
+        BootstrapResponse, CalendarDayDto, CalendarResponse, CredentialsRequest, FansubRuleDto,
+        ForceDownloadResponse, HealthResponse, RuntimeHttpStatsDto, RuntimeOverviewDto,
+        SearchRequest, SearchResponse, SubjectCardDto, SubjectDetailDto, SubjectDetailResponse,
+        SubscriptionStateDto, ToggleSubscriptionResponse, UpdatePolicyRequest,
+        UpsertFansubRuleRequest, ViewerSummary,
     },
     yuc::YucClient,
 };
@@ -66,8 +68,20 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/admin/runtime", get(admin_runtime))
         .route("/api/admin/downloads", get(admin_download_queue))
         .route(
+            "/api/admin/downloads/{job_id}/execute",
+            post(admin_activate_download),
+        )
+        .route(
             "/api/admin/downloads/{job_id}/candidates",
             get(admin_download_candidates),
+        )
+        .route(
+            "/api/admin/downloads/{job_id}/executions",
+            get(admin_download_executions),
+        )
+        .route(
+            "/api/admin/executions/{execution_id}/events",
+            get(admin_download_execution_events),
         )
         .route(
             "/api/admin/downloads/{subject_id}/force",
@@ -277,17 +291,37 @@ async fn toggle_subscription(
     if download.reason == "queued_threshold_job" {
         if let Some(job) = download.job.as_ref() {
             let discovery_profile = profile.to_discovery_profile();
-            if let Err(error) = state
+            match state
                 .discovery
                 .discover_for_job(&state.pool, job, &discovery_profile, &policy)
                 .await
             {
-                tracing::warn!(
-                    job_id = job.id,
-                    subject_id,
-                    error = %error,
-                    "Resource discovery failed after subscription-triggered queueing"
-                );
+                Ok(_) => {
+                    if let Err(error) = state
+                        .downloads
+                        .materialize_selected_candidate(
+                            &state.pool,
+                            &state.config.storage.media_root,
+                            job.id,
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            job_id = job.id,
+                            subject_id,
+                            error = %error,
+                            "Download execution activation failed after subscription-triggered queueing"
+                        );
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        job_id = job.id,
+                        subject_id,
+                        error = %error,
+                        "Resource discovery failed after subscription-triggered queueing"
+                    );
+                }
             }
         }
     }
@@ -462,6 +496,12 @@ async fn admin_runtime(
             jobs_with_selection: overview.jobs_with_selection,
             running_searches: overview.running_searches,
             resource_candidates: overview.resource_candidates,
+            active_executions: overview.active_executions,
+            downloaded_bytes: overview.downloaded_bytes,
+            uploaded_bytes: overview.uploaded_bytes,
+            download_rate_bytes: overview.download_rate_bytes,
+            upload_rate_bytes: overview.upload_rate_bytes,
+            peer_count: overview.peer_count,
         },
     })))
 }
@@ -478,6 +518,53 @@ async fn admin_download_candidates(
         download_job_id: job_id,
         items,
     })))
+}
+
+async fn admin_activate_download(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(job_id): Path<i64>,
+) -> Result<Json<ApiEnvelope<ActivateDownloadResponse>>, AppError> {
+    require_admin(&state.pool, &headers).await?;
+    let decision = state
+        .downloads
+        .materialize_selected_candidate(&state.pool, &state.config.storage.media_root, job_id)
+        .await?;
+
+    Ok(Json(ApiEnvelope::new(ActivateDownloadResponse {
+        download_job_id: job_id,
+        decision,
+    })))
+}
+
+async fn admin_download_executions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(job_id): Path<i64>,
+) -> Result<Json<ApiEnvelope<AdminDownloadExecutionsResponse>>, AppError> {
+    require_admin(&state.pool, &headers).await?;
+    let items = state.downloads.list_executions(&state.pool, job_id).await?;
+
+    Ok(Json(ApiEnvelope::new(AdminDownloadExecutionsResponse {
+        download_job_id: job_id,
+        items,
+    })))
+}
+
+async fn admin_download_execution_events(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(execution_id): Path<i64>,
+) -> Result<Json<ApiEnvelope<AdminDownloadExecutionEventsResponse>>, AppError> {
+    require_admin(&state.pool, &headers).await?;
+    let items = db::list_download_execution_events(&state.pool, execution_id).await?;
+
+    Ok(Json(ApiEnvelope::new(
+        AdminDownloadExecutionEventsResponse {
+            download_execution_id: execution_id,
+            items,
+        },
+    )))
 }
 
 async fn force_download_job(
@@ -507,17 +594,37 @@ async fn force_download_job(
 
     if let Some(job) = decision.job.as_ref() {
         let discovery_profile = profile.to_discovery_profile();
-        if let Err(error) = state
+        match state
             .discovery
             .discover_for_job(&state.pool, job, &discovery_profile, &policy)
             .await
         {
-            tracing::warn!(
-                job_id = job.id,
-                subject_id,
-                error = %error,
-                "Resource discovery failed after admin force queueing"
-            );
+            Ok(_) => {
+                if let Err(error) = state
+                    .downloads
+                    .materialize_selected_candidate(
+                        &state.pool,
+                        &state.config.storage.media_root,
+                        job.id,
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        job_id = job.id,
+                        subject_id,
+                        error = %error,
+                        "Download execution activation failed after admin force queueing"
+                    );
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    job_id = job.id,
+                    subject_id,
+                    error = %error,
+                    "Resource discovery failed after admin force queueing"
+                );
+            }
         }
     }
 

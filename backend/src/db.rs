@@ -11,7 +11,8 @@ use crate::{
     auth::{AdminIdentity, ViewerIdentity, generate_token, hash_password, verify_password},
     config::{AppConfig, AuthConfig},
     types::{
-        AdminCountsDto, AppError, DownloadJobDto, FansubRuleDto, PolicyDto, ResourceCandidateDto,
+        AdminCountsDto, AppError, DownloadExecutionDto, DownloadExecutionEventDto, DownloadJobDto,
+        FansubRuleDto, PolicyDto, ResourceCandidateDto,
     },
 };
 
@@ -92,6 +93,50 @@ struct ResourceCandidateRow {
     discovered_at: String,
 }
 
+#[derive(Debug, FromRow)]
+struct DownloadExecutionRow {
+    id: i64,
+    download_job_id: i64,
+    resource_candidate_id: i64,
+    bangumi_subject_id: i64,
+    engine_name: String,
+    engine_execution_ref: Option<String>,
+    execution_role: String,
+    state: String,
+    target_path: String,
+    source_title: String,
+    source_magnet: String,
+    source_size_bytes: i64,
+    source_fansub_name: Option<String>,
+    downloaded_bytes: i64,
+    uploaded_bytes: i64,
+    download_rate_bytes: i64,
+    upload_rate_bytes: i64,
+    peer_count: i64,
+    notes: Option<String>,
+    created_at: String,
+    updated_at: String,
+    started_at: Option<String>,
+    completed_at: Option<String>,
+    replaced_at: Option<String>,
+    failed_at: Option<String>,
+}
+
+#[derive(Debug, FromRow)]
+struct DownloadExecutionEventRow {
+    id: i64,
+    download_execution_id: i64,
+    level: String,
+    event_kind: String,
+    message: String,
+    downloaded_bytes: Option<i64>,
+    uploaded_bytes: Option<i64>,
+    download_rate_bytes: Option<i64>,
+    upload_rate_bytes: Option<i64>,
+    peer_count: Option<i64>,
+    created_at: String,
+}
+
 pub struct NewDownloadJob {
     pub bangumi_subject_id: i64,
     pub trigger_kind: String,
@@ -128,6 +173,39 @@ pub struct NewResourceCandidate {
     pub rejected_reason: Option<String>,
 }
 
+pub struct NewDownloadExecution {
+    pub download_job_id: i64,
+    pub resource_candidate_id: i64,
+    pub bangumi_subject_id: i64,
+    pub engine_name: String,
+    pub engine_execution_ref: Option<String>,
+    pub execution_role: String,
+    pub state: String,
+    pub target_path: String,
+    pub source_title: String,
+    pub source_magnet: String,
+    pub source_size_bytes: i64,
+    pub source_fansub_name: Option<String>,
+    pub downloaded_bytes: i64,
+    pub uploaded_bytes: i64,
+    pub download_rate_bytes: i64,
+    pub upload_rate_bytes: i64,
+    pub peer_count: i64,
+    pub notes: Option<String>,
+}
+
+pub struct NewDownloadExecutionEvent {
+    pub download_execution_id: i64,
+    pub level: String,
+    pub event_kind: String,
+    pub message: String,
+    pub downloaded_bytes: Option<i64>,
+    pub uploaded_bytes: Option<i64>,
+    pub download_rate_bytes: Option<i64>,
+    pub upload_rate_bytes: Option<i64>,
+    pub peer_count: Option<i64>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeOverview {
     pub devices: i64,
@@ -138,6 +216,12 @@ pub struct RuntimeOverview {
     pub jobs_with_selection: i64,
     pub running_searches: i64,
     pub resource_candidates: i64,
+    pub active_executions: i64,
+    pub downloaded_bytes: i64,
+    pub uploaded_bytes: i64,
+    pub download_rate_bytes: i64,
+    pub upload_rate_bytes: i64,
+    pub peer_count: i64,
 }
 
 pub async fn connect_and_migrate(config: &AppConfig) -> anyhow::Result<SqlitePool> {
@@ -603,7 +687,7 @@ pub async fn runtime_overview(pool: &SqlitePool) -> Result<RuntimeOverview, AppE
         + count(pool, "SELECT COUNT(*) FROM user_subscriptions").await?;
     let open_download_jobs = count(
         pool,
-        "SELECT COUNT(*) FROM download_jobs WHERE lifecycle IN ('pending', 'queued', 'planning', 'searching', 'downloading', 'seeding')",
+        "SELECT COUNT(*) FROM download_jobs WHERE lifecycle IN ('pending', 'queued', 'planning', 'searching', 'staged', 'downloading', 'seeding')",
     )
     .await?;
     let jobs_with_selection = count(
@@ -617,6 +701,36 @@ pub async fn runtime_overview(pool: &SqlitePool) -> Result<RuntimeOverview, AppE
     )
     .await?;
     let resource_candidates = count(pool, "SELECT COUNT(*) FROM resource_candidates").await?;
+    let active_executions = count(
+        pool,
+        "SELECT COUNT(*) FROM download_executions WHERE state IN ('staged', 'starting', 'downloading', 'seeding')",
+    )
+    .await?;
+    let downloaded_bytes = sum_i64(
+        pool,
+        "SELECT COALESCE(SUM(downloaded_bytes), 0) FROM download_executions WHERE state IN ('staged', 'starting', 'downloading', 'seeding')",
+    )
+    .await?;
+    let uploaded_bytes = sum_i64(
+        pool,
+        "SELECT COALESCE(SUM(uploaded_bytes), 0) FROM download_executions WHERE state IN ('staged', 'starting', 'downloading', 'seeding')",
+    )
+    .await?;
+    let download_rate_bytes = sum_i64(
+        pool,
+        "SELECT COALESCE(SUM(download_rate_bytes), 0) FROM download_executions WHERE state IN ('staged', 'starting', 'downloading', 'seeding')",
+    )
+    .await?;
+    let upload_rate_bytes = sum_i64(
+        pool,
+        "SELECT COALESCE(SUM(upload_rate_bytes), 0) FROM download_executions WHERE state IN ('staged', 'starting', 'downloading', 'seeding')",
+    )
+    .await?;
+    let peer_count = sum_i64(
+        pool,
+        "SELECT COALESCE(SUM(peer_count), 0) FROM download_executions WHERE state IN ('staged', 'starting', 'downloading', 'seeding')",
+    )
+    .await?;
 
     Ok(RuntimeOverview {
         devices,
@@ -627,6 +741,12 @@ pub async fn runtime_overview(pool: &SqlitePool) -> Result<RuntimeOverview, AppE
         jobs_with_selection,
         running_searches,
         resource_candidates,
+        active_executions,
+        downloaded_bytes,
+        uploaded_bytes,
+        download_rate_bytes,
+        upload_rate_bytes,
+        peer_count,
     })
 }
 
@@ -721,7 +841,7 @@ pub async fn find_open_download_job(
             updated_at
          FROM download_jobs
          WHERE bangumi_subject_id = ?1
-           AND lifecycle IN ('pending', 'queued', 'planning', 'searching', 'downloading', 'seeding')
+           AND lifecycle IN ('pending', 'queued', 'planning', 'searching', 'staged', 'downloading', 'seeding')
          ORDER BY created_at DESC
          LIMIT 1",
     )
@@ -729,6 +849,41 @@ pub async fn find_open_download_job(
     .fetch_optional(pool)
     .await
     .map_err(|_| AppError::internal("failed to query open download job"))?;
+
+    Ok(row.map(map_download_job))
+}
+
+pub async fn download_job_by_id(
+    pool: &SqlitePool,
+    job_id: i64,
+) -> Result<Option<DownloadJobDto>, AppError> {
+    let row = sqlx::query_as::<_, DownloadJobRow>(
+        "SELECT
+            id,
+            bangumi_subject_id,
+            trigger_kind,
+            requested_by,
+            release_status,
+            season_mode,
+            lifecycle,
+            subscription_count,
+            threshold_snapshot,
+            engine_name,
+            engine_job_ref,
+            notes,
+            selected_candidate_id,
+            selection_updated_at,
+            last_search_run_id,
+            search_status,
+            created_at,
+            updated_at
+         FROM download_jobs
+         WHERE id = ?1",
+    )
+    .bind(job_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to read download job"))?;
 
     Ok(row.map(map_download_job))
 }
@@ -853,6 +1008,40 @@ pub async fn list_download_jobs(
     .map_err(|_| AppError::internal("failed to list download jobs"))?;
 
     Ok(rows.into_iter().map(map_download_job).collect())
+}
+
+pub async fn update_download_job_lifecycle(
+    pool: &SqlitePool,
+    download_job_id: i64,
+    lifecycle: &str,
+    notes: Option<&str>,
+) -> Result<(), AppError> {
+    let now = now_string();
+
+    sqlx::query(
+        "UPDATE download_jobs
+         SET lifecycle = ?2,
+             notes = COALESCE(?3, notes),
+             updated_at = ?4,
+             started_at = CASE
+                WHEN ?2 IN ('staged', 'downloading', 'seeding') AND started_at IS NULL THEN ?4
+                ELSE started_at
+             END,
+             completed_at = CASE
+                WHEN ?2 IN ('completed', 'failed', 'cancelled', 'replaced') THEN ?4
+                ELSE completed_at
+             END
+         WHERE id = ?1",
+    )
+    .bind(download_job_id)
+    .bind(lifecycle)
+    .bind(notes)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to update download job lifecycle"))?;
+
+    Ok(())
 }
 
 pub async fn start_resource_search_run(
@@ -1196,11 +1385,397 @@ pub async fn list_resource_candidates(
     Ok(rows.into_iter().map(map_resource_candidate).collect())
 }
 
+pub async fn find_active_execution_for_job(
+    pool: &SqlitePool,
+    download_job_id: i64,
+) -> Result<Option<DownloadExecutionDto>, AppError> {
+    let row = sqlx::query_as::<_, DownloadExecutionRow>(
+        "SELECT
+            id,
+            download_job_id,
+            resource_candidate_id,
+            bangumi_subject_id,
+            engine_name,
+            engine_execution_ref,
+            execution_role,
+            state,
+            target_path,
+            source_title,
+            source_magnet,
+            source_size_bytes,
+            source_fansub_name,
+            downloaded_bytes,
+            uploaded_bytes,
+            download_rate_bytes,
+            upload_rate_bytes,
+            peer_count,
+            notes,
+            created_at,
+            updated_at,
+            started_at,
+            completed_at,
+            replaced_at,
+            failed_at
+         FROM download_executions
+         WHERE download_job_id = ?1
+           AND state IN ('staged', 'starting', 'downloading', 'seeding')
+         ORDER BY created_at DESC
+         LIMIT 1",
+    )
+    .bind(download_job_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to read active download execution"))?;
+
+    Ok(row.map(map_download_execution))
+}
+
+pub async fn find_execution_for_job_candidate(
+    pool: &SqlitePool,
+    download_job_id: i64,
+    resource_candidate_id: i64,
+) -> Result<Option<DownloadExecutionDto>, AppError> {
+    let row = sqlx::query_as::<_, DownloadExecutionRow>(
+        "SELECT
+            id,
+            download_job_id,
+            resource_candidate_id,
+            bangumi_subject_id,
+            engine_name,
+            engine_execution_ref,
+            execution_role,
+            state,
+            target_path,
+            source_title,
+            source_magnet,
+            source_size_bytes,
+            source_fansub_name,
+            downloaded_bytes,
+            uploaded_bytes,
+            download_rate_bytes,
+            upload_rate_bytes,
+            peer_count,
+            notes,
+            created_at,
+            updated_at,
+            started_at,
+            completed_at,
+            replaced_at,
+            failed_at
+         FROM download_executions
+         WHERE download_job_id = ?1 AND resource_candidate_id = ?2
+         ORDER BY created_at DESC
+         LIMIT 1",
+    )
+    .bind(download_job_id)
+    .bind(resource_candidate_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to read candidate execution"))?;
+
+    Ok(row.map(map_download_execution))
+}
+
+pub async fn create_download_execution(
+    pool: &SqlitePool,
+    execution: NewDownloadExecution,
+) -> Result<DownloadExecutionDto, AppError> {
+    let now = now_string();
+    let result = sqlx::query(
+        "INSERT INTO download_executions (
+            download_job_id,
+            resource_candidate_id,
+            bangumi_subject_id,
+            engine_name,
+            engine_execution_ref,
+            execution_role,
+            state,
+            target_path,
+            source_title,
+            source_magnet,
+            source_size_bytes,
+            source_fansub_name,
+            downloaded_bytes,
+            uploaded_bytes,
+            download_rate_bytes,
+            upload_rate_bytes,
+            peer_count,
+            notes,
+            created_at,
+            updated_at,
+            started_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?19,
+                   CASE WHEN ?7 IN ('staged', 'starting', 'downloading', 'seeding') THEN ?19 ELSE NULL END)",
+    )
+    .bind(execution.download_job_id)
+    .bind(execution.resource_candidate_id)
+    .bind(execution.bangumi_subject_id)
+    .bind(&execution.engine_name)
+    .bind(execution.engine_execution_ref.as_deref())
+    .bind(&execution.execution_role)
+    .bind(&execution.state)
+    .bind(&execution.target_path)
+    .bind(&execution.source_title)
+    .bind(&execution.source_magnet)
+    .bind(execution.source_size_bytes)
+    .bind(execution.source_fansub_name.as_deref())
+    .bind(execution.downloaded_bytes)
+    .bind(execution.uploaded_bytes)
+    .bind(execution.download_rate_bytes)
+    .bind(execution.upload_rate_bytes)
+    .bind(execution.peer_count)
+    .bind(execution.notes.as_deref())
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to create download execution"))?;
+
+    let row = sqlx::query_as::<_, DownloadExecutionRow>(
+        "SELECT
+            id,
+            download_job_id,
+            resource_candidate_id,
+            bangumi_subject_id,
+            engine_name,
+            engine_execution_ref,
+            execution_role,
+            state,
+            target_path,
+            source_title,
+            source_magnet,
+            source_size_bytes,
+            source_fansub_name,
+            downloaded_bytes,
+            uploaded_bytes,
+            download_rate_bytes,
+            upload_rate_bytes,
+            peer_count,
+            notes,
+            created_at,
+            updated_at,
+            started_at,
+            completed_at,
+            replaced_at,
+            failed_at
+         FROM download_executions
+         WHERE id = ?1",
+    )
+    .bind(result.last_insert_rowid())
+    .fetch_one(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to read download execution"))?;
+
+    Ok(map_download_execution(row))
+}
+
+#[allow(dead_code)]
+pub async fn update_download_execution_metrics(
+    pool: &SqlitePool,
+    execution_id: i64,
+    state: &str,
+    downloaded_bytes: i64,
+    uploaded_bytes: i64,
+    download_rate_bytes: i64,
+    upload_rate_bytes: i64,
+    peer_count: i64,
+    notes: Option<&str>,
+) -> Result<(), AppError> {
+    let now = now_string();
+
+    sqlx::query(
+        "UPDATE download_executions
+         SET state = ?2,
+             downloaded_bytes = ?3,
+             uploaded_bytes = ?4,
+             download_rate_bytes = ?5,
+             upload_rate_bytes = ?6,
+             peer_count = ?7,
+             notes = COALESCE(?8, notes),
+             updated_at = ?9
+         WHERE id = ?1",
+    )
+    .bind(execution_id)
+    .bind(state)
+    .bind(downloaded_bytes)
+    .bind(uploaded_bytes)
+    .bind(download_rate_bytes)
+    .bind(upload_rate_bytes)
+    .bind(peer_count)
+    .bind(notes)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to update download execution"))?;
+
+    Ok(())
+}
+
+pub async fn mark_download_execution_replaced(
+    pool: &SqlitePool,
+    execution_id: i64,
+    notes: Option<&str>,
+) -> Result<(), AppError> {
+    let now = now_string();
+
+    sqlx::query(
+        "UPDATE download_executions
+         SET state = 'replaced',
+             notes = COALESCE(?2, notes),
+             updated_at = ?3,
+             replaced_at = ?3
+         WHERE id = ?1",
+    )
+    .bind(execution_id)
+    .bind(notes)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to mark download execution as replaced"))?;
+
+    Ok(())
+}
+
+pub async fn list_download_executions(
+    pool: &SqlitePool,
+    download_job_id: i64,
+) -> Result<Vec<DownloadExecutionDto>, AppError> {
+    let rows = sqlx::query_as::<_, DownloadExecutionRow>(
+        "SELECT
+            id,
+            download_job_id,
+            resource_candidate_id,
+            bangumi_subject_id,
+            engine_name,
+            engine_execution_ref,
+            execution_role,
+            state,
+            target_path,
+            source_title,
+            source_magnet,
+            source_size_bytes,
+            source_fansub_name,
+            downloaded_bytes,
+            uploaded_bytes,
+            download_rate_bytes,
+            upload_rate_bytes,
+            peer_count,
+            notes,
+            created_at,
+            updated_at,
+            started_at,
+            completed_at,
+            replaced_at,
+            failed_at
+         FROM download_executions
+         WHERE download_job_id = ?1
+         ORDER BY created_at DESC",
+    )
+    .bind(download_job_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to list download executions"))?;
+
+    Ok(rows.into_iter().map(map_download_execution).collect())
+}
+
+pub async fn create_download_execution_event(
+    pool: &SqlitePool,
+    event: NewDownloadExecutionEvent,
+) -> Result<DownloadExecutionEventDto, AppError> {
+    let now = now_string();
+    let result = sqlx::query(
+        "INSERT INTO download_execution_events (
+            download_execution_id,
+            level,
+            event_kind,
+            message,
+            downloaded_bytes,
+            uploaded_bytes,
+            download_rate_bytes,
+            upload_rate_bytes,
+            peer_count,
+            created_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+    )
+    .bind(event.download_execution_id)
+    .bind(&event.level)
+    .bind(&event.event_kind)
+    .bind(&event.message)
+    .bind(event.downloaded_bytes)
+    .bind(event.uploaded_bytes)
+    .bind(event.download_rate_bytes)
+    .bind(event.upload_rate_bytes)
+    .bind(event.peer_count)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to create download execution event"))?;
+
+    let row = sqlx::query_as::<_, DownloadExecutionEventRow>(
+        "SELECT
+            id,
+            download_execution_id,
+            level,
+            event_kind,
+            message,
+            downloaded_bytes,
+            uploaded_bytes,
+            download_rate_bytes,
+            upload_rate_bytes,
+            peer_count,
+            created_at
+         FROM download_execution_events
+         WHERE id = ?1",
+    )
+    .bind(result.last_insert_rowid())
+    .fetch_one(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to read download execution event"))?;
+
+    Ok(map_download_execution_event(row))
+}
+
+pub async fn list_download_execution_events(
+    pool: &SqlitePool,
+    download_execution_id: i64,
+) -> Result<Vec<DownloadExecutionEventDto>, AppError> {
+    let rows = sqlx::query_as::<_, DownloadExecutionEventRow>(
+        "SELECT
+            id,
+            download_execution_id,
+            level,
+            event_kind,
+            message,
+            downloaded_bytes,
+            uploaded_bytes,
+            download_rate_bytes,
+            upload_rate_bytes,
+            peer_count,
+            created_at
+         FROM download_execution_events
+         WHERE download_execution_id = ?1
+         ORDER BY created_at DESC",
+    )
+    .bind(download_execution_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to list download execution events"))?;
+
+    Ok(rows.into_iter().map(map_download_execution_event).collect())
+}
+
 async fn count(pool: &SqlitePool, query: &str) -> Result<i64, AppError> {
     sqlx::query_scalar::<_, i64>(query)
         .fetch_one(pool)
         .await
         .map_err(|_| AppError::internal("failed to count rows"))
+}
+
+async fn sum_i64(pool: &SqlitePool, query: &str) -> Result<i64, AppError> {
+    sqlx::query_scalar::<_, i64>(query)
+        .fetch_one(pool)
+        .await
+        .map_err(|_| AppError::internal("failed to aggregate rows"))
 }
 
 async fn create_user_session(
@@ -1303,5 +1878,51 @@ fn map_resource_candidate(row: ResourceCandidateRow) -> ResourceCandidateDto {
         score: row.score,
         rejected_reason: row.rejected_reason,
         discovered_at: row.discovered_at,
+    }
+}
+
+fn map_download_execution(row: DownloadExecutionRow) -> DownloadExecutionDto {
+    DownloadExecutionDto {
+        id: row.id,
+        download_job_id: row.download_job_id,
+        resource_candidate_id: row.resource_candidate_id,
+        bangumi_subject_id: row.bangumi_subject_id,
+        engine_name: row.engine_name,
+        engine_execution_ref: row.engine_execution_ref,
+        execution_role: row.execution_role,
+        state: row.state,
+        target_path: row.target_path,
+        source_title: row.source_title,
+        source_magnet: row.source_magnet,
+        source_size_bytes: row.source_size_bytes,
+        source_fansub_name: row.source_fansub_name,
+        downloaded_bytes: row.downloaded_bytes,
+        uploaded_bytes: row.uploaded_bytes,
+        download_rate_bytes: row.download_rate_bytes,
+        upload_rate_bytes: row.upload_rate_bytes,
+        peer_count: row.peer_count,
+        notes: row.notes,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        started_at: row.started_at,
+        completed_at: row.completed_at,
+        replaced_at: row.replaced_at,
+        failed_at: row.failed_at,
+    }
+}
+
+fn map_download_execution_event(row: DownloadExecutionEventRow) -> DownloadExecutionEventDto {
+    DownloadExecutionEventDto {
+        id: row.id,
+        download_execution_id: row.download_execution_id,
+        level: row.level,
+        event_kind: row.event_kind,
+        message: row.message,
+        downloaded_bytes: row.downloaded_bytes,
+        uploaded_bytes: row.uploaded_bytes,
+        download_rate_bytes: row.download_rate_bytes,
+        upload_rate_bytes: row.upload_rate_bytes,
+        peer_count: row.peer_count,
+        created_at: row.created_at,
     }
 }
