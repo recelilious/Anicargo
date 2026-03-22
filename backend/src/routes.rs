@@ -26,10 +26,10 @@ use crate::{
         AdminDownloadExecutionEventsResponse, AdminDownloadExecutionsResponse,
         AdminDownloadQueueResponse, AdminRuntimeResponse, ApiEnvelope, AppError, AuthResponse,
         BootstrapResponse, CalendarDayDto, CalendarResponse, CredentialsRequest, FansubRuleDto,
-        ForceDownloadResponse, HealthResponse, RuntimeHttpStatsDto, RuntimeOverviewDto,
-        SearchRequest, SearchResponse, SubjectCardDto, SubjectDetailDto, SubjectDetailResponse,
-        SubscriptionStateDto, ToggleSubscriptionResponse, UpdatePolicyRequest,
-        UpsertFansubRuleRequest, ViewerSummary,
+        ForceDownloadResponse, HealthResponse, ResourceLibraryRequest, ResourceLibraryResponse,
+        RuntimeHttpStatsDto, RuntimeOverviewDto, SearchRequest, SearchResponse, SubjectCardDto,
+        SubjectDetailDto, SubjectDetailResponse, SubscriptionStateDto, ToggleSubscriptionResponse,
+        UpdatePolicyRequest, UpsertFansubRuleRequest, ViewerSummary,
     },
     yuc::YucClient,
 };
@@ -53,6 +53,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/public/bootstrap", get(bootstrap))
         .route("/api/public/calendar", get(calendar))
         .route("/api/public/search", get(search))
+        .route("/api/public/resources", get(resources))
         .route("/api/public/subjects/{subject_id}", get(subject_detail))
         .route(
             "/api/public/subscriptions/{subject_id}/toggle",
@@ -208,6 +209,26 @@ async fn search(
     Ok(Json(ApiEnvelope::new(SearchResponse {
         items: paged_items,
         facets: SearchFacets { years, tags },
+        total,
+        page,
+        page_size,
+        has_next_page: offset + page_size < total,
+    })))
+}
+
+async fn resources(
+    State(state): State<AppState>,
+    Query(request): Query<ResourceLibraryRequest>,
+) -> Result<Json<ApiEnvelope<ResourceLibraryResponse>>, AppError> {
+    let page = request.page.unwrap_or(1).max(1);
+    let page_size = request.page_size.unwrap_or(30).clamp(1, 60);
+    let offset = (page - 1) * page_size;
+    let (total, items) =
+        db::list_resource_library_items(&state.pool, request.keyword.as_deref(), page_size, offset)
+            .await?;
+
+    Ok(Json(ApiEnvelope::new(ResourceLibraryResponse {
+        items,
         total,
         page,
         page_size,

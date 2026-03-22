@@ -2,6 +2,7 @@ use std::{fs, path::Path, sync::Arc};
 
 use anyhow::{Context, anyhow};
 use async_trait::async_trait;
+use chrono::{DateTime, Duration, Utc};
 use librqbit::api::TorrentIdOrHash;
 use librqbit::{
     AddTorrent, AddTorrentOptions, Session, SessionOptions, SessionPersistenceConfig, TorrentStats,
@@ -12,6 +13,7 @@ use tracing::{info, warn};
 
 use crate::{
     db,
+    media::{ParsedReleaseSlot, scan_video_files},
     types::{
         AppError, DownloadDecisionDto, DownloadExecutionDecisionDto, DownloadExecutionDto,
         DownloadJobDto,
@@ -526,7 +528,8 @@ impl DownloadCoordinator {
             }
         }
 
-        let replaced_execution = db::find_active_execution_for_job(pool, job_id).await?;
+        let replaced_execution =
+            db::find_active_execution_for_job_slot(pool, job_id, &candidate.slot_key).await?;
         let execution_role = if replaced_execution.is_some() {
             "replacement"
         } else {
@@ -591,6 +594,7 @@ impl DownloadCoordinator {
                 Some("Superseded by a higher priority resource candidate"),
             )
             .await?;
+            db::delete_media_inventory_for_execution(pool, previous.id).await?;
             db::create_download_execution_event(
                 pool,
                 db::NewDownloadExecutionEvent {
@@ -617,6 +621,10 @@ impl DownloadCoordinator {
                 download_job_id: job.id,
                 resource_candidate_id: candidate.id,
                 bangumi_subject_id: job.bangumi_subject_id,
+                slot_key: candidate.slot_key.clone(),
+                episode_index: candidate.episode_index,
+                episode_end_index: candidate.episode_end_index,
+                is_collection: candidate.is_collection,
                 engine_name: self.engine.name().to_owned(),
                 engine_execution_ref: accepted.engine_execution_ref,
                 execution_role,
@@ -695,6 +703,10 @@ impl DownloadCoordinator {
                         snapshot.notes.as_deref(),
                     )
                     .await?;
+
+                    if should_refresh_media_index(&execution, &snapshot.state) {
+                        sync_execution_media_inventory(pool, &execution, &snapshot.state).await?;
+                    }
 
                     if execution.state != snapshot.state {
                         db::create_download_execution_event(
@@ -776,6 +788,57 @@ impl DownloadCoordinator {
     }
 }
 
+async fn sync_execution_media_inventory(
+    pool: &SqlitePool,
+    execution: &DownloadExecutionDto,
+    state: &str,
+) -> Result<(), AppError> {
+    let fallback_slot = ParsedReleaseSlot {
+        slot_key: execution.slot_key.clone(),
+        episode_index: execution.episode_index,
+        episode_end_index: execution.episode_end_index,
+        is_collection: execution.is_collection,
+    };
+    let status = if matches!(state, "seeding" | "completed") {
+        "ready"
+    } else {
+        "partial"
+    };
+    let files =
+        scan_video_files(Path::new(&execution.target_path), &fallback_slot).map_err(|error| {
+            warn!(
+                execution_id = execution.id,
+                path = %execution.target_path,
+                error = %error,
+                "Failed to scan execution media files"
+            );
+            AppError::internal("failed to scan downloaded media files")
+        })?;
+    let items = files
+        .into_iter()
+        .map(|file| db::NewMediaInventoryItem {
+            bangumi_subject_id: execution.bangumi_subject_id,
+            download_job_id: execution.download_job_id,
+            download_execution_id: execution.id,
+            resource_candidate_id: execution.resource_candidate_id,
+            slot_key: execution.slot_key.clone(),
+            relative_path: file.relative_path,
+            absolute_path: file.absolute_path,
+            file_name: file.file_name,
+            file_ext: file.file_ext,
+            size_bytes: file.size_bytes,
+            episode_index: file.episode_index,
+            episode_end_index: file.episode_end_index,
+            is_collection: file.is_collection,
+            status: status.to_owned(),
+        })
+        .collect::<Vec<_>>();
+
+    db::replace_media_inventory_for_execution(pool, execution.id, &items).await?;
+    db::mark_download_execution_indexed(pool, execution.id).await?;
+    Ok(())
+}
+
 fn should_queue_job(subscription_count: i64, threshold: i64, force: bool) -> bool {
     force || (threshold > 0 && subscription_count >= threshold)
 }
@@ -810,6 +873,28 @@ fn ensure_execution_target_path(target_path: &str) -> Result<(), AppError> {
 
 fn is_active_execution_state(state: &str) -> bool {
     matches!(state, "staged" | "starting" | "downloading" | "seeding")
+}
+
+fn should_refresh_media_index(execution: &DownloadExecutionDto, state: &str) -> bool {
+    if !matches!(state, "downloading" | "seeding" | "completed") {
+        return false;
+    }
+
+    let Some(last_indexed_at) = execution.last_indexed_at.as_deref() else {
+        return true;
+    };
+
+    let Ok(parsed) = DateTime::parse_from_rfc3339(last_indexed_at) else {
+        return true;
+    };
+
+    let refresh_after = if matches!(state, "seeding" | "completed") {
+        Duration::seconds(60)
+    } else {
+        Duration::seconds(20)
+    };
+
+    Utc::now() >= parsed.with_timezone(&Utc) + refresh_after
 }
 
 fn map_rqbit_state(stats: &TorrentStats) -> String {

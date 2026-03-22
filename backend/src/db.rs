@@ -12,7 +12,7 @@ use crate::{
     config::{AppConfig, AuthConfig},
     types::{
         AdminCountsDto, AppError, DownloadExecutionDto, DownloadExecutionEventDto, DownloadJobDto,
-        FansubRuleDto, PolicyDto, ResourceCandidateDto,
+        FansubRuleDto, PolicyDto, ResourceCandidateDto, ResourceLibraryItemDto,
     },
 };
 
@@ -74,6 +74,10 @@ struct ResourceCandidateRow {
     download_job_id: i64,
     search_run_id: i64,
     bangumi_subject_id: i64,
+    slot_key: String,
+    episode_index: Option<f64>,
+    episode_end_index: Option<f64>,
+    is_collection: i64,
     provider: String,
     provider_resource_id: String,
     title: String,
@@ -99,6 +103,10 @@ struct DownloadExecutionRow {
     download_job_id: i64,
     resource_candidate_id: i64,
     bangumi_subject_id: i64,
+    slot_key: String,
+    episode_index: Option<f64>,
+    episode_end_index: Option<f64>,
+    is_collection: i64,
     engine_name: String,
     engine_execution_ref: Option<String>,
     execution_role: String,
@@ -120,6 +128,7 @@ struct DownloadExecutionRow {
     completed_at: Option<String>,
     replaced_at: Option<String>,
     failed_at: Option<String>,
+    last_indexed_at: Option<String>,
 }
 
 #[derive(Debug, FromRow)]
@@ -135,6 +144,29 @@ struct DownloadExecutionEventRow {
     upload_rate_bytes: Option<i64>,
     peer_count: Option<i64>,
     created_at: String,
+}
+
+#[derive(Debug, FromRow)]
+struct ResourceLibraryRow {
+    id: i64,
+    bangumi_subject_id: i64,
+    download_job_id: i64,
+    download_execution_id: i64,
+    resource_candidate_id: i64,
+    slot_key: String,
+    source_title: String,
+    source_fansub_name: Option<String>,
+    execution_state: String,
+    relative_path: String,
+    absolute_path: String,
+    file_name: String,
+    file_ext: String,
+    size_bytes: i64,
+    episode_index: Option<f64>,
+    episode_end_index: Option<f64>,
+    is_collection: i64,
+    status: String,
+    updated_at: String,
 }
 
 pub struct NewDownloadJob {
@@ -155,6 +187,10 @@ pub struct NewResourceCandidate {
     pub download_job_id: i64,
     pub search_run_id: i64,
     pub bangumi_subject_id: i64,
+    pub slot_key: String,
+    pub episode_index: Option<f64>,
+    pub episode_end_index: Option<f64>,
+    pub is_collection: bool,
     pub provider: String,
     pub provider_resource_id: String,
     pub title: String,
@@ -177,6 +213,10 @@ pub struct NewDownloadExecution {
     pub download_job_id: i64,
     pub resource_candidate_id: i64,
     pub bangumi_subject_id: i64,
+    pub slot_key: String,
+    pub episode_index: Option<f64>,
+    pub episode_end_index: Option<f64>,
+    pub is_collection: bool,
     pub engine_name: String,
     pub engine_execution_ref: Option<String>,
     pub execution_role: String,
@@ -204,6 +244,23 @@ pub struct NewDownloadExecutionEvent {
     pub download_rate_bytes: Option<i64>,
     pub upload_rate_bytes: Option<i64>,
     pub peer_count: Option<i64>,
+}
+
+pub struct NewMediaInventoryItem {
+    pub bangumi_subject_id: i64,
+    pub download_job_id: i64,
+    pub download_execution_id: i64,
+    pub resource_candidate_id: i64,
+    pub slot_key: String,
+    pub relative_path: String,
+    pub absolute_path: String,
+    pub file_name: String,
+    pub file_ext: String,
+    pub size_bytes: i64,
+    pub episode_index: Option<f64>,
+    pub episode_end_index: Option<f64>,
+    pub is_collection: bool,
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1142,6 +1199,10 @@ pub async fn create_resource_candidate(
             download_job_id,
             search_run_id,
             bangumi_subject_id,
+            slot_key,
+            episode_index,
+            episode_end_index,
+            is_collection,
             provider,
             provider_resource_id,
             title,
@@ -1159,9 +1220,13 @@ pub async fn create_resource_candidate(
             score,
             rejected_reason,
             discovered_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
          ON CONFLICT(download_job_id, provider, provider_resource_id) DO UPDATE SET
             search_run_id = excluded.search_run_id,
+            slot_key = excluded.slot_key,
+            episode_index = excluded.episode_index,
+            episode_end_index = excluded.episode_end_index,
+            is_collection = excluded.is_collection,
             title = excluded.title,
             href = excluded.href,
             magnet = excluded.magnet,
@@ -1181,6 +1246,10 @@ pub async fn create_resource_candidate(
     .bind(candidate.download_job_id)
     .bind(candidate.search_run_id)
     .bind(candidate.bangumi_subject_id)
+    .bind(&candidate.slot_key)
+    .bind(candidate.episode_index)
+    .bind(candidate.episode_end_index)
+    .bind(bool_to_int(candidate.is_collection))
     .bind(&candidate.provider)
     .bind(&candidate.provider_resource_id)
     .bind(&candidate.title)
@@ -1203,28 +1272,7 @@ pub async fn create_resource_candidate(
     .map_err(|_| AppError::internal("failed to create resource candidate"))?;
 
     let row = sqlx::query_as::<_, ResourceCandidateRow>(
-        "SELECT
-            id,
-            download_job_id,
-            search_run_id,
-            bangumi_subject_id,
-            provider,
-            provider_resource_id,
-            title,
-            href,
-            magnet,
-            release_type,
-            size_bytes,
-            fansub_name,
-            publisher_name,
-            source_created_at,
-            source_fetched_at,
-            resolution,
-            locale_hint,
-            is_raw,
-            score,
-            rejected_reason,
-            discovered_at
+        "SELECT *
          FROM resource_candidates
          WHERE download_job_id = ?1 AND provider = ?2 AND provider_resource_id = ?3",
     )
@@ -1271,28 +1319,7 @@ pub async fn current_selected_candidate_for_job(
     download_job_id: i64,
 ) -> Result<Option<ResourceCandidateDto>, AppError> {
     let row = sqlx::query_as::<_, ResourceCandidateRow>(
-        "SELECT
-            resource_candidates.id,
-            resource_candidates.download_job_id,
-            resource_candidates.search_run_id,
-            resource_candidates.bangumi_subject_id,
-            resource_candidates.provider,
-            resource_candidates.provider_resource_id,
-            resource_candidates.title,
-            resource_candidates.href,
-            resource_candidates.magnet,
-            resource_candidates.release_type,
-            resource_candidates.size_bytes,
-            resource_candidates.fansub_name,
-            resource_candidates.publisher_name,
-            resource_candidates.source_created_at,
-            resource_candidates.source_fetched_at,
-            resource_candidates.resolution,
-            resource_candidates.locale_hint,
-            resource_candidates.is_raw,
-            resource_candidates.score,
-            resource_candidates.rejected_reason,
-            resource_candidates.discovered_at
+        "SELECT resource_candidates.*
          FROM download_jobs
          INNER JOIN resource_candidates ON resource_candidates.id = download_jobs.selected_candidate_id
          WHERE download_jobs.id = ?1",
@@ -1310,28 +1337,7 @@ pub async fn latest_selected_candidate_for_subject(
     bangumi_subject_id: i64,
 ) -> Result<Option<ResourceCandidateDto>, AppError> {
     let row = sqlx::query_as::<_, ResourceCandidateRow>(
-        "SELECT
-            resource_candidates.id,
-            resource_candidates.download_job_id,
-            resource_candidates.search_run_id,
-            resource_candidates.bangumi_subject_id,
-            resource_candidates.provider,
-            resource_candidates.provider_resource_id,
-            resource_candidates.title,
-            resource_candidates.href,
-            resource_candidates.magnet,
-            resource_candidates.release_type,
-            resource_candidates.size_bytes,
-            resource_candidates.fansub_name,
-            resource_candidates.publisher_name,
-            resource_candidates.source_created_at,
-            resource_candidates.source_fetched_at,
-            resource_candidates.resolution,
-            resource_candidates.locale_hint,
-            resource_candidates.is_raw,
-            resource_candidates.score,
-            resource_candidates.rejected_reason,
-            resource_candidates.discovered_at
+        "SELECT resource_candidates.*
          FROM download_jobs
          INNER JOIN resource_candidates ON resource_candidates.id = download_jobs.selected_candidate_id
          WHERE download_jobs.bangumi_subject_id = ?1
@@ -1351,28 +1357,7 @@ pub async fn list_resource_candidates(
     download_job_id: i64,
 ) -> Result<Vec<ResourceCandidateDto>, AppError> {
     let rows = sqlx::query_as::<_, ResourceCandidateRow>(
-        "SELECT
-            id,
-            download_job_id,
-            search_run_id,
-            bangumi_subject_id,
-            provider,
-            provider_resource_id,
-            title,
-            href,
-            magnet,
-            release_type,
-            size_bytes,
-            fansub_name,
-            publisher_name,
-            source_created_at,
-            source_fetched_at,
-            resolution,
-            locale_hint,
-            is_raw,
-            score,
-            rejected_reason,
-            discovered_at
+        "SELECT *
          FROM resource_candidates
          WHERE download_job_id = ?1
          ORDER BY rejected_reason IS NOT NULL ASC, score DESC, source_created_at DESC",
@@ -1385,47 +1370,25 @@ pub async fn list_resource_candidates(
     Ok(rows.into_iter().map(map_resource_candidate).collect())
 }
 
-pub async fn find_active_execution_for_job(
+pub async fn find_active_execution_for_job_slot(
     pool: &SqlitePool,
     download_job_id: i64,
+    slot_key: &str,
 ) -> Result<Option<DownloadExecutionDto>, AppError> {
     let row = sqlx::query_as::<_, DownloadExecutionRow>(
-        "SELECT
-            id,
-            download_job_id,
-            resource_candidate_id,
-            bangumi_subject_id,
-            engine_name,
-            engine_execution_ref,
-            execution_role,
-            state,
-            target_path,
-            source_title,
-            source_magnet,
-            source_size_bytes,
-            source_fansub_name,
-            downloaded_bytes,
-            uploaded_bytes,
-            download_rate_bytes,
-            upload_rate_bytes,
-            peer_count,
-            notes,
-            created_at,
-            updated_at,
-            started_at,
-            completed_at,
-            replaced_at,
-            failed_at
+        "SELECT *
          FROM download_executions
          WHERE download_job_id = ?1
+           AND slot_key = ?2
            AND state IN ('staged', 'starting', 'downloading', 'seeding')
          ORDER BY created_at DESC
          LIMIT 1",
     )
     .bind(download_job_id)
+    .bind(slot_key)
     .fetch_optional(pool)
     .await
-    .map_err(|_| AppError::internal("failed to read active download execution"))?;
+    .map_err(|_| AppError::internal("failed to read active download execution by slot"))?;
 
     Ok(row.map(map_download_execution))
 }
@@ -1436,32 +1399,7 @@ pub async fn find_execution_for_job_candidate(
     resource_candidate_id: i64,
 ) -> Result<Option<DownloadExecutionDto>, AppError> {
     let row = sqlx::query_as::<_, DownloadExecutionRow>(
-        "SELECT
-            id,
-            download_job_id,
-            resource_candidate_id,
-            bangumi_subject_id,
-            engine_name,
-            engine_execution_ref,
-            execution_role,
-            state,
-            target_path,
-            source_title,
-            source_magnet,
-            source_size_bytes,
-            source_fansub_name,
-            downloaded_bytes,
-            uploaded_bytes,
-            download_rate_bytes,
-            upload_rate_bytes,
-            peer_count,
-            notes,
-            created_at,
-            updated_at,
-            started_at,
-            completed_at,
-            replaced_at,
-            failed_at
+        "SELECT *
          FROM download_executions
          WHERE download_job_id = ?1 AND resource_candidate_id = ?2
          ORDER BY created_at DESC
@@ -1486,6 +1424,10 @@ pub async fn create_download_execution(
             download_job_id,
             resource_candidate_id,
             bangumi_subject_id,
+            slot_key,
+            episode_index,
+            episode_end_index,
+            is_collection,
             engine_name,
             engine_execution_ref,
             execution_role,
@@ -1504,12 +1446,16 @@ pub async fn create_download_execution(
             created_at,
             updated_at,
             started_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?19,
-                   CASE WHEN ?7 IN ('staged', 'starting', 'downloading', 'seeding') THEN ?19 ELSE NULL END)",
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?23,
+                   CASE WHEN ?11 IN ('staged', 'starting', 'downloading', 'seeding') THEN ?23 ELSE NULL END)",
     )
     .bind(execution.download_job_id)
     .bind(execution.resource_candidate_id)
     .bind(execution.bangumi_subject_id)
+    .bind(&execution.slot_key)
+    .bind(execution.episode_index)
+    .bind(execution.episode_end_index)
+    .bind(bool_to_int(execution.is_collection))
     .bind(&execution.engine_name)
     .bind(execution.engine_execution_ref.as_deref())
     .bind(&execution.execution_role)
@@ -1531,34 +1477,7 @@ pub async fn create_download_execution(
     .map_err(|_| AppError::internal("failed to create download execution"))?;
 
     let row = sqlx::query_as::<_, DownloadExecutionRow>(
-        "SELECT
-            id,
-            download_job_id,
-            resource_candidate_id,
-            bangumi_subject_id,
-            engine_name,
-            engine_execution_ref,
-            execution_role,
-            state,
-            target_path,
-            source_title,
-            source_magnet,
-            source_size_bytes,
-            source_fansub_name,
-            downloaded_bytes,
-            uploaded_bytes,
-            download_rate_bytes,
-            upload_rate_bytes,
-            peer_count,
-            notes,
-            created_at,
-            updated_at,
-            started_at,
-            completed_at,
-            replaced_at,
-            failed_at
-         FROM download_executions
-         WHERE id = ?1",
+        "SELECT * FROM download_executions WHERE id = ?1",
     )
     .bind(result.last_insert_rowid())
     .fetch_one(pool)
@@ -1622,6 +1541,105 @@ pub async fn update_download_execution_metrics(
     Ok(())
 }
 
+pub async fn mark_download_execution_indexed(
+    pool: &SqlitePool,
+    execution_id: i64,
+) -> Result<(), AppError> {
+    let now = now_string();
+
+    sqlx::query(
+        "UPDATE download_executions
+         SET last_indexed_at = ?2,
+             updated_at = ?2
+         WHERE id = ?1",
+    )
+    .bind(execution_id)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to mark download execution as indexed"))?;
+
+    Ok(())
+}
+
+pub async fn replace_media_inventory_for_execution(
+    pool: &SqlitePool,
+    execution_id: i64,
+    items: &[NewMediaInventoryItem],
+) -> Result<(), AppError> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|_| AppError::internal("failed to start media inventory transaction"))?;
+
+    sqlx::query("DELETE FROM media_inventory WHERE download_execution_id = ?1")
+        .bind(execution_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| AppError::internal("failed to clear media inventory rows"))?;
+
+    for item in items {
+        let now = now_string();
+        sqlx::query(
+            "INSERT INTO media_inventory (
+                bangumi_subject_id,
+                download_job_id,
+                download_execution_id,
+                resource_candidate_id,
+                slot_key,
+                relative_path,
+                absolute_path,
+                file_name,
+                file_ext,
+                size_bytes,
+                episode_index,
+                episode_end_index,
+                is_collection,
+                status,
+                created_at,
+                updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)",
+        )
+        .bind(item.bangumi_subject_id)
+        .bind(item.download_job_id)
+        .bind(item.download_execution_id)
+        .bind(item.resource_candidate_id)
+        .bind(&item.slot_key)
+        .bind(&item.relative_path)
+        .bind(&item.absolute_path)
+        .bind(&item.file_name)
+        .bind(&item.file_ext)
+        .bind(item.size_bytes)
+        .bind(item.episode_index)
+        .bind(item.episode_end_index)
+        .bind(bool_to_int(item.is_collection))
+        .bind(&item.status)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| AppError::internal("failed to insert media inventory row"))?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|_| AppError::internal("failed to commit media inventory transaction"))?;
+
+    Ok(())
+}
+
+pub async fn delete_media_inventory_for_execution(
+    pool: &SqlitePool,
+    execution_id: i64,
+) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM media_inventory WHERE download_execution_id = ?1")
+        .bind(execution_id)
+        .execute(pool)
+        .await
+        .map_err(|_| AppError::internal("failed to delete media inventory rows"))?;
+
+    Ok(())
+}
+
 pub async fn list_active_download_executions(
     pool: &SqlitePool,
     engine_name: &str,
@@ -1629,32 +1647,7 @@ pub async fn list_active_download_executions(
 ) -> Result<Vec<DownloadExecutionDto>, AppError> {
     let limit = limit.clamp(1, 512) as i64;
     let rows = sqlx::query_as::<_, DownloadExecutionRow>(
-        "SELECT
-            id,
-            download_job_id,
-            resource_candidate_id,
-            bangumi_subject_id,
-            engine_name,
-            engine_execution_ref,
-            execution_role,
-            state,
-            target_path,
-            source_title,
-            source_magnet,
-            source_size_bytes,
-            source_fansub_name,
-            downloaded_bytes,
-            uploaded_bytes,
-            download_rate_bytes,
-            upload_rate_bytes,
-            peer_count,
-            notes,
-            created_at,
-            updated_at,
-            started_at,
-            completed_at,
-            replaced_at,
-            failed_at
+        "SELECT *
          FROM download_executions
          WHERE engine_name = ?1
            AND state IN ('staged', 'starting', 'downloading', 'seeding')
@@ -1700,32 +1693,7 @@ pub async fn list_download_executions(
     download_job_id: i64,
 ) -> Result<Vec<DownloadExecutionDto>, AppError> {
     let rows = sqlx::query_as::<_, DownloadExecutionRow>(
-        "SELECT
-            id,
-            download_job_id,
-            resource_candidate_id,
-            bangumi_subject_id,
-            engine_name,
-            engine_execution_ref,
-            execution_role,
-            state,
-            target_path,
-            source_title,
-            source_magnet,
-            source_size_bytes,
-            source_fansub_name,
-            downloaded_bytes,
-            uploaded_bytes,
-            download_rate_bytes,
-            upload_rate_bytes,
-            peer_count,
-            notes,
-            created_at,
-            updated_at,
-            started_at,
-            completed_at,
-            replaced_at,
-            failed_at
+        "SELECT *
          FROM download_executions
          WHERE download_job_id = ?1
          ORDER BY created_at DESC",
@@ -1822,6 +1790,78 @@ pub async fn list_download_execution_events(
     .map_err(|_| AppError::internal("failed to list download execution events"))?;
 
     Ok(rows.into_iter().map(map_download_execution_event).collect())
+}
+
+pub async fn list_resource_library_items(
+    pool: &SqlitePool,
+    keyword: Option<&str>,
+    limit: usize,
+    offset: usize,
+) -> Result<(usize, Vec<ResourceLibraryItemDto>), AppError> {
+    let limit = limit.clamp(1, 100) as i64;
+    let offset = offset.max(0) as i64;
+    let keyword = keyword
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("%{value}%"));
+
+    let total = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM media_inventory
+         INNER JOIN download_executions ON download_executions.id = media_inventory.download_execution_id
+         WHERE media_inventory.status = 'ready'
+           AND (?1 IS NULL
+                OR media_inventory.file_name LIKE ?1
+                OR download_executions.source_title LIKE ?1
+                OR CAST(media_inventory.bangumi_subject_id AS TEXT) LIKE ?1)",
+    )
+    .bind(keyword.as_deref())
+    .fetch_one(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to count resource library rows"))?;
+
+    let rows = sqlx::query_as::<_, ResourceLibraryRow>(
+        "SELECT
+            media_inventory.id,
+            media_inventory.bangumi_subject_id,
+            media_inventory.download_job_id,
+            media_inventory.download_execution_id,
+            media_inventory.resource_candidate_id,
+            media_inventory.slot_key,
+            download_executions.source_title,
+            download_executions.source_fansub_name,
+            download_executions.state AS execution_state,
+            media_inventory.relative_path,
+            media_inventory.absolute_path,
+            media_inventory.file_name,
+            media_inventory.file_ext,
+            media_inventory.size_bytes,
+            media_inventory.episode_index,
+            media_inventory.episode_end_index,
+            media_inventory.is_collection,
+            media_inventory.status,
+            media_inventory.updated_at
+         FROM media_inventory
+         INNER JOIN download_executions ON download_executions.id = media_inventory.download_execution_id
+         WHERE media_inventory.status = 'ready'
+           AND (?1 IS NULL
+                OR media_inventory.file_name LIKE ?1
+                OR download_executions.source_title LIKE ?1
+                OR CAST(media_inventory.bangumi_subject_id AS TEXT) LIKE ?1)
+         ORDER BY media_inventory.updated_at DESC, media_inventory.id DESC
+         LIMIT ?2 OFFSET ?3",
+    )
+    .bind(keyword.as_deref())
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to list resource library rows"))?;
+
+    Ok((
+        total.max(0) as usize,
+        rows.into_iter().map(map_resource_library_item).collect(),
+    ))
 }
 
 async fn count(pool: &SqlitePool, query: &str) -> Result<i64, AppError> {
@@ -1921,6 +1961,10 @@ fn map_resource_candidate(row: ResourceCandidateRow) -> ResourceCandidateDto {
         download_job_id: row.download_job_id,
         search_run_id: row.search_run_id,
         bangumi_subject_id: row.bangumi_subject_id,
+        slot_key: row.slot_key,
+        episode_index: row.episode_index,
+        episode_end_index: row.episode_end_index,
+        is_collection: row.is_collection != 0,
         provider: row.provider,
         provider_resource_id: row.provider_resource_id,
         title: row.title,
@@ -1947,6 +1991,10 @@ fn map_download_execution(row: DownloadExecutionRow) -> DownloadExecutionDto {
         download_job_id: row.download_job_id,
         resource_candidate_id: row.resource_candidate_id,
         bangumi_subject_id: row.bangumi_subject_id,
+        slot_key: row.slot_key,
+        episode_index: row.episode_index,
+        episode_end_index: row.episode_end_index,
+        is_collection: row.is_collection != 0,
         engine_name: row.engine_name,
         engine_execution_ref: row.engine_execution_ref,
         execution_role: row.execution_role,
@@ -1968,6 +2016,7 @@ fn map_download_execution(row: DownloadExecutionRow) -> DownloadExecutionDto {
         completed_at: row.completed_at,
         replaced_at: row.replaced_at,
         failed_at: row.failed_at,
+        last_indexed_at: row.last_indexed_at,
     }
 }
 
@@ -1984,5 +2033,29 @@ fn map_download_execution_event(row: DownloadExecutionEventRow) -> DownloadExecu
         upload_rate_bytes: row.upload_rate_bytes,
         peer_count: row.peer_count,
         created_at: row.created_at,
+    }
+}
+
+fn map_resource_library_item(row: ResourceLibraryRow) -> ResourceLibraryItemDto {
+    ResourceLibraryItemDto {
+        id: row.id,
+        bangumi_subject_id: row.bangumi_subject_id,
+        download_job_id: row.download_job_id,
+        download_execution_id: row.download_execution_id,
+        resource_candidate_id: row.resource_candidate_id,
+        slot_key: row.slot_key,
+        source_title: row.source_title,
+        source_fansub_name: row.source_fansub_name,
+        execution_state: row.execution_state,
+        relative_path: row.relative_path,
+        absolute_path: row.absolute_path,
+        file_name: row.file_name,
+        file_ext: row.file_ext,
+        size_bytes: row.size_bytes,
+        episode_index: row.episode_index,
+        episode_end_index: row.episode_end_index,
+        is_collection: row.is_collection != 0,
+        status: row.status,
+        updated_at: row.updated_at,
     }
 }

@@ -5,6 +5,7 @@ mod config;
 mod db;
 mod discovery;
 mod downloads;
+mod media;
 mod routes;
 mod telemetry;
 mod types;

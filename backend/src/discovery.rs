@@ -4,6 +4,7 @@ use sqlx::SqlitePool;
 use crate::{
     animegarden::{AnimeGardenClient, AnimeGardenResource, AnimeGardenSearchProfile},
     db::{self, NewResourceCandidate},
+    media::infer_release_slot,
     types::{AppError, DownloadJobDto, FansubRuleDto, PolicyDto, ResourceCandidateDto},
 };
 
@@ -36,6 +37,12 @@ impl ResourceDiscoveryCoordinator {
 
         let mut stored = Vec::new();
         for resource in search.resources {
+            let release_slot = infer_release_slot(
+                &resource.title,
+                &resource.release_type,
+                &resource.provider_id,
+                &job.release_status,
+            );
             let evaluation = evaluate_candidate(
                 &resource,
                 &rules,
@@ -58,6 +65,10 @@ impl ResourceDiscoveryCoordinator {
                     size_bytes: resource.size,
                     fansub_name: resource.fansub_name,
                     publisher_name: resource.publisher_name,
+                    slot_key: release_slot.slot_key,
+                    episode_index: release_slot.episode_index,
+                    episode_end_index: release_slot.episode_end_index,
+                    is_collection: release_slot.is_collection,
                     source_created_at: resource.created_at,
                     source_fetched_at: resource.fetched_at,
                     resolution: evaluation.resolution,
@@ -109,10 +120,8 @@ fn choose_candidate(
         .iter()
         .filter(|candidate| candidate.rejected_reason.is_none())
         .max_by(|left, right| {
-            left.score
-                .partial_cmp(&right.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| left.source_created_at.cmp(&right.source_created_at))
+            candidate_priority_key(left, &job.release_status)
+                .cmp(&candidate_priority_key(right, &job.release_status))
         });
 
     let Some(best) = best else {
@@ -132,24 +141,41 @@ fn choose_candidate(
     };
 
     if let Some(current) = current_selected {
-        if !within_replacement_window(
-            job.selection_updated_at.as_deref(),
-            policy.replacement_window_hours,
-        ) {
+        if current.slot_key == best.slot_key {
+            if !within_replacement_window(
+                job.selection_updated_at.as_deref(),
+                policy.replacement_window_hours,
+            ) {
+                return (
+                    Some(current.id),
+                    "retained",
+                    "Replacement window expired; retained existing selected candidate".to_owned(),
+                );
+            }
+
+            if candidate_priority_key(best, &job.release_status)
+                <= candidate_priority_key(current, &job.release_status)
+            {
+                return (
+                    Some(current.id),
+                    "retained",
+                    "Current selected candidate remains preferred within replacement window"
+                        .to_owned(),
+                );
+            }
+
             return (
-                Some(current.id),
-                "retained",
-                "Replacement window expired; retained existing selected candidate".to_owned(),
+                Some(best.id),
+                "selected",
+                "Selected a better candidate for the same episode slot".to_owned(),
             );
         }
 
-        if best.score <= current.score {
-            return (
-                Some(current.id),
-                "retained",
-                "Current selected candidate remains preferred within replacement window".to_owned(),
-            );
-        }
+        return (
+            Some(best.id),
+            "selected",
+            "Selected a newer resource slot without replacing the previous one".to_owned(),
+        );
     }
 
     (
@@ -157,6 +183,52 @@ fn choose_candidate(
         "selected",
         "Selected best available resource candidate".to_owned(),
     )
+}
+
+fn candidate_priority_key(
+    candidate: &ResourceCandidateDto,
+    release_status: &str,
+) -> (i64, i64, i64, i64) {
+    let slot_weight = match release_status {
+        "airing" | "upcoming" => {
+            if candidate.is_collection {
+                -1
+            } else {
+                candidate
+                    .episode_end_index
+                    .or(candidate.episode_index)
+                    .map(|value| (value * 100.0).round() as i64)
+                    .unwrap_or(0)
+            }
+        }
+        _ => {
+            if candidate.is_collection {
+                candidate
+                    .episode_end_index
+                    .or(candidate.episode_index)
+                    .map(|value| (value * 100.0).round() as i64 + 10_000)
+                    .unwrap_or(10_000)
+            } else {
+                candidate
+                    .episode_end_index
+                    .or(candidate.episode_index)
+                    .map(|value| (value * 100.0).round() as i64)
+                    .unwrap_or(0)
+            }
+        }
+    };
+    let score_weight = (candidate.score * 100.0).round() as i64;
+    let quality_weight = if candidate.is_collection { 1 } else { 0 };
+    let freshness_weight = candidate
+        .source_created_at
+        .chars()
+        .filter(|character| character.is_ascii_digit())
+        .take(14)
+        .collect::<String>()
+        .parse::<i64>()
+        .unwrap_or_default();
+
+    (slot_weight, score_weight, quality_weight, freshness_weight)
 }
 
 fn evaluate_candidate(

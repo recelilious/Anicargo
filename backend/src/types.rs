@@ -319,6 +319,10 @@ pub struct DownloadExecutionDto {
     pub download_job_id: i64,
     pub resource_candidate_id: i64,
     pub bangumi_subject_id: i64,
+    pub slot_key: String,
+    pub episode_index: Option<f64>,
+    pub episode_end_index: Option<f64>,
+    pub is_collection: bool,
     pub engine_name: String,
     pub engine_execution_ref: Option<String>,
     pub execution_role: String,
@@ -340,6 +344,7 @@ pub struct DownloadExecutionDto {
     pub completed_at: Option<String>,
     pub replaced_at: Option<String>,
     pub failed_at: Option<String>,
+    pub last_indexed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -401,6 +406,10 @@ pub struct ResourceCandidateDto {
     pub download_job_id: i64,
     pub search_run_id: i64,
     pub bangumi_subject_id: i64,
+    pub slot_key: String,
+    pub episode_index: Option<f64>,
+    pub episode_end_index: Option<f64>,
+    pub is_collection: bool,
     pub provider: String,
     pub provider_resource_id: String,
     pub title: String,
@@ -425,6 +434,51 @@ pub struct ResourceCandidateDto {
 pub struct AdminDownloadCandidatesResponse {
     pub download_job_id: i64,
     pub items: Vec<ResourceCandidateDto>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceLibraryRequest {
+    #[serde(default)]
+    pub keyword: Option<String>,
+    #[serde(default)]
+    pub page: Option<usize>,
+    #[serde(default)]
+    pub page_size: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceLibraryItemDto {
+    pub id: i64,
+    pub bangumi_subject_id: i64,
+    pub download_job_id: i64,
+    pub download_execution_id: i64,
+    pub resource_candidate_id: i64,
+    pub slot_key: String,
+    pub source_title: String,
+    pub source_fansub_name: Option<String>,
+    pub execution_state: String,
+    pub relative_path: String,
+    pub absolute_path: String,
+    pub file_name: String,
+    pub file_ext: String,
+    pub size_bytes: i64,
+    pub episode_index: Option<f64>,
+    pub episode_end_index: Option<f64>,
+    pub is_collection: bool,
+    pub status: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceLibraryResponse {
+    pub items: Vec<ResourceLibraryItemDto>,
+    pub total: usize,
+    pub page: usize,
+    pub page_size: usize,
+    pub has_next_page: bool,
 }
 
 #[derive(Debug, Deserialize)]
