@@ -1,6 +1,7 @@
 use std::{
     fs,
     io::{IsTerminal, Write},
+    path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
@@ -187,6 +188,7 @@ pub fn spawn_terminal_dashboard(
     metrics: Arc<RuntimeMetrics>,
     pool: SqlitePool,
     engine_name: String,
+    log_dir: PathBuf,
 ) {
     if !should_enable_terminal_ui(config) {
         return;
@@ -250,7 +252,14 @@ pub fn spawn_terminal_dashboard(
             ));
 
             buffer.push_str("Logs\n");
-            buffer.push_str("  Persistent log file: runtime/logs/anicargo-YYYY-MM-DD.log\n");
+            let current_log_file = log_dir.join(format!(
+                "anicargo.log.{}",
+                chrono::Local::now().format("%Y-%m-%d")
+            ));
+            buffer.push_str(&format!(
+                "  Persistent log file: {}\n",
+                current_log_file.display()
+            ));
 
             let _ = print_and_flush(&buffer);
         }

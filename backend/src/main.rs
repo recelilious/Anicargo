@@ -70,7 +70,13 @@ async fn main() -> anyhow::Result<()> {
         pool.clone(),
         config.torrent.sync_interval_secs,
     );
-    telemetry::spawn_terminal_dashboard(&config.telemetry, metrics, pool, download_engine_name);
+    telemetry::spawn_terminal_dashboard(
+        &config.telemetry,
+        metrics,
+        pool,
+        download_engine_name,
+        config.telemetry.log_dir.clone(),
+    );
     let listener = tokio::net::TcpListener::bind(&address)
         .await
         .with_context(|| format!("failed to bind server on {}", address))?;
