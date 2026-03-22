@@ -1847,6 +1847,125 @@ pub async fn list_subject_episode_availability(
         .collect())
 }
 
+pub async fn find_episode_playback_media(
+    pool: &SqlitePool,
+    bangumi_subject_id: i64,
+    episode_number: f64,
+) -> Result<Option<ResourceLibraryItemDto>, AppError> {
+    let row = sqlx::query_as::<_, ResourceLibraryRow>(
+        "SELECT
+            media_inventory.id,
+            media_inventory.bangumi_subject_id,
+            media_inventory.download_job_id,
+            media_inventory.download_execution_id,
+            media_inventory.resource_candidate_id,
+            media_inventory.slot_key,
+            download_executions.source_title,
+            download_executions.source_fansub_name,
+            download_executions.state AS execution_state,
+            media_inventory.relative_path,
+            media_inventory.absolute_path,
+            media_inventory.file_name,
+            media_inventory.file_ext,
+            media_inventory.size_bytes,
+            media_inventory.episode_index,
+            media_inventory.episode_end_index,
+            media_inventory.is_collection,
+            media_inventory.status,
+            media_inventory.updated_at
+         FROM media_inventory
+         INNER JOIN download_executions
+            ON download_executions.id = media_inventory.download_execution_id
+         WHERE media_inventory.bangumi_subject_id = ?1
+           AND media_inventory.status = 'ready'
+           AND download_executions.state IN ('completed', 'seeding')
+           AND media_inventory.episode_index IS NOT NULL
+           AND media_inventory.episode_index <= ?2
+           AND COALESCE(media_inventory.episode_end_index, media_inventory.episode_index) >= ?2
+         ORDER BY CASE
+             WHEN media_inventory.is_collection = 0
+              AND COALESCE(media_inventory.episode_end_index, media_inventory.episode_index) = media_inventory.episode_index
+             THEN 0
+             ELSE 1
+         END ASC,
+         media_inventory.updated_at DESC,
+         media_inventory.id DESC
+         LIMIT 1",
+    )
+    .bind(bangumi_subject_id)
+    .bind(episode_number)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to resolve episode playback media"))?;
+
+    Ok(row.map(map_resource_library_item))
+}
+
+pub async fn has_partial_episode_media(
+    pool: &SqlitePool,
+    bangumi_subject_id: i64,
+    episode_number: f64,
+) -> Result<bool, AppError> {
+    let count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM media_inventory
+         INNER JOIN download_executions
+            ON download_executions.id = media_inventory.download_execution_id
+         WHERE media_inventory.bangumi_subject_id = ?1
+           AND media_inventory.status = 'partial'
+           AND download_executions.state IN ('starting', 'downloading', 'completed', 'seeding')
+           AND media_inventory.episode_index IS NOT NULL
+           AND media_inventory.episode_index <= ?2
+           AND COALESCE(media_inventory.episode_end_index, media_inventory.episode_index) >= ?2",
+    )
+    .bind(bangumi_subject_id)
+    .bind(episode_number)
+    .fetch_one(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to resolve partial episode media"))?;
+
+    Ok(count > 0)
+}
+
+pub async fn resource_library_item_by_id(
+    pool: &SqlitePool,
+    media_inventory_id: i64,
+) -> Result<Option<ResourceLibraryItemDto>, AppError> {
+    let row = sqlx::query_as::<_, ResourceLibraryRow>(
+        "SELECT
+            media_inventory.id,
+            media_inventory.bangumi_subject_id,
+            media_inventory.download_job_id,
+            media_inventory.download_execution_id,
+            media_inventory.resource_candidate_id,
+            media_inventory.slot_key,
+            download_executions.source_title,
+            download_executions.source_fansub_name,
+            download_executions.state AS execution_state,
+            media_inventory.relative_path,
+            media_inventory.absolute_path,
+            media_inventory.file_name,
+            media_inventory.file_ext,
+            media_inventory.size_bytes,
+            media_inventory.episode_index,
+            media_inventory.episode_end_index,
+            media_inventory.is_collection,
+            media_inventory.status,
+            media_inventory.updated_at
+         FROM media_inventory
+         INNER JOIN download_executions
+            ON download_executions.id = media_inventory.download_execution_id
+         WHERE media_inventory.id = ?1
+         LIMIT 1",
+    )
+    .bind(media_inventory_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to read media inventory item"))?;
+
+    Ok(row.map(map_resource_library_item))
+}
+
 pub async fn list_resource_library_items(
     pool: &SqlitePool,
     keyword: Option<&str>,

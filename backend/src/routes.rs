@@ -1,14 +1,17 @@
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
+    extract::{Path, Query, Request, State},
     http::HeaderMap,
     middleware,
+    response::IntoResponse,
     routing::{get, post, put},
 };
 use futures::stream::{self, StreamExt};
 use sqlx::SqlitePool;
+use std::path::PathBuf;
 use std::sync::Arc;
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
+use tower::ServiceExt;
+use tower_http::{cors::CorsLayer, services::ServeFile, trace::TraceLayer};
 
 use crate::{
     animegarden::AnimeGardenSearchProfile,
@@ -25,10 +28,11 @@ use crate::{
         ActivateDownloadResponse, AdminDashboardResponse, AdminDownloadCandidatesResponse,
         AdminDownloadExecutionEventsResponse, AdminDownloadExecutionsResponse,
         AdminDownloadQueueResponse, AdminRuntimeResponse, ApiEnvelope, AppError, AuthResponse,
-        BootstrapResponse, CalendarDayDto, CalendarResponse, CredentialsRequest, FansubRuleDto,
-        ForceDownloadResponse, HealthResponse, ResourceLibraryRequest, ResourceLibraryResponse,
-        RuntimeHttpStatsDto, RuntimeOverviewDto, SearchRequest, SearchResponse, SubjectCardDto,
-        SubjectDetailDto, SubjectDetailResponse, SubscriptionStateDto, ToggleSubscriptionResponse,
+        BootstrapResponse, CalendarDayDto, CalendarResponse, CredentialsRequest,
+        EpisodePlaybackMediaDto, EpisodePlaybackResponse, FansubRuleDto, ForceDownloadResponse,
+        HealthResponse, ResourceLibraryRequest, ResourceLibraryResponse, RuntimeHttpStatsDto,
+        RuntimeOverviewDto, SearchRequest, SearchResponse, SubjectCardDto, SubjectDetailDto,
+        SubjectDetailResponse, SubscriptionStateDto, ToggleSubscriptionResponse,
         UpdatePolicyRequest, UpsertFansubRuleRequest, ViewerSummary,
     },
     yuc::YucClient,
@@ -54,7 +58,15 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/public/calendar", get(calendar))
         .route("/api/public/search", get(search))
         .route("/api/public/resources", get(resources))
+        .route(
+            "/api/public/subjects/{subject_id}/episodes/{episode_id}/playback",
+            get(episode_playback),
+        )
         .route("/api/public/subjects/{subject_id}", get(subject_detail))
+        .route(
+            "/api/public/media/{media_id}/stream",
+            get(stream_media_file),
+        )
         .route(
             "/api/public/subscriptions/{subject_id}/toggle",
             post(toggle_subscription),
@@ -283,6 +295,97 @@ async fn subject_detail(
                 .unwrap_or(ViewerSummary::device("guest-device".to_owned())),
         },
     })))
+}
+
+async fn episode_playback(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((subject_id, episode_id)): Path<(i64, i64)>,
+) -> Result<Json<ApiEnvelope<EpisodePlaybackResponse>>, AppError> {
+    let device_id = extract_device_id(&headers);
+    if let Some(id) = device_id.as_ref() {
+        db::touch_device(&state.pool, id).await?;
+    }
+
+    let episode = state
+        .bangumi
+        .fetch_episodes(subject_id)
+        .await?
+        .into_iter()
+        .find(|item| item.id == episode_id)
+        .ok_or_else(|| AppError::not_found("episode not found on Bangumi"))?;
+
+    let Some(episode_number) = episode.preferred_episode_number() else {
+        return Ok(Json(ApiEnvelope::new(EpisodePlaybackResponse {
+            bangumi_subject_id: subject_id,
+            bangumi_episode_id: episode_id,
+            episode_number: None,
+            availability_state: "unmapped".to_owned(),
+            note: "资源尚未建立剧集映射".to_owned(),
+            media: None,
+        })));
+    };
+
+    let media = db::find_episode_playback_media(&state.pool, subject_id, episode_number).await?;
+    let response = if let Some(media) = media {
+        EpisodePlaybackResponse {
+            bangumi_subject_id: subject_id,
+            bangumi_episode_id: episode_id,
+            episode_number: Some(episode_number),
+            availability_state: "ready".to_owned(),
+            note: "可以直接播放".to_owned(),
+            media: Some(EpisodePlaybackMediaDto {
+                media_inventory_id: media.id,
+                file_name: media.file_name,
+                file_ext: media.file_ext,
+                size_bytes: media.size_bytes,
+                source_title: media.source_title,
+                source_fansub_name: media.source_fansub_name,
+                updated_at: media.updated_at,
+                stream_url: format!("/api/public/media/{}/stream", media.id),
+            }),
+        }
+    } else if db::has_partial_episode_media(&state.pool, subject_id, episode_number).await? {
+        EpisodePlaybackResponse {
+            bangumi_subject_id: subject_id,
+            bangumi_episode_id: episode_id,
+            episode_number: Some(episode_number),
+            availability_state: "downloading".to_owned(),
+            note: "资源下载中".to_owned(),
+            media: None,
+        }
+    } else {
+        EpisodePlaybackResponse {
+            bangumi_subject_id: subject_id,
+            bangumi_episode_id: episode_id,
+            episode_number: Some(episode_number),
+            availability_state: "missing".to_owned(),
+            note: "资源尚未入库".to_owned(),
+            media: None,
+        }
+    };
+
+    Ok(Json(ApiEnvelope::new(response)))
+}
+
+async fn stream_media_file(
+    State(state): State<AppState>,
+    Path(media_id): Path<i64>,
+    request: Request,
+) -> Result<impl IntoResponse, AppError> {
+    let media = db::resource_library_item_by_id(&state.pool, media_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("media item not found"))?;
+
+    let path = PathBuf::from(&media.absolute_path);
+    if !path.exists() {
+        return Err(AppError::not_found("media file not found on disk"));
+    }
+
+    ServeFile::new(path)
+        .oneshot(request)
+        .await
+        .map_err(|_| AppError::internal("failed to stream media file"))
 }
 
 async fn toggle_subscription(

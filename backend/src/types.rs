@@ -481,6 +481,30 @@ pub struct ResourceLibraryResponse {
     pub has_next_page: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EpisodePlaybackMediaDto {
+    pub media_inventory_id: i64,
+    pub file_name: String,
+    pub file_ext: String,
+    pub size_bytes: i64,
+    pub source_title: String,
+    pub source_fansub_name: Option<String>,
+    pub updated_at: String,
+    pub stream_url: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EpisodePlaybackResponse {
+    pub bangumi_subject_id: i64,
+    pub bangumi_episode_id: i64,
+    pub episode_number: Option<f64>,
+    pub availability_state: String,
+    pub note: String,
+    pub media: Option<EpisodePlaybackMediaDto>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CredentialsRequest {

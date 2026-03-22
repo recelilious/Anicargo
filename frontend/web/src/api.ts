@@ -4,6 +4,7 @@ import type {
   AuthResponse,
   BootstrapResponse,
   CalendarResponse,
+  EpisodePlaybackResponse,
   Policy,
   SearchResponse,
   SubjectDetailResponse
@@ -34,7 +35,7 @@ async function request<T>(path: string, options: RequestInit = {}, deviceId?: st
     headers.set("x-anicargo-admin-token", adminToken);
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(buildApiUrl(path), {
     ...options,
     headers
   });
@@ -46,6 +47,10 @@ async function request<T>(path: string, options: RequestInit = {}, deviceId?: st
 
   const payload = (await response.json()) as Envelope<T>;
   return payload.data;
+}
+
+export function buildApiUrl(path: string) {
+  return `${API_BASE}${path}`;
 }
 
 export function fetchBootstrap(deviceId: string, userToken: string | null) {
@@ -62,6 +67,15 @@ export function searchSubjects(params: URLSearchParams, deviceId: string, userTo
 
 export function fetchSubjectDetail(subjectId: number, deviceId: string, userToken: string | null) {
   return request<SubjectDetailResponse>(`/api/public/subjects/${subjectId}`, {}, deviceId, userToken ?? undefined);
+}
+
+export function fetchEpisodePlayback(subjectId: number, episodeId: number, deviceId: string, userToken: string | null) {
+  return request<EpisodePlaybackResponse>(
+    `/api/public/subjects/${subjectId}/episodes/${episodeId}/playback`,
+    {},
+    deviceId,
+    userToken ?? undefined
+  );
 }
 
 export function toggleSubscription(subjectId: number, deviceId: string, userToken: string | null) {

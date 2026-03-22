@@ -106,6 +106,24 @@ export type SubjectDetailResponse = {
   subscription: SubscriptionState;
 };
 
+export type EpisodePlaybackResponse = {
+  bangumiSubjectId: number;
+  bangumiEpisodeId: number;
+  episodeNumber: number | null;
+  availabilityState: "ready" | "downloading" | "missing" | "unmapped";
+  note: string;
+  media: {
+    mediaInventoryId: number;
+    fileName: string;
+    fileExt: string;
+    sizeBytes: number;
+    sourceTitle: string;
+    sourceFansubName: string | null;
+    updatedAt: string;
+    streamUrl: string;
+  } | null;
+};
+
 export type AuthResponse = {
   token: string;
   viewer: ViewerSummary;
