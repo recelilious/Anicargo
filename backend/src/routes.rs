@@ -26,13 +26,14 @@ use crate::{
     db,
     discovery::ResourceDiscoveryCoordinator,
     downloads::{DownloadCoordinator, DownloadDemandInput},
+    season_catalog,
     telemetry::{self, RuntimeMetrics},
     types::{
         ActivateDownloadResponse, ActiveDownloadDto, ActiveDownloadsResponse,
         AdminDashboardResponse, AdminDownloadCandidatesResponse,
         AdminDownloadExecutionEventsResponse, AdminDownloadExecutionsResponse,
         AdminDownloadQueueResponse, AdminRuntimeResponse, ApiEnvelope, AppError, AuthResponse,
-        BootstrapResponse, CalendarDayDto, CalendarResponse, CredentialsRequest,
+        BootstrapResponse, CalendarResponse, CredentialsRequest,
         EpisodePlaybackMediaDto, EpisodePlaybackResponse, FansubRuleDto, ForceDownloadResponse,
         HealthResponse, PlaybackHistoryItemDto, PlaybackHistoryRecordRequest,
         PlaybackHistoryResponse, ResourceLibraryRequest, ResourceLibraryResponse,
@@ -156,20 +157,8 @@ async fn bootstrap(
 async fn calendar(
     State(state): State<AppState>,
 ) -> Result<Json<ApiEnvelope<CalendarResponse>>, AppError> {
-    let mut days = Vec::new();
-
-    for day in state.bangumi.fetch_calendar().await? {
-        let weekday = day.to_weekday();
-        let cards = day
-            .items
-            .into_iter()
-            .map(|item| item.to_calendar_card())
-            .collect();
-        let mut items = enrich_cards(&state.yuc, cards).await;
-        sort_cards_by_broadcast_time(&mut items);
-
-        days.push(CalendarDayDto { weekday, items });
-    }
+    let days = season_catalog::load_current_season_calendar(&state.yuc, &state.pool, &state.bangumi)
+        .await?;
 
     Ok(Json(ApiEnvelope::new(CalendarResponse { days })))
 }
@@ -1370,31 +1359,6 @@ fn normalize_nsfw_mode(mode: Option<&str>) -> Option<bool> {
         "safe" => Some(false),
         _ => None,
     }
-}
-
-fn sort_cards_by_broadcast_time(items: &mut [SubjectCardDto]) {
-    items.sort_by(|left, right| {
-        match (
-            parse_broadcast_time(left.broadcast_time.as_deref()),
-            parse_broadcast_time(right.broadcast_time.as_deref()),
-        ) {
-            (Some(left_key), Some(right_key)) => left_key.cmp(&right_key),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => left
-                .title_cn
-                .cmp(&right.title_cn)
-                .then_with(|| left.title.cmp(&right.title)),
-        }
-    });
-}
-
-fn parse_broadcast_time(value: Option<&str>) -> Option<u16> {
-    let value = value?.trim();
-    let (hour, minute) = value.split_once(':')?;
-    let hour = hour.parse::<u16>().ok()?;
-    let minute = minute.parse::<u16>().ok()?;
-    Some(hour * 60 + minute)
 }
 
 fn resolve_episode_availability(

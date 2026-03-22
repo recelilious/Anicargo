@@ -5,12 +5,13 @@ use std::{
 };
 
 use anyhow::Context;
+use chrono::{Datelike, Local};
 use regex::Regex;
 use reqwest::Client;
 
 use crate::{
     config::YucConfig,
-    types::{SubjectCardDto, SubjectDetailDto},
+    types::{AppError, SubjectCardDto, SubjectDetailDto},
 };
 
 #[derive(Clone)]
@@ -60,6 +61,36 @@ impl YucClient {
             http,
             page_cache: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    pub fn current_season_key(&self) -> String {
+        let now = Local::now();
+        let quarter_month = match now.month() {
+            1..=3 => 1,
+            4..=6 => 4,
+            7..=9 => 7,
+            _ => 10,
+        };
+
+        format!("{}{:02}", now.year(), quarter_month)
+    }
+
+    pub fn season_url(&self, season_key: &str) -> String {
+        format!("{}/{}/", self.base_url, season_key)
+    }
+
+    pub async fn fetch_season_html(&self, season_key: &str) -> Result<String, AppError> {
+        let url = self.season_url(season_key);
+        self.http
+            .get(&url)
+            .send()
+            .await
+            .map_err(|error| AppError::upstream(format!("failed to reach Yuc season page: {error}")))?
+            .error_for_status()
+            .map_err(|error| AppError::upstream(format!("Yuc season page returned an error: {error}")))?
+            .text()
+            .await
+            .map_err(|error| AppError::upstream(format!("failed to read Yuc season page: {error}")))
     }
 
     pub async fn enrich_card(&self, mut card: SubjectCardDto) -> SubjectCardDto {

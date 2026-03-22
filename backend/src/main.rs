@@ -7,6 +7,7 @@ mod discovery;
 mod downloads;
 mod media;
 mod routes;
+mod season_catalog;
 mod telemetry;
 mod types;
 mod yuc;
