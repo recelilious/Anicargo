@@ -22,7 +22,9 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: "18px",
-    minHeight: "calc(100vh - 64px)",
+    height: "100%",
+    minHeight: 0,
+    overflow: "hidden",
   },
   surfaceCard: {
     padding: "20px 22px",
@@ -43,6 +45,7 @@ const useStyles = makeStyles({
     gap: "16px",
     flex: "1 1 auto",
     minHeight: 0,
+    overflow: "hidden",
     alignItems: "stretch",
   },
   panel: {
@@ -56,6 +59,7 @@ const useStyles = makeStyles({
     minWidth: 0,
     minHeight: 0,
     height: "100%",
+    overflow: "hidden",
   },
   panelHeader: {
     display: "flex",
@@ -253,6 +257,13 @@ function describeEpisode(item: ResourceLibraryItem) {
   return `第 ${formatEpisodeNumber(item.episodeIndex)} 集`;
 }
 
+function compareDisplayText(left: string, right: string) {
+  return left.localeCompare(right, ["zh-Hans-CN", "ja-JP", "en-US"], {
+    sensitivity: "base",
+    numeric: true,
+  });
+}
+
 export function ResourcesPage() {
   const styles = useStyles();
   const { deviceId, userToken } = useSession();
@@ -360,28 +371,30 @@ export function ResourcesPage() {
       (item) => item.state === "staged" || item.state === "queued" || item.state === "searching" || item.state === "starting" || item.state === "downloading",
     );
 
-    const priority = (state: string) => {
-      switch (state) {
-        case "downloading":
-          return 0;
-        case "starting":
-          return 1;
-        case "searching":
-          return 2;
-        case "queued":
-          return 3;
-        default:
-          return 4;
-      }
-    };
-
     return [...visibleDownloads].sort((left, right) => {
-      const stateRank = priority(left.state) - priority(right.state);
-      if (stateRank !== 0) {
-        return stateRank;
+      const titleCompare = compareDisplayText(
+        left.titleCn || left.title,
+        right.titleCn || right.title,
+      );
+      if (titleCompare !== 0) {
+        return titleCompare;
       }
 
-      return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+      const leftEpisode = left.episodeIndex ?? Number.POSITIVE_INFINITY;
+      const rightEpisode = right.episodeIndex ?? Number.POSITIVE_INFINITY;
+      if (leftEpisode !== rightEpisode) {
+        return leftEpisode - rightEpisode;
+      }
+
+      const fansubCompare = compareDisplayText(
+        left.sourceFansubName ?? "",
+        right.sourceFansubName ?? "",
+      );
+      if (fansubCompare !== 0) {
+        return fansubCompare;
+      }
+
+      return new Date(left.updatedAt).getTime() - new Date(right.updatedAt).getTime();
     });
   }, [downloads]);
 
