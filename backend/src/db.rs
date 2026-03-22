@@ -1449,6 +1449,32 @@ pub async fn finish_resource_search_run(
     Ok(())
 }
 
+pub async fn update_download_job_search_status(
+    pool: &SqlitePool,
+    download_job_id: i64,
+    search_status: &str,
+    notes: Option<&str>,
+) -> Result<(), AppError> {
+    let now = now_string();
+
+    sqlx::query(
+        "UPDATE download_jobs
+         SET search_status = ?2,
+             notes = COALESCE(?3, notes),
+             updated_at = ?4
+         WHERE id = ?1",
+    )
+    .bind(download_job_id)
+    .bind(search_status)
+    .bind(notes)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to update download job search status"))?;
+
+    Ok(())
+}
+
 pub async fn create_resource_candidate(
     pool: &SqlitePool,
     candidate: NewResourceCandidate,

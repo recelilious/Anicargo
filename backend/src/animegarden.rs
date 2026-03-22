@@ -1,9 +1,10 @@
 use std::{collections::HashSet, time::Duration};
 
 use anyhow::Context;
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use serde::Deserialize;
-use tracing::warn;
+use tokio::time::sleep;
+use tracing::{info, warn};
 
 use crate::{config::AnimeGardenConfig, types::AppError};
 
@@ -69,10 +70,22 @@ impl AnimeGardenClient {
         &self,
         profile: &AnimeGardenSearchProfile,
     ) -> Result<AnimeGardenSearchResult, AppError> {
+        info!(
+            subject_id = profile.bangumi_subject_id,
+            title = %profile.title,
+            title_cn = %profile.title_cn,
+            season_hint = ?profile.season_hint,
+            "Starting AnimeGarden subject-first discovery"
+        );
         let by_subject = self
             .fetch_resources(build_subject_params(profile.bangumi_subject_id))
             .await?;
         if !by_subject.is_empty() {
+            info!(
+                subject_id = profile.bangumi_subject_id,
+                resource_count = by_subject.len(),
+                "AnimeGarden subject search returned resources"
+            );
             return Ok(AnimeGardenSearchResult {
                 strategy: "subject".to_owned(),
                 resources: by_subject,
@@ -84,6 +97,12 @@ impl AnimeGardenClient {
                 .fetch_resources(build_search_params(keyword.clone()))
                 .await?;
             if !by_search.is_empty() {
+                info!(
+                    subject_id = profile.bangumi_subject_id,
+                    keyword = %keyword,
+                    resource_count = by_search.len(),
+                    "AnimeGarden preferred keyword search returned resources"
+                );
                 return Ok(AnimeGardenSearchResult {
                     strategy: format!("search:{keyword}"),
                     resources: by_search,
@@ -96,6 +115,12 @@ impl AnimeGardenClient {
                 .fetch_resources(build_search_params(keyword.clone()))
                 .await?;
             if !by_search.is_empty() {
+                info!(
+                    subject_id = profile.bangumi_subject_id,
+                    keyword = %keyword,
+                    resource_count = by_search.len(),
+                    "AnimeGarden secondary keyword search returned resources"
+                );
                 return Ok(AnimeGardenSearchResult {
                     strategy: format!("search:{keyword}"),
                     resources: by_search,
@@ -119,30 +144,48 @@ impl AnimeGardenClient {
             return self.search_resources(profile).await;
         }
 
-        let mut strategy_terms = Vec::new();
-        let mut seen = HashSet::<(String, String)>::new();
-        let mut resources = Vec::new();
+        info!(
+            subject_id = profile.bangumi_subject_id,
+            episode = episode_number,
+            terms = ?search_terms,
+            "Starting AnimeGarden targeted episode discovery"
+        );
 
         for keyword in search_terms {
             let fetched = self
                 .fetch_resources(build_search_params(keyword.clone()))
                 .await?;
-            strategy_terms.push(keyword);
-            for resource in fetched {
-                let key = (resource.provider.clone(), resource.provider_id.clone());
-                if seen.insert(key) {
-                    resources.push(resource);
+            info!(
+                subject_id = profile.bangumi_subject_id,
+                episode = episode_number,
+                keyword = %keyword,
+                resource_count = fetched.len(),
+                "AnimeGarden targeted episode search finished"
+            );
+            if !fetched.is_empty() {
+                let mut seen = HashSet::<(String, String)>::new();
+                let mut resources = Vec::new();
+                for resource in fetched {
+                    let key = (resource.provider.clone(), resource.provider_id.clone());
+                    if seen.insert(key) {
+                        resources.push(resource);
+                    }
                 }
+
+                return Ok(AnimeGardenSearchResult {
+                    strategy: format!(
+                        "episode:{}:{}",
+                        format_episode_fragment(episode_number),
+                        keyword
+                    ),
+                    resources,
+                });
             }
         }
 
         Ok(AnimeGardenSearchResult {
-            strategy: format!(
-                "episode:{}:{}",
-                format_episode_fragment(episode_number),
-                strategy_terms.join("|")
-            ),
-            resources,
+            strategy: format!("episode:{}:empty", format_episode_fragment(episode_number)),
+            resources: Vec::new(),
         })
     }
 
@@ -151,6 +194,7 @@ impl AnimeGardenClient {
         extra_params: Vec<(String, String)>,
     ) -> Result<Vec<AnimeGardenResource>, AppError> {
         let mut merged = Vec::new();
+        const MAX_ATTEMPTS: usize = 4;
 
         for page in 1..=self.max_pages {
             let mut query = vec![
@@ -161,16 +205,45 @@ impl AnimeGardenClient {
             query.extend(extra_params.clone());
 
             let url = format!("{}/resources", self.base_url);
-            let response = self
-                .http
-                .get(&url)
-                .query(&query)
-                .send()
-                .await
-                .map_err(|error| {
-                    warn!(url = %url, page, error = %error, "Failed to reach AnimeGarden resources");
-                    AppError::upstream("failed to reach AnimeGarden resources")
-                })?;
+            let mut response = None;
+            for attempt in 1..=MAX_ATTEMPTS {
+                let request = self.http.get(&url).query(&query);
+                match request.send().await {
+                    Ok(result) => {
+                        let status = result.status();
+                        if status == StatusCode::TOO_MANY_REQUESTS && attempt < MAX_ATTEMPTS {
+                            warn!(
+                                url = %url,
+                                page,
+                                attempt,
+                                status = %status,
+                                "AnimeGarden rate limited request; retrying with backoff"
+                            );
+                            sleep(Duration::from_millis((attempt as u64) * 1_500)).await;
+                            continue;
+                        }
+                        response = Some(result);
+                        break;
+                    }
+                    Err(error) if attempt < MAX_ATTEMPTS => {
+                        warn!(
+                            url = %url,
+                            page,
+                            attempt,
+                            error = %error,
+                            "Failed to reach AnimeGarden resources; retrying"
+                        );
+                        sleep(Duration::from_millis((attempt as u64) * 900)).await;
+                    }
+                    Err(error) => {
+                        warn!(url = %url, page, error = %error, "Failed to reach AnimeGarden resources");
+                        return Err(AppError::upstream("failed to reach AnimeGarden resources"));
+                    }
+                }
+            }
+            let Some(response) = response else {
+                return Err(AppError::upstream("failed to reach AnimeGarden resources"));
+            };
 
             if !response.status().is_success() {
                 let status = response.status();
@@ -201,6 +274,8 @@ impl AnimeGardenClient {
             if payload.pagination.complete || is_empty {
                 break;
             }
+
+            sleep(Duration::from_millis(200)).await;
         }
 
         Ok(merged)

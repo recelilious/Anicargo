@@ -3,6 +3,8 @@ use std::{collections::HashMap, sync::OnceLock};
 use chrono::{DateTime, Duration, Utc};
 use regex::Regex;
 use sqlx::SqlitePool;
+use tokio::time::{Duration as TokioDuration, sleep};
+use tracing::info;
 
 use crate::{
     animegarden::{AnimeGardenClient, AnimeGardenResource, AnimeGardenSearchProfile},
@@ -29,29 +31,47 @@ impl ResourceDiscoveryCoordinator {
         policy: &PolicyDto,
         episode_targets: Option<&[f64]>,
     ) -> Result<Vec<ResourceCandidateDto>, AppError> {
+        info!(
+            job_id = job.id,
+            subject_id = job.bangumi_subject_id,
+            release_status = %job.release_status,
+            episode_targets = ?episode_targets,
+            "Starting resource discovery coordination"
+        );
         let (strategy, resources) = if let Some(targets) =
             episode_targets.filter(|targets| !targets.is_empty())
         {
             let mut strategy_parts = Vec::new();
             let mut normalized_resources = Vec::new();
 
-            for target_episode in targets {
+            for (index, target_episode) in targets.iter().enumerate() {
                 let search = self
                     .animegarden
                     .search_episode_resources(profile, *target_episode)
                     .await?;
-                strategy_parts.push(search.strategy);
-                normalized_resources.extend(
-                    normalize_resource_release_slots(
-                        search.resources,
-                        profile,
-                        &job.release_status,
-                    )
-                    .into_iter()
-                    .filter(|resource| {
-                        release_slot_matches_target_episode(&resource.release_slot, *target_episode)
-                    }),
+                let matched_resources = normalize_resource_release_slots(
+                    search.resources,
+                    profile,
+                    &job.release_status,
+                )
+                .into_iter()
+                .filter(|resource| {
+                    release_slot_matches_target_episode(&resource.release_slot, *target_episode)
+                })
+                .collect::<Vec<_>>();
+                info!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    episode = target_episode,
+                    strategy = %search.strategy,
+                    matched_resource_count = matched_resources.len(),
+                    "Resolved targeted resource candidates for episode slot"
                 );
+                strategy_parts.push(search.strategy);
+                normalized_resources.extend(matched_resources);
+                if index + 1 < targets.len() {
+                    sleep(TokioDuration::from_millis(250)).await;
+                }
             }
 
             (
@@ -65,6 +85,13 @@ impl ResourceDiscoveryCoordinator {
                 normalize_resource_release_slots(search.resources, profile, &job.release_status),
             )
         };
+        info!(
+            job_id = job.id,
+            subject_id = job.bangumi_subject_id,
+            strategy = %strategy,
+            normalized_resource_count = resources.len(),
+            "AnimeGarden discovery returned normalized resources"
+        );
         let search_run_id =
             db::start_resource_search_run(pool, job.id, job.bangumi_subject_id, &strategy).await?;
 
@@ -114,8 +141,22 @@ impl ResourceDiscoveryCoordinator {
             stored.push(candidate);
         }
 
+        info!(
+            job_id = job.id,
+            subject_id = job.bangumi_subject_id,
+            candidate_count = stored.len(),
+            "Stored resource candidates after evaluation"
+        );
         let (selected_candidate_id, status, notes) =
             choose_candidate(job, current_selected.as_ref(), &stored, policy);
+        info!(
+            job_id = job.id,
+            subject_id = job.bangumi_subject_id,
+            selected_candidate_id = ?selected_candidate_id,
+            status,
+            notes = %notes,
+            "Completed candidate selection"
+        );
         if current_selected.map(|candidate| candidate.id) != selected_candidate_id {
             db::assign_download_job_candidate(pool, job.id, selected_candidate_id).await?;
         }

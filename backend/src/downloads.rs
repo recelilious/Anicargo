@@ -557,10 +557,30 @@ impl DownloadCoordinator {
         job: &DownloadJobDto,
         candidate: &ResourceCandidateDto,
     ) -> Result<DownloadExecutionDecisionDto, AppError> {
+        info!(
+            job_id = job.id,
+            subject_id = job.bangumi_subject_id,
+            candidate_id = candidate.id,
+            slot_key = %candidate.slot_key,
+            episode_index = ?candidate.episode_index,
+            episode_end_index = ?candidate.episode_end_index,
+            fansub = ?candidate.fansub_name,
+            score = candidate.score,
+            title = %candidate.title,
+            "Preparing to materialize resource candidate into a download execution"
+        );
         if let Some(existing) =
             db::find_execution_for_job_candidate(pool, job.id, candidate.id).await?
         {
             if is_active_execution_state(&existing.state) {
+                info!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    candidate_id = candidate.id,
+                    execution_id = existing.id,
+                    state = %existing.state,
+                    "Reusing existing active execution for resource candidate"
+                );
                 return Ok(DownloadExecutionDecisionDto {
                     reason: "reused_existing_execution".to_owned(),
                     execution: Some(existing),
@@ -579,6 +599,17 @@ impl DownloadCoordinator {
         .to_owned();
         let target_path = build_execution_target_path(media_root, job, candidate.id);
         ensure_execution_target_path(&target_path)?;
+
+        if let Some(previous) = replaced_execution.as_ref() {
+            info!(
+                job_id = job.id,
+                subject_id = job.bangumi_subject_id,
+                previous_execution_id = previous.id,
+                previous_candidate_id = previous.resource_candidate_id,
+                slot_key = %candidate.slot_key,
+                "A higher-priority candidate will replace an active execution in the same slot"
+            );
+        }
 
         let accepted = self
             .engine
@@ -608,6 +639,7 @@ impl DownloadCoordinator {
                 warn!(
                     job_id = job.id,
                     candidate_id = candidate.id,
+                    slot_key = %candidate.slot_key,
                     engine = self.engine.name(),
                     error = %error,
                     "Download engine failed to activate selected candidate"
@@ -685,6 +717,18 @@ impl DownloadCoordinator {
         )
         .await?;
 
+        info!(
+            job_id = job.id,
+            subject_id = job.bangumi_subject_id,
+            execution_id = execution.id,
+            candidate_id = candidate.id,
+            slot_key = %execution.slot_key,
+            state = %execution.state,
+            engine = %execution.engine_name,
+            execution_ref = ?execution.engine_execution_ref,
+            "Download execution created successfully"
+        );
+
         db::create_download_execution_event(
             pool,
             db::NewDownloadExecutionEvent {
@@ -732,6 +776,17 @@ impl DownloadCoordinator {
         for execution in executions {
             match self.engine.sync_execution(&execution).await {
                 Ok(snapshot) => {
+                    info!(
+                        execution_id = execution.id,
+                        job_id = execution.download_job_id,
+                        subject_id = execution.bangumi_subject_id,
+                        state = %snapshot.state,
+                        downloaded_bytes = snapshot.downloaded_bytes,
+                        total_bytes = snapshot.total_bytes,
+                        download_rate_bytes = snapshot.download_rate_bytes,
+                        peer_count = snapshot.peer_count,
+                        "Synchronized active download execution snapshot"
+                    );
                     db::update_download_execution_metrics(
                         pool,
                         execution.id,

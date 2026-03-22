@@ -516,7 +516,10 @@ async fn toggle_subscription(
         )
         .await?;
 
-    if download.reason == "queued_threshold_job" {
+    if matches!(
+        download.reason.as_str(),
+        "queued_threshold_job" | "reused_existing_threshold_job"
+    ) {
         if let Some(job) = download.job.as_ref() {
             let background_state = state.clone();
             let background_job = job.clone();
@@ -1074,10 +1077,20 @@ async fn resolve_airing_episode_targets(
         })
     });
 
-    Ok(AiringEpisodeTargets {
+    let targets = AiringEpisodeTargets {
         backlog,
         latest: latest.filter(|_| latest_should_search),
-    })
+    };
+
+    tracing::info!(
+        job_id = job.id,
+        subject_id = job.bangumi_subject_id,
+        backlog = ?targets.backlog,
+        latest = ?targets.latest,
+        "Resolved airing episode targets from Bangumi episode slots"
+    );
+
+    Ok(targets)
 }
 
 async fn run_download_pipeline(
@@ -1087,6 +1100,43 @@ async fn run_download_pipeline(
     policy: crate::types::PolicyDto,
     reason: &'static str,
 ) {
+    if let Err(error) = db::update_download_job_lifecycle(
+        &state.pool,
+        job.id,
+        "searching",
+        Some("Preparing resource discovery"),
+    )
+    .await
+    {
+        tracing::warn!(
+            job_id = job.id,
+            subject_id = job.bangumi_subject_id,
+            error = %error,
+            "Failed to mark download job as searching before resource discovery"
+        );
+    }
+    if let Err(error) = db::update_download_job_search_status(
+        &state.pool,
+        job.id,
+        "preparing",
+        Some("Preparing resource discovery"),
+    )
+    .await
+    {
+        tracing::warn!(
+            job_id = job.id,
+            subject_id = job.bangumi_subject_id,
+            error = %error,
+            "Failed to mark download job search status as preparing"
+        );
+    }
+    tracing::info!(
+        job_id = job.id,
+        subject_id = job.bangumi_subject_id,
+        release_status = %job.release_status,
+        reason,
+        "Starting download pipeline"
+    );
     let airing_targets = if job.release_status == "airing" {
         match resolve_airing_episode_targets(&state, &job, &policy).await {
             Ok(targets) => Some(targets),
@@ -1120,6 +1170,13 @@ async fn run_download_pipeline(
         .await
     {
         Ok(candidates) => {
+            tracing::info!(
+                job_id = job.id,
+                subject_id = job.bangumi_subject_id,
+                candidate_count = candidates.len(),
+                reason,
+                "Resource discovery finished"
+            );
             let activation_result = if job.release_status == "airing" {
                 apply_airing_download_plan(
                     &state,
@@ -1142,6 +1199,7 @@ async fn run_download_pipeline(
             };
 
             if let Err(error) = activation_result {
+                let error_message = format!("Download activation failed: {error}");
                 tracing::warn!(
                     job_id = job.id,
                     subject_id = job.bangumi_subject_id,
@@ -1149,9 +1207,32 @@ async fn run_download_pipeline(
                     reason,
                     "Download execution activation failed after background queueing"
                 );
+                if let Err(update_error) = db::update_download_job_lifecycle(
+                    &state.pool,
+                    job.id,
+                    "queued",
+                    Some(&error_message),
+                )
+                .await
+                {
+                    tracing::warn!(
+                        job_id = job.id,
+                        subject_id = job.bangumi_subject_id,
+                        error = %update_error,
+                        "Failed to persist download activation failure notes"
+                    );
+                }
+            } else {
+                tracing::info!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    reason,
+                    "Download pipeline finished"
+                );
             }
         }
         Err(error) => {
+            let error_message = format!("Resource discovery failed: {error}");
             tracing::warn!(
                 job_id = job.id,
                 subject_id = job.bangumi_subject_id,
@@ -1159,6 +1240,36 @@ async fn run_download_pipeline(
                 reason,
                 "Resource discovery failed after background queueing"
             );
+            if let Err(update_error) = db::update_download_job_search_status(
+                &state.pool,
+                job.id,
+                "failed",
+                Some(&error_message),
+            )
+            .await
+            {
+                tracing::warn!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    error = %update_error,
+                    "Failed to persist resource discovery failure state"
+                );
+            }
+            if let Err(update_error) = db::update_download_job_lifecycle(
+                &state.pool,
+                job.id,
+                "queued",
+                Some(&error_message),
+            )
+            .await
+            {
+                tracing::warn!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    error = %update_error,
+                    "Failed to persist queued lifecycle after resource discovery failure"
+                );
+            }
         }
     }
 }
@@ -1196,6 +1307,14 @@ async fn apply_airing_download_plan(
     targets: Option<&AiringEpisodeTargets>,
 ) -> Result<(), AppError> {
     let plan = build_airing_download_plan(&state.pool, job, policy, candidates, targets).await?;
+
+    tracing::info!(
+        job_id = job.id,
+        subject_id = job.bangumi_subject_id,
+        backlog_candidate_ids = ?plan.backlog_candidate_ids,
+        latest_candidate_id = ?plan.latest_candidate_id,
+        "Built airing download plan"
+    );
 
     for candidate_id in plan.backlog_candidate_ids {
         state
@@ -1294,6 +1413,12 @@ async fn build_airing_download_plan(
     for episode_number in backlog_episodes {
         let episode_key = episode_sort_key(episode_number);
         let Some(slot_candidates) = candidates_by_episode.get(&episode_key) else {
+            tracing::info!(
+                job_id = job.id,
+                subject_id = job.bangumi_subject_id,
+                episode = episode_number,
+                "No resource candidates matched backlog episode target"
+            );
             continue;
         };
 
@@ -1306,6 +1431,15 @@ async fn build_airing_download_plan(
             .is_some();
 
         if already_covered || has_active_execution {
+            tracing::info!(
+                job_id = job.id,
+                subject_id = job.bangumi_subject_id,
+                episode = episode_number,
+                slot_key,
+                already_covered,
+                has_active_execution,
+                "Skipping backlog episode target because it is already covered or active"
+            );
             continue;
         }
 
@@ -1314,9 +1448,26 @@ async fn build_airing_download_plan(
             &job.release_status,
             preferred_fansub.as_deref(),
         ) else {
+            tracing::info!(
+                job_id = job.id,
+                subject_id = job.bangumi_subject_id,
+                episode = episode_number,
+                slot_key,
+                "No eligible candidate remained for backlog episode target after scoring"
+            );
             continue;
         };
 
+        tracing::info!(
+            job_id = job.id,
+            subject_id = job.bangumi_subject_id,
+            episode = episode_number,
+            candidate_id = chosen.id,
+            score = chosen.score,
+            fansub = ?chosen.fansub_name,
+            title = %chosen.title,
+            "Selected backlog episode candidate"
+        );
         if let Some(fansub_name) = chosen.fansub_name.clone() {
             preferred_fansub = Some(fansub_name);
         }
@@ -1334,6 +1485,26 @@ async fn build_airing_download_plan(
                 preferred_fansub.as_deref(),
             )
         });
+
+    if let Some(candidate) = latest_candidate {
+        tracing::info!(
+            job_id = job.id,
+            subject_id = job.bangumi_subject_id,
+            episode = candidate.episode_index,
+            candidate_id = candidate.id,
+            score = candidate.score,
+            fansub = ?candidate.fansub_name,
+            title = %candidate.title,
+            "Selected latest airing episode candidate"
+        );
+    } else if let Some(latest_episode_key) = latest_episode_key {
+        tracing::info!(
+            job_id = job.id,
+            subject_id = job.bangumi_subject_id,
+            latest_episode = latest_episode_key as f64 / 100.0,
+            "No latest airing episode candidate was selected"
+        );
+    }
 
     Ok(AiringDownloadPlan {
         backlog_candidate_ids,
