@@ -17,7 +17,7 @@ use sqlx::SqlitePool;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::{config::TelemetryConfig, db};
+use crate::{config::TelemetryConfig, db, logcodec::CompactEventFormatter};
 
 pub struct RuntimeMetrics {
     started_at: Instant,
@@ -137,9 +137,10 @@ pub fn init_tracing(
     let file_layer = tracing_subscriber::fmt::layer()
         .with_ansi(false)
         .with_writer(file_writer)
-        .with_target(true)
+        .with_target(false)
         .with_thread_ids(false)
-        .with_thread_names(false);
+        .with_thread_names(false)
+        .event_format(CompactEventFormatter);
 
     let console_layer = (!terminal_ui_active).then(|| tracing_subscriber::fmt::layer());
 

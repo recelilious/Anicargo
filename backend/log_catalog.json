@@ -1,0 +1,110 @@
+{
+  "targets": {
+    "anicargo_server": "APP",
+    "anicargo_server::animegarden": "AG",
+    "anicargo_server::bangumi": "BG",
+    "anicargo_server::discovery": "DS",
+    "anicargo_server::downloads": "DL",
+    "anicargo_server::routes": "RT",
+    "anicargo_server::season_catalog": "SC",
+    "tower_http::trace": "TH",
+    "tower_http::trace::on_failure": "THF"
+  },
+  "events": {
+    "anicargo_server::animegarden|AnimeGarden subject+keyword episode search finished": "AGF",
+    "anicargo_server::animegarden|Starting AnimeGarden targeted episode discovery": "AGS",
+    "anicargo_server::animegarden|AnimeGarden targeted episode keyword search returned resources": "AGK",
+    "anicargo_server::downloads|Download execution activated from selected resource candidate": "DQA",
+    "anicargo_server::downloads|Reusing existing execution for selected resource candidate": "DQR",
+    "anicargo_server::downloads|Synchronized active download execution snapshot": "DXS",
+    "anicargo_server::routes|Download pipeline finished": "RPF",
+    "anicargo_server::routes|Resolved airing episode targets": "RAT",
+    "anicargo_server::routes|Starting download pipeline": "RDP",
+    "tower_http::trace::on_failure|response failed": "HTF"
+  },
+  "fields": {
+    "action": "ac",
+    "attempt": "at",
+    "backlog": "bl",
+    "backlog_candidate_ids": "bc",
+    "body": "bd",
+    "candidate_count": "cc",
+    "candidate_id": "c",
+    "catalog_key": "ck",
+    "download_job_id": "dj",
+    "download_rate_bytes": "dr",
+    "downloaded_bytes": "db",
+    "engine": "en",
+    "engine_name": "eg",
+    "entry_id": "ei",
+    "episode": "ep",
+    "episode_targets": "et",
+    "error": "er",
+    "execution_id": "x",
+    "job_id": "j",
+    "keyword": "kw",
+    "latest": "lt",
+    "latest_candidate_id": "lc",
+    "normalized_resource_count": "nr",
+    "page": "pg",
+    "path": "pa",
+    "peer_count": "pc",
+    "previous_candidate_id": "pcd",
+    "previous_execution_id": "px",
+    "provider": "pv",
+    "reason": "rn",
+    "release_status": "rs",
+    "resource_candidate_id": "rc",
+    "resource_count": "rnq",
+    "season_hint": "sh",
+    "season_mode": "sm",
+    "selected_candidate_id": "sc",
+    "skipped": "sk",
+    "slot_key": "sl",
+    "state": "st",
+    "status": "sts",
+    "strategy": "sy",
+    "subject_id": "s",
+    "terms": "tm",
+    "title": "tt",
+    "title_cn": "tc",
+    "total_bytes": "tb",
+    "trigger_kind": "tk",
+    "upload_rate_bytes": "ur",
+    "url": "u"
+  },
+  "value_maps": {
+    "engine": {
+      "planning": "P",
+      "rqbit": "R"
+    },
+    "provider": {
+      "animegarden": "A"
+    },
+    "release_status": {
+      "airing": "A",
+      "completed": "C",
+      "upcoming": "U"
+    },
+    "state": {
+      "completed": "C",
+      "downloading": "D",
+      "failed": "F",
+      "idle": "I",
+      "preparing": "P",
+      "queued": "Q",
+      "replaced": "R",
+      "searching": "H",
+      "seeding": "G",
+      "staged": "T",
+      "starting": "S"
+    },
+    "trigger_kind": {
+      "admin_force": "A",
+      "manual": "M",
+      "retry": "R",
+      "startup": "S",
+      "threshold": "T"
+    }
+  }
+}

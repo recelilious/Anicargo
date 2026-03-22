@@ -5,6 +5,7 @@ mod config;
 mod db;
 mod discovery;
 mod downloads;
+mod logcodec;
 mod media;
 mod routes;
 mod season_catalog;
