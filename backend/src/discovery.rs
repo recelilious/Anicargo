@@ -27,13 +27,46 @@ impl ResourceDiscoveryCoordinator {
         job: &DownloadJobDto,
         profile: &AnimeGardenSearchProfile,
         policy: &PolicyDto,
+        episode_targets: Option<&[f64]>,
     ) -> Result<Vec<ResourceCandidateDto>, AppError> {
-        let search = self.animegarden.search_resources(profile).await?;
-        let resources =
-            normalize_resource_release_slots(search.resources, profile, &job.release_status);
+        let (strategy, resources) = if let Some(targets) =
+            episode_targets.filter(|targets| !targets.is_empty())
+        {
+            let mut strategy_parts = Vec::new();
+            let mut normalized_resources = Vec::new();
+
+            for target_episode in targets {
+                let search = self
+                    .animegarden
+                    .search_episode_resources(profile, *target_episode)
+                    .await?;
+                strategy_parts.push(search.strategy);
+                normalized_resources.extend(
+                    normalize_resource_release_slots(
+                        search.resources,
+                        profile,
+                        &job.release_status,
+                    )
+                    .into_iter()
+                    .filter(|resource| {
+                        release_slot_matches_target_episode(&resource.release_slot, *target_episode)
+                    }),
+                );
+            }
+
+            (
+                format!("targeted:{}", strategy_parts.join(" || ")),
+                normalized_resources,
+            )
+        } else {
+            let search = self.animegarden.search_resources(profile).await?;
+            (
+                search.strategy,
+                normalize_resource_release_slots(search.resources, profile, &job.release_status),
+            )
+        };
         let search_run_id =
-            db::start_resource_search_run(pool, job.id, job.bangumi_subject_id, &search.strategy)
-                .await?;
+            db::start_resource_search_run(pool, job.id, job.bangumi_subject_id, &strategy).await?;
 
         let rules = db::list_fansub_rules(pool).await?;
         let previous_selected =
@@ -99,6 +132,14 @@ impl ResourceDiscoveryCoordinator {
 
         db::list_resource_candidates(pool, job.id).await
     }
+}
+
+fn release_slot_matches_target_episode(slot: &ParsedReleaseSlot, target_episode: f64) -> bool {
+    let Some(start) = slot.episode_index else {
+        return false;
+    };
+    let end = slot.episode_end_index.unwrap_or(start);
+    target_episode + 0.001 >= start && target_episode - 0.001 <= end
 }
 
 #[derive(Debug, Clone)]
@@ -576,7 +617,7 @@ fn evaluate_candidate(
     }
 
     if let Some(rule) = matched_rule {
-        score += (rule.priority.max(0) as f64) * 2.0;
+        score += 400.0 + (rule.priority.max(0) as f64) * 200.0;
         score += locale_preference_bonus(&rule.locale_preference, locale_hint.as_deref(), is_raw);
     }
 
@@ -586,7 +627,7 @@ fn evaluate_candidate(
             .zip(resource.fansub_name.as_deref())
             .is_some_and(|(left, right)| normalize_name(left) == normalize_name(right))
     {
-        score += 28.0;
+        score += 160.0;
     }
 
     CandidateEvaluation {

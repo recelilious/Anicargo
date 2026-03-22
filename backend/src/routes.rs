@@ -6,6 +6,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, post, put},
 };
+use chrono::{FixedOffset, NaiveDate, Utc};
 use futures::stream::{self, StreamExt};
 use sqlx::SqlitePool;
 use std::{
@@ -1028,6 +1029,57 @@ async fn resolve_subject_search_profile(
     }
 }
 
+async fn resolve_airing_episode_targets(
+    state: &AppState,
+    job: &crate::types::DownloadJobDto,
+    policy: &crate::types::PolicyDto,
+) -> Result<AiringEpisodeTargets, AppError> {
+    let (episodes, availability, executions, current_selected) = tokio::try_join!(
+        state.bangumi.fetch_episodes(job.bangumi_subject_id),
+        db::list_subject_episode_availability(&state.pool, job.bangumi_subject_id),
+        db::list_download_executions(&state.pool, job.id),
+        db::current_selected_candidate_for_job(&state.pool, job.id)
+    )?;
+
+    let mut aired_episodes = episodes
+        .into_iter()
+        .filter_map(|episode| {
+            let episode_number = episode.preferred_episode_number()?;
+            episode_has_aired(&episode).then_some(episode_number)
+        })
+        .collect::<Vec<_>>();
+    aired_episodes.sort_by(|left, right| left.total_cmp(right));
+    aired_episodes.dedup_by(|left, right| (*left - *right).abs() < 0.001);
+
+    let latest = aired_episodes.last().copied();
+    let backlog = aired_episodes
+        .iter()
+        .copied()
+        .filter(|episode_number| Some(*episode_number) != latest)
+        .filter(|episode_number| {
+            !episode_already_tracked(*episode_number, &availability, &executions)
+        })
+        .collect::<Vec<_>>();
+    let latest_should_search = latest.is_some_and(|latest_episode| {
+        if !episode_already_tracked(latest_episode, &availability, &executions) {
+            return true;
+        }
+
+        current_selected.as_ref().is_some_and(|candidate| {
+            candidate_covers_episode(candidate, latest_episode)
+                && within_replacement_window(
+                    job.selection_updated_at.as_deref(),
+                    policy.replacement_window_hours,
+                )
+        })
+    });
+
+    Ok(AiringEpisodeTargets {
+        backlog,
+        latest: latest.filter(|_| latest_should_search),
+    })
+}
+
 async fn run_download_pipeline(
     state: AppState,
     job: crate::types::DownloadJobDto,
@@ -1035,14 +1087,48 @@ async fn run_download_pipeline(
     policy: crate::types::PolicyDto,
     reason: &'static str,
 ) {
+    let airing_targets = if job.release_status == "airing" {
+        match resolve_airing_episode_targets(&state, &job, &policy).await {
+            Ok(targets) => Some(targets),
+            Err(error) => {
+                tracing::warn!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    error = %error,
+                    reason,
+                    "Failed to resolve airing episode targets; falling back to broad discovery"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let search_targets = airing_targets
+        .as_ref()
+        .map(AiringEpisodeTargets::search_targets);
+
     match state
         .discovery
-        .discover_for_job(&state.pool, &job, &discovery_profile, &policy)
+        .discover_for_job(
+            &state.pool,
+            &job,
+            &discovery_profile,
+            &policy,
+            search_targets.as_deref(),
+        )
         .await
     {
         Ok(candidates) => {
             let activation_result = if job.release_status == "airing" {
-                apply_airing_download_plan(&state, &job, &policy, &candidates).await
+                apply_airing_download_plan(
+                    &state,
+                    &job,
+                    &policy,
+                    &candidates,
+                    airing_targets.as_ref(),
+                )
+                .await
             } else {
                 state
                     .downloads
@@ -1083,13 +1169,33 @@ struct AiringDownloadPlan {
     latest_candidate_id: Option<i64>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct AiringEpisodeTargets {
+    backlog: Vec<f64>,
+    latest: Option<f64>,
+}
+
+impl AiringEpisodeTargets {
+    fn search_targets(&self) -> Vec<f64> {
+        let mut targets = self.backlog.clone();
+        if let Some(latest) = self.latest {
+            if !targets.iter().any(|value| (*value - latest).abs() < 0.001) {
+                targets.push(latest);
+            }
+        }
+        targets.sort_by(|left, right| left.total_cmp(right));
+        targets
+    }
+}
+
 async fn apply_airing_download_plan(
     state: &AppState,
     job: &crate::types::DownloadJobDto,
     policy: &crate::types::PolicyDto,
     candidates: &[ResourceCandidateDto],
+    targets: Option<&AiringEpisodeTargets>,
 ) -> Result<(), AppError> {
-    let plan = build_airing_download_plan(&state.pool, job, policy, candidates).await?;
+    let plan = build_airing_download_plan(&state.pool, job, policy, candidates, targets).await?;
 
     for candidate_id in plan.backlog_candidate_ids {
         state
@@ -1132,6 +1238,7 @@ async fn build_airing_download_plan(
     job: &crate::types::DownloadJobDto,
     policy: &crate::types::PolicyDto,
     candidates: &[ResourceCandidateDto],
+    targets: Option<&AiringEpisodeTargets>,
 ) -> Result<AiringDownloadPlan, AppError> {
     let eligible = candidates
         .iter()
@@ -1141,10 +1248,6 @@ async fn build_airing_download_plan(
                 && candidate.episode_index.is_some()
         })
         .collect::<Vec<_>>();
-
-    if eligible.is_empty() {
-        return Ok(AiringDownloadPlan::default());
-    }
 
     let availability = db::list_subject_episode_availability(pool, job.bangumi_subject_id).await?;
     let current_selected = db::current_selected_candidate_for_job(pool, job.id).await?;
@@ -1162,28 +1265,35 @@ async fn build_airing_download_plan(
             .push(candidate);
     }
 
-    let Some((&latest_episode_key, latest_candidates)) = candidates_by_episode
-        .iter()
-        .next_back()
-        .map(|(key, value)| (key, value))
-    else {
+    let latest_episode_key = targets
+        .and_then(|targets| targets.latest.map(episode_sort_key))
+        .or_else(|| candidates_by_episode.keys().next_back().copied());
+    let backlog_episodes = targets
+        .map(|targets| targets.backlog.clone())
+        .unwrap_or_else(|| {
+            candidates_by_episode
+                .keys()
+                .copied()
+                .filter(|episode_key| Some(*episode_key) != latest_episode_key)
+                .map(|episode_key| episode_key as f64 / 100.0)
+                .collect()
+        });
+
+    if candidates_by_episode.is_empty()
+        && latest_episode_key.is_none()
+        && backlog_episodes.is_empty()
+    {
         return Ok(AiringDownloadPlan::default());
-    };
+    }
 
     let mut preferred_fansub = previous_selected
         .as_ref()
         .and_then(|candidate| candidate.fansub_name.clone());
     let mut backlog_candidate_ids = Vec::new();
 
-    for (episode_key, slot_candidates) in &candidates_by_episode {
-        if *episode_key == latest_episode_key {
-            continue;
-        }
-
-        let Some(episode_number) = slot_candidates
-            .first()
-            .and_then(|candidate| candidate.episode_index)
-        else {
+    for episode_number in backlog_episodes {
+        let episode_key = episode_sort_key(episode_number);
+        let Some(slot_candidates) = candidates_by_episode.get(&episode_key) else {
             continue;
         };
 
@@ -1200,7 +1310,7 @@ async fn build_airing_download_plan(
         }
 
         let Some(chosen) = pick_slot_candidate(
-            slot_candidates,
+            slot_candidates.as_slice(),
             &job.release_status,
             preferred_fansub.as_deref(),
         ) else {
@@ -1213,13 +1323,17 @@ async fn build_airing_download_plan(
         backlog_candidate_ids.push(chosen.id);
     }
 
-    let latest_candidate = choose_latest_airing_candidate(
-        job,
-        policy,
-        current_selected.as_ref(),
-        latest_candidates,
-        preferred_fansub.as_deref(),
-    );
+    let latest_candidate = latest_episode_key
+        .and_then(|latest_episode_key| candidates_by_episode.get(&latest_episode_key))
+        .and_then(|latest_candidates| {
+            choose_latest_airing_candidate(
+                job,
+                policy,
+                current_selected.as_ref(),
+                latest_candidates.as_slice(),
+                preferred_fansub.as_deref(),
+            )
+        });
 
     Ok(AiringDownloadPlan {
         backlog_candidate_ids,
@@ -1283,7 +1397,7 @@ fn slot_candidate_priority_key(
         .zip(candidate.fansub_name.as_deref())
         .is_some_and(|(left, right)| normalize_fansub_name(left) == normalize_fansub_name(right))
     {
-        1_800
+        24_000
     } else {
         0
     };
@@ -1650,16 +1764,86 @@ fn resolve_episode_availability(
     (false, Some("资源尚未入库".to_owned()))
 }
 
+fn episode_has_aired(episode: &EpisodeRaw) -> bool {
+    if episode.airdate.trim().is_empty() {
+        return true;
+    }
+
+    let date_part = episode
+        .airdate
+        .split_once('T')
+        .map(|(left, _)| left)
+        .unwrap_or(episode.airdate.as_str());
+    let Ok(airdate) = NaiveDate::parse_from_str(date_part, "%Y-%m-%d") else {
+        return true;
+    };
+
+    airdate <= tokyo_today()
+}
+
+fn tokyo_today() -> NaiveDate {
+    Utc::now()
+        .with_timezone(&FixedOffset::east_opt(9 * 3600).expect("valid tokyo utc offset"))
+        .date_naive()
+}
+
+fn episode_already_tracked(
+    episode_number: f64,
+    availability: &[db::SubjectEpisodeAvailability],
+    executions: &[crate::types::DownloadExecutionDto],
+) -> bool {
+    availability
+        .iter()
+        .any(|item| availability_covers_episode(item, episode_number))
+        || executions.iter().any(|execution| {
+            matches!(
+                execution.state.as_str(),
+                "staged" | "starting" | "downloading" | "completed" | "seeding"
+            ) && execution_covers_episode(execution, episode_number)
+        })
+}
+
+fn candidate_covers_episode(candidate: &ResourceCandidateDto, episode_number: f64) -> bool {
+    numeric_range_covers_episode(
+        candidate.episode_index,
+        candidate.episode_end_index,
+        candidate.is_collection,
+        episode_number,
+    )
+}
+
+fn execution_covers_episode(
+    execution: &crate::types::DownloadExecutionDto,
+    episode_number: f64,
+) -> bool {
+    numeric_range_covers_episode(
+        execution.episode_index,
+        execution.episode_end_index,
+        execution.is_collection,
+        episode_number,
+    )
+}
+
 fn availability_covers_episode(item: &db::SubjectEpisodeAvailability, episode_number: f64) -> bool {
-    let Some(start) = item.episode_index else {
+    numeric_range_covers_episode(
+        item.episode_index,
+        item.episode_end_index,
+        item.is_collection,
+        episode_number,
+    )
+}
+
+fn numeric_range_covers_episode(
+    start: Option<f64>,
+    end: Option<f64>,
+    is_collection: bool,
+    episode_number: f64,
+) -> bool {
+    let Some(start) = start else {
         return false;
     };
-    let end = item.episode_end_index.unwrap_or(start);
-    let epsilon = if item.is_collection {
-        0.001
-    } else {
-        f64::EPSILON
-    };
+    let end = end.unwrap_or(start);
+    let epsilon = if is_collection { 0.001 } else { f64::EPSILON };
 
     episode_number + epsilon >= start && episode_number - epsilon <= end
 }

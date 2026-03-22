@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 
 use anyhow::Context;
 use reqwest::Client;
@@ -109,6 +109,43 @@ impl AnimeGardenClient {
         })
     }
 
+    pub async fn search_episode_resources(
+        &self,
+        profile: &AnimeGardenSearchProfile,
+        episode_number: f64,
+    ) -> Result<AnimeGardenSearchResult, AppError> {
+        let search_terms = build_episode_search_terms(profile, episode_number);
+        if search_terms.is_empty() {
+            return self.search_resources(profile).await;
+        }
+
+        let mut strategy_terms = Vec::new();
+        let mut seen = HashSet::<(String, String)>::new();
+        let mut resources = Vec::new();
+
+        for keyword in search_terms {
+            let fetched = self
+                .fetch_resources(build_search_params(keyword.clone()))
+                .await?;
+            strategy_terms.push(keyword);
+            for resource in fetched {
+                let key = (resource.provider.clone(), resource.provider_id.clone());
+                if seen.insert(key) {
+                    resources.push(resource);
+                }
+            }
+        }
+
+        Ok(AnimeGardenSearchResult {
+            strategy: format!(
+                "episode:{}:{}",
+                format_episode_fragment(episode_number),
+                strategy_terms.join("|")
+            ),
+            resources,
+        })
+    }
+
     async fn fetch_resources(
         &self,
         extra_params: Vec<(String, String)>,
@@ -204,6 +241,122 @@ fn sanitize_search_term(value: &str) -> Option<String> {
         .collect::<Vec<_>>()
         .join(" ");
     (!term.is_empty()).then_some(term)
+}
+
+fn build_episode_search_terms(
+    profile: &AnimeGardenSearchProfile,
+    episode_number: f64,
+) -> Vec<String> {
+    let mut terms = Vec::new();
+    let padded_episode = if episode_number.fract().abs() < f64::EPSILON {
+        format!("{:02}", episode_number.round() as i64)
+    } else {
+        format_episode_fragment(episode_number)
+    };
+
+    if let Some(season_hint) = profile.season_hint {
+        let chinese_season = format_chinese_number(season_hint);
+        if let Some(title) = sanitize_search_term(&profile.title) {
+            push_term(
+                &mut terms,
+                Some(format!("{title} S{season_hint} {padded_episode}")),
+            );
+            push_term(
+                &mut terms,
+                Some(format!(
+                    "{title} {} Season {padded_episode}",
+                    format_english_ordinal(season_hint)
+                )),
+            );
+        }
+        if let Some(title_cn) = sanitize_search_term(&profile.title_cn) {
+            push_term(
+                &mut terms,
+                Some(format!("{title_cn} 第{season_hint}季 {padded_episode}")),
+            );
+            if let Some(chinese_season) = chinese_season.as_deref() {
+                push_term(
+                    &mut terms,
+                    Some(format!("{title_cn} 第{chinese_season}季 {padded_episode}")),
+                );
+                push_term(
+                    &mut terms,
+                    Some(format!("{title_cn} 第{chinese_season}期 {padded_episode}")),
+                );
+            }
+        }
+    }
+
+    if let Some(title) = sanitize_search_term(&profile.title) {
+        push_term(&mut terms, Some(format!("{title} {padded_episode}")));
+    }
+    if let Some(title_cn) = sanitize_search_term(&profile.title_cn) {
+        push_term(&mut terms, Some(format!("{title_cn} {padded_episode}")));
+    }
+
+    terms
+}
+
+fn push_term(target: &mut Vec<String>, candidate: Option<String>) {
+    let Some(candidate) = candidate else {
+        return;
+    };
+    let normalized = candidate.trim();
+    if normalized.is_empty() || target.iter().any(|value| value == normalized) {
+        return;
+    }
+    target.push(normalized.to_owned());
+}
+
+fn format_episode_fragment(value: f64) -> String {
+    if value.fract().abs() < f64::EPSILON {
+        format!("{}", value.round() as i64)
+    } else {
+        format!("{value:.1}")
+    }
+}
+
+fn format_english_ordinal(value: i64) -> String {
+    let suffix = match value % 100 {
+        11..=13 => "th",
+        _ => match value % 10 {
+            1 => "st",
+            2 => "nd",
+            3 => "rd",
+            _ => "th",
+        },
+    };
+    format!("{value}{suffix}")
+}
+
+fn format_chinese_number(value: i64) -> Option<String> {
+    match value {
+        1 => Some("一".to_owned()),
+        2 => Some("二".to_owned()),
+        3 => Some("三".to_owned()),
+        4 => Some("四".to_owned()),
+        5 => Some("五".to_owned()),
+        6 => Some("六".to_owned()),
+        7 => Some("七".to_owned()),
+        8 => Some("八".to_owned()),
+        9 => Some("九".to_owned()),
+        10 => Some("十".to_owned()),
+        11..=19 => Some(format!("十{}", format_chinese_number(value - 10)?)),
+        20..=99 => {
+            let tens = value / 10;
+            let ones = value % 10;
+            if ones == 0 {
+                Some(format!("{}十", format_chinese_number(tens)?))
+            } else {
+                Some(format!(
+                    "{}十{}",
+                    format_chinese_number(tens)?,
+                    format_chinese_number(ones)?
+                ))
+            }
+        }
+        _ => None,
+    }
 }
 
 #[derive(Debug, Deserialize)]
