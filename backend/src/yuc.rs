@@ -85,9 +85,13 @@ impl YucClient {
             .get(&url)
             .send()
             .await
-            .map_err(|error| AppError::upstream(format!("failed to reach Yuc season page: {error}")))?
+            .map_err(|error| {
+                AppError::upstream(format!("failed to reach Yuc season page: {error}"))
+            })?
             .error_for_status()
-            .map_err(|error| AppError::upstream(format!("Yuc season page returned an error: {error}")))?
+            .map_err(|error| {
+                AppError::upstream(format!("Yuc season page returned an error: {error}"))
+            })?
             .text()
             .await
             .map_err(|error| AppError::upstream(format!("failed to read Yuc season page: {error}")))

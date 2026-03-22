@@ -146,6 +146,12 @@ async function loadCalendar(deviceId: string, userToken: string | null, cacheKey
   return request;
 }
 
+async function revalidateCalendar(deviceId: string, userToken: string | null, cacheKey: string) {
+  const response = await fetchCalendar(deviceId, userToken);
+  calendarDataCache.set(cacheKey, response.days);
+  return response.days;
+}
+
 export function SeasonPage() {
   const styles = useStyles();
   const { deviceId, userToken } = useSession();
@@ -182,7 +188,33 @@ export function SeasonPage() {
       setSlideDurationMs(0);
       setError(null);
       setIsLoading(false);
-      return;
+
+      void revalidateCalendar(deviceId, userToken, cacheKey)
+        .then((nextDays) => {
+          if (cancelled) {
+            return;
+          }
+
+          const nextSelected = resolveSelectedDay(
+            nextDays,
+            calendarSelectionCache.get(cacheKey) ?? nextSelectedDay,
+          );
+
+          setDays(nextDays);
+          setSelectedDay(nextSelected);
+          setMountedDayIds([nextSelected]);
+          setSlideDurationMs(0);
+          setError(null);
+        })
+        .catch((nextError: Error) => {
+          if (!cancelled) {
+            setError(nextError.message);
+          }
+        });
+
+      return () => {
+        cancelled = true;
+      };
     }
 
     setIsLoading(true);

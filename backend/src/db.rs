@@ -1877,7 +1877,7 @@ pub async fn list_active_download_executions(
         "SELECT *
          FROM download_executions
          WHERE engine_name = ?1
-           AND state IN ('staged', 'starting', 'downloading', 'seeding')
+           AND state IN ('staged', 'starting', 'downloading')
          ORDER BY updated_at DESC, created_at DESC
          LIMIT ?2",
     )

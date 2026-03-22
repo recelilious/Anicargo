@@ -33,14 +33,13 @@ use crate::{
         AdminDashboardResponse, AdminDownloadCandidatesResponse,
         AdminDownloadExecutionEventsResponse, AdminDownloadExecutionsResponse,
         AdminDownloadQueueResponse, AdminRuntimeResponse, ApiEnvelope, AppError, AuthResponse,
-        BootstrapResponse, CalendarResponse, CredentialsRequest,
-        EpisodePlaybackMediaDto, EpisodePlaybackResponse, FansubRuleDto, ForceDownloadResponse,
-        HealthResponse, PlaybackHistoryItemDto, PlaybackHistoryRecordRequest,
-        PlaybackHistoryResponse, ResourceLibraryRequest, ResourceLibraryResponse,
-        RuntimeHttpStatsDto, RuntimeOverviewDto, SearchRequest, SearchResponse, SubjectCardDto,
-        SubjectCollectionRequest, SubjectCollectionResponse, SubjectDetailDto,
-        SubjectDetailResponse, SubscriptionStateDto, ToggleSubscriptionResponse,
-        UpdatePolicyRequest, UpsertFansubRuleRequest, ViewerSummary,
+        BootstrapResponse, CalendarResponse, CredentialsRequest, EpisodePlaybackMediaDto,
+        EpisodePlaybackResponse, FansubRuleDto, ForceDownloadResponse, HealthResponse,
+        PlaybackHistoryItemDto, PlaybackHistoryRecordRequest, PlaybackHistoryResponse,
+        ResourceLibraryRequest, ResourceLibraryResponse, RuntimeHttpStatsDto, RuntimeOverviewDto,
+        SearchRequest, SearchResponse, SubjectCardDto, SubjectCollectionRequest,
+        SubjectCollectionResponse, SubjectDetailDto, SubjectDetailResponse, SubscriptionStateDto,
+        ToggleSubscriptionResponse, UpdatePolicyRequest, UpsertFansubRuleRequest, ViewerSummary,
     },
     yuc::YucClient,
 };
@@ -157,8 +156,9 @@ async fn bootstrap(
 async fn calendar(
     State(state): State<AppState>,
 ) -> Result<Json<ApiEnvelope<CalendarResponse>>, AppError> {
-    let days = season_catalog::load_current_season_calendar(&state.yuc, &state.pool, &state.bangumi)
-        .await?;
+    let days =
+        season_catalog::load_current_season_calendar(&state.yuc, &state.pool, &state.bangumi)
+            .await?;
 
     Ok(Json(ApiEnvelope::new(CalendarResponse { days })))
 }

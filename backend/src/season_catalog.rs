@@ -4,20 +4,19 @@ use std::{
     sync::OnceLock,
 };
 
-use chrono::{Datelike, Utc};
+use chrono::{Datelike, Local, NaiveDate, Utc};
 use futures::stream::{self, StreamExt};
 use regex::Regex;
 use sqlx::{FromRow, SqlitePool};
 use tracing::warn;
 
 use crate::{
-    bangumi::{BangumiClient, BangumiSearchQuery, SubjectRaw},
+    bangumi::{BangumiClient, BangumiSearchQuery, EpisodeRaw, SubjectRaw},
     types::{AppError, CalendarDayDto, SubjectCardDto, WeekdayDto},
     yuc::YucClient,
 };
 
 const CATALOG_REFRESH_TTL_HOURS: i64 = 12;
-const STATUS_REFRESH_TTL_HOURS: i64 = 6;
 const MATCH_CONCURRENCY: usize = 6;
 const STATUS_REFRESH_CONCURRENCY: usize = 6;
 
@@ -334,13 +333,12 @@ async fn store_catalog(pool: &SqlitePool, catalog: &YucCatalog, now: &str) -> Re
     .await
     .map_err(|_| AppError::internal("failed to upsert Yuc catalog"))?;
 
-    let catalog_id = sqlx::query_scalar::<_, i64>(
-        "SELECT id FROM yuc_catalogs WHERE catalog_key = ?1 LIMIT 1",
-    )
-    .bind(&catalog.catalog_key)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(|_| AppError::internal("failed to load Yuc catalog id"))?;
+    let catalog_id =
+        sqlx::query_scalar::<_, i64>("SELECT id FROM yuc_catalogs WHERE catalog_key = ?1 LIMIT 1")
+            .bind(&catalog.catalog_key)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|_| AppError::internal("failed to load Yuc catalog id"))?;
 
     sqlx::query("DELETE FROM yuc_catalog_entries WHERE yuc_catalog_id = ?1")
         .bind(catalog_id)
@@ -466,23 +464,14 @@ async fn refresh_subject_statuses(
     bangumi: &BangumiClient,
     catalog_key: &str,
 ) -> Result<(), AppError> {
-    let stale_before = (Utc::now() - chrono::Duration::hours(STATUS_REFRESH_TTL_HOURS))
-        .to_rfc3339();
     let subject_ids = sqlx::query_scalar::<_, i64>(
         "SELECT DISTINCT yuc_catalog_entries.bangumi_subject_id
          FROM yuc_catalog_entries
          INNER JOIN yuc_catalogs ON yuc_catalogs.id = yuc_catalog_entries.yuc_catalog_id
-         LEFT JOIN bangumi_subject_cache
-            ON bangumi_subject_cache.bangumi_subject_id = yuc_catalog_entries.bangumi_subject_id
          WHERE yuc_catalogs.catalog_key = ?1
-           AND yuc_catalog_entries.bangumi_subject_id IS NOT NULL
-           AND (
-                bangumi_subject_cache.bangumi_subject_id IS NULL
-                OR bangumi_subject_cache.status_refreshed_at < ?2
-           )",
+           AND yuc_catalog_entries.bangumi_subject_id IS NOT NULL",
     )
     .bind(catalog_key)
-    .bind(&stale_before)
     .fetch_all(pool)
     .await
     .map_err(|_| AppError::internal("failed to list Bangumi status refresh candidates"))?;
@@ -496,7 +485,23 @@ async fn refresh_subject_statuses(
         let bangumi = bangumi.clone();
         async move {
             match bangumi.fetch_subject(subject_id).await {
-                Ok(subject) => Some(subject.to_card()),
+                Ok(subject) => {
+                    let episodes = match bangumi.fetch_episodes(subject_id).await {
+                        Ok(episodes) => episodes,
+                        Err(error) => {
+                            warn!(
+                                subject_id,
+                                error = %error,
+                                "Failed to refresh Bangumi episode state for Yuc catalog"
+                            );
+                            Vec::new()
+                        }
+                    };
+
+                    let mut card = subject.to_card();
+                    card.release_status = derive_release_status(&subject, &episodes).to_owned();
+                    Some(card)
+                }
                 Err(error) => {
                     warn!(
                         subject_id,
@@ -869,13 +874,48 @@ fn preferred_subject_title(subject: &SubjectRaw) -> String {
 
 fn ordered_weekdays() -> Vec<WeekdayDto> {
     vec![
-        WeekdayDto { id: 1, cn: "星期一".to_owned(), en: "Mon".to_owned(), ja: "月曜".to_owned() },
-        WeekdayDto { id: 2, cn: "星期二".to_owned(), en: "Tue".to_owned(), ja: "火曜".to_owned() },
-        WeekdayDto { id: 3, cn: "星期三".to_owned(), en: "Wed".to_owned(), ja: "水曜".to_owned() },
-        WeekdayDto { id: 4, cn: "星期四".to_owned(), en: "Thu".to_owned(), ja: "木曜".to_owned() },
-        WeekdayDto { id: 5, cn: "星期五".to_owned(), en: "Fri".to_owned(), ja: "金曜".to_owned() },
-        WeekdayDto { id: 6, cn: "星期六".to_owned(), en: "Sat".to_owned(), ja: "土曜".to_owned() },
-        WeekdayDto { id: 7, cn: "星期日".to_owned(), en: "Sun".to_owned(), ja: "日曜".to_owned() },
+        WeekdayDto {
+            id: 1,
+            cn: "星期一".to_owned(),
+            en: "Mon".to_owned(),
+            ja: "月曜".to_owned(),
+        },
+        WeekdayDto {
+            id: 2,
+            cn: "星期二".to_owned(),
+            en: "Tue".to_owned(),
+            ja: "火曜".to_owned(),
+        },
+        WeekdayDto {
+            id: 3,
+            cn: "星期三".to_owned(),
+            en: "Wed".to_owned(),
+            ja: "水曜".to_owned(),
+        },
+        WeekdayDto {
+            id: 4,
+            cn: "星期四".to_owned(),
+            en: "Thu".to_owned(),
+            ja: "木曜".to_owned(),
+        },
+        WeekdayDto {
+            id: 5,
+            cn: "星期五".to_owned(),
+            en: "Fri".to_owned(),
+            ja: "金曜".to_owned(),
+        },
+        WeekdayDto {
+            id: 6,
+            cn: "星期六".to_owned(),
+            en: "Sat".to_owned(),
+            ja: "土曜".to_owned(),
+        },
+        WeekdayDto {
+            id: 7,
+            cn: "星期日".to_owned(),
+            en: "Sun".to_owned(),
+            ja: "日曜".to_owned(),
+        },
     ]
 }
 
@@ -891,13 +931,19 @@ fn weekday_from_marker(value: &str) -> Option<WeekdayDto> {
         _ => return None,
     };
 
-    ordered_weekdays().into_iter().find(|weekday| weekday.id == id)
+    ordered_weekdays()
+        .into_iter()
+        .find(|weekday| weekday.id == id)
 }
 
 fn parse_platform_note(raw: &str) -> String {
     let mut values = area_regex()
         .captures_iter(raw)
-        .filter_map(|capture| capture.name("name").map(|value| sanitize_title(value.as_str())))
+        .filter_map(|capture| {
+            capture
+                .name("name")
+                .map(|value| sanitize_title(value.as_str()))
+        })
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>();
     values.sort();
@@ -1059,6 +1105,118 @@ fn parse_broadcast_time(value: Option<&str>) -> Option<u16> {
     let hour = hour.parse::<u16>().ok()?;
     let minute = minute.parse::<u16>().ok()?;
     Some(hour * 60 + minute)
+}
+
+fn derive_release_status(subject: &SubjectRaw, episodes: &[EpisodeRaw]) -> &'static str {
+    let today = Local::now().date_naive();
+
+    if parse_subject_date(subject.air_date.as_ref().or(subject.date.as_ref()))
+        .is_some_and(|date| date > today)
+    {
+        return "upcoming";
+    }
+
+    let episode_dates = episodes
+        .iter()
+        .filter_map(|episode| parse_episode_airdate(&episode.airdate))
+        .collect::<Vec<_>>();
+
+    if episode_dates.is_empty() {
+        return fallback_release_status(subject, today);
+    }
+
+    let aired_count = episode_dates.iter().filter(|date| **date <= today).count();
+    let future_count = episode_dates.len().saturating_sub(aired_count);
+
+    if aired_count == 0 && future_count > 0 {
+        return "upcoming";
+    }
+
+    if future_count > 0 {
+        return "airing";
+    }
+
+    if subject
+        .total_episodes
+        .and_then(|total| usize::try_from(total).ok())
+        .is_some_and(|total| aired_count < total)
+    {
+        return "airing";
+    }
+
+    "completed"
+}
+
+fn fallback_release_status(subject: &SubjectRaw, today: NaiveDate) -> &'static str {
+    if parse_subject_date(subject.air_date.as_ref().or(subject.date.as_ref()))
+        .is_some_and(|date| date > today)
+    {
+        return "upcoming";
+    }
+
+    let mut markers = String::new();
+    for item in &subject.infobox {
+        markers.push_str(&item.key);
+        markers.push(' ');
+        markers.push_str(&flatten_infobox_value(&item.value));
+        markers.push(' ');
+    }
+
+    let markers = markers.to_lowercase();
+    if markers.contains("放送中")
+        || markers.contains("播出中")
+        || markers.contains("播放中")
+        || markers.contains("连载中")
+        || markers.contains("連載中")
+        || markers.contains("配信中")
+        || markers.contains("上映中")
+        || markers.contains("airing")
+        || markers.contains("ongoing")
+    {
+        return "airing";
+    }
+
+    "completed"
+}
+
+fn parse_subject_date(value: Option<&String>) -> Option<NaiveDate> {
+    let value = value?;
+    parse_episode_airdate(value)
+}
+
+fn parse_episode_airdate(value: &str) -> Option<NaiveDate> {
+    let date_part = value
+        .trim()
+        .split_once('T')
+        .map(|(left, _)| left)
+        .unwrap_or(value)
+        .trim();
+
+    if date_part.is_empty() {
+        return None;
+    }
+
+    NaiveDate::parse_from_str(date_part, "%Y-%m-%d").ok()
+}
+
+fn flatten_infobox_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => String::new(),
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Number(number) => number.to_string(),
+        serde_json::Value::Bool(boolean) => boolean.to_string(),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .map(flatten_infobox_value)
+            .filter(|item| !item.is_empty())
+            .collect::<Vec<_>>()
+            .join(" / "),
+        serde_json::Value::Object(map) => map
+            .get("v")
+            .map(flatten_infobox_value)
+            .or_else(|| map.get("name").map(flatten_infobox_value))
+            .unwrap_or_default(),
+    }
 }
 
 fn weekday_block_regex() -> &'static Regex {

@@ -22,6 +22,7 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: "18px",
+    minHeight: "calc(100vh - 64px)",
   },
   surfaceCard: {
     padding: "20px 22px",
@@ -40,6 +41,9 @@ const useStyles = makeStyles({
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
     gap: "16px",
+    flex: "1 1 auto",
+    minHeight: 0,
+    alignItems: "stretch",
   },
   panel: {
     display: "flex",
@@ -50,6 +54,8 @@ const useStyles = makeStyles({
     border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)",
     minWidth: 0,
+    minHeight: 0,
+    height: "100%",
   },
   panelHeader: {
     display: "flex",
@@ -75,7 +81,8 @@ const useStyles = makeStyles({
     minWidth: 0,
   },
   listViewport: {
-    height: "clamp(440px, calc(100vh - 290px), 760px)",
+    flex: "1 1 auto",
+    minHeight: 0,
     overflowY: "auto",
     overflowX: "hidden",
     paddingRight: "6px",
@@ -83,7 +90,7 @@ const useStyles = makeStyles({
   progressGrid: {
     display: "grid",
     gridTemplateColumns: "1fr",
-    gridAutoRows: "192px",
+    gridAutoRows: "156px",
     gap: "12px",
   },
   progressCard: {
@@ -322,6 +329,10 @@ export function ResourcesPage() {
   }
 
   const sortedDownloads = useMemo(() => {
+    const visibleDownloads = downloads.filter(
+      (item) => item.state === "staged" || item.state === "queued" || item.state === "searching" || item.state === "starting" || item.state === "downloading",
+    );
+
     const priority = (state: string) => {
       switch (state) {
         case "downloading":
@@ -332,14 +343,12 @@ export function ResourcesPage() {
           return 2;
         case "queued":
           return 3;
-        case "seeding":
-          return 4;
         default:
-          return 5;
+          return 4;
       }
     };
 
-    return [...downloads].sort((left, right) => {
+    return [...visibleDownloads].sort((left, right) => {
       const stateRank = priority(left.state) - priority(right.state);
       if (stateRank !== 0) {
         return stateRank;
@@ -350,12 +359,12 @@ export function ResourcesPage() {
   }, [downloads]);
 
   const activeDownloadCount = useMemo(
-    () => downloads.filter((item) => item.state === "downloading" || item.state === "starting").length,
-    [downloads]
+    () => sortedDownloads.filter((item) => item.state === "downloading" || item.state === "starting").length,
+    [sortedDownloads]
   );
   const totalDownloadSpeed = useMemo(
-    () => downloads.reduce((sum, item) => sum + item.downloadRateBytes, 0),
-    [downloads]
+    () => sortedDownloads.reduce((sum, item) => sum + item.downloadRateBytes, 0),
+    [sortedDownloads]
   );
   return (
     <section className={styles.page}>

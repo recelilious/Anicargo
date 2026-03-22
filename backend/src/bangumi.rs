@@ -592,7 +592,7 @@ impl SubjectRaw {
             return "upcoming";
         }
 
-        if self.has_explicit_airing_marker() {
+        if self.has_explicit_airing_marker() || self.has_fallback_airing_marker() {
             return "airing";
         }
 
@@ -602,6 +602,25 @@ impl SubjectRaw {
     fn is_upcoming(&self) -> bool {
         parse_subject_date(self.air_date.as_ref().or(self.date.as_ref()))
             .is_some_and(|date| date > Local::now().date_naive())
+    }
+
+    fn has_fallback_airing_marker(&self) -> bool {
+        self.infobox.iter().any(|item| {
+            let key = item.key.to_lowercase();
+            let value = flatten_infobox_value(&item.value).to_lowercase();
+            let combined = format!("{key} {value}");
+
+            combined.contains("放送中")
+                || combined.contains("播出中")
+                || combined.contains("播放中")
+                || combined.contains("连载中")
+                || combined.contains("連載中")
+                || combined.contains("更新中")
+                || combined.contains("上映中")
+                || combined.contains("配信中")
+                || combined.contains("airing")
+                || combined.contains("ongoing")
+        })
     }
 
     fn has_explicit_airing_marker(&self) -> bool {
