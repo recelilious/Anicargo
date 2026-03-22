@@ -10,6 +10,7 @@ pub struct AppConfig {
     pub storage: StorageConfig,
     pub bangumi: BangumiConfig,
     pub yuc: YucConfig,
+    pub animegarden: AnimeGardenConfig,
     pub auth: AuthConfig,
 }
 
@@ -36,6 +37,14 @@ pub struct BangumiConfig {
 pub struct YucConfig {
     pub base_url: String,
     pub request_timeout_secs: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AnimeGardenConfig {
+    pub base_url: String,
+    pub request_timeout_secs: u64,
+    pub page_size: usize,
+    pub max_pages: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +76,7 @@ struct PartialConfig {
     storage: Option<PartialStorageConfig>,
     bangumi: Option<PartialBangumiConfig>,
     yuc: Option<PartialYucConfig>,
+    animegarden: Option<PartialAnimeGardenConfig>,
     auth: Option<PartialAuthConfig>,
 }
 
@@ -96,6 +106,14 @@ struct PartialYucConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
+struct PartialAnimeGardenConfig {
+    base_url: Option<String>,
+    request_timeout_secs: Option<u64>,
+    page_size: Option<usize>,
+    max_pages: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 struct PartialAuthConfig {
     default_admin_username: Option<String>,
     default_admin_password: Option<String>,
@@ -122,6 +140,12 @@ impl Default for AppConfig {
             yuc: YucConfig {
                 base_url: "https://yuc.wiki".to_owned(),
                 request_timeout_secs: 10,
+            },
+            animegarden: AnimeGardenConfig {
+                base_url: "https://api.animes.garden".to_owned(),
+                request_timeout_secs: 20,
+                page_size: 25,
+                max_pages: 2,
             },
             auth: AuthConfig {
                 default_admin_username: "admin".to_owned(),
@@ -214,6 +238,21 @@ impl AppConfig {
             }
             if let Some(request_timeout_secs) = yuc.request_timeout_secs {
                 self.yuc.request_timeout_secs = request_timeout_secs;
+            }
+        }
+
+        if let Some(animegarden) = partial.animegarden {
+            if let Some(base_url) = animegarden.base_url {
+                self.animegarden.base_url = base_url;
+            }
+            if let Some(request_timeout_secs) = animegarden.request_timeout_secs {
+                self.animegarden.request_timeout_secs = request_timeout_secs;
+            }
+            if let Some(page_size) = animegarden.page_size {
+                self.animegarden.page_size = page_size.max(1);
+            }
+            if let Some(max_pages) = animegarden.max_pages {
+                self.animegarden.max_pages = max_pages.max(1);
             }
         }
 

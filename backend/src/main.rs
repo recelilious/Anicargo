@@ -1,7 +1,9 @@
+mod animegarden;
 mod auth;
 mod bangumi;
 mod config;
 mod db;
+mod discovery;
 mod downloads;
 mod routes;
 mod types;
@@ -12,9 +14,11 @@ use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
+    animegarden::AnimeGardenClient,
     bangumi::BangumiClient,
     config::AppConfig,
     db::connect_and_migrate,
+    discovery::ResourceDiscoveryCoordinator,
     downloads::{DownloadCoordinator, PlanningDownloadEngine},
     routes::AppState,
     yuc::YucClient,
@@ -39,13 +43,17 @@ async fn main() -> anyhow::Result<()> {
 
     let bangumi = BangumiClient::new(&config.bangumi).context("failed to initialize bangumi")?;
     let yuc = YucClient::new(&config.yuc).context("failed to initialize yuc")?;
+    let animegarden =
+        AnimeGardenClient::new(&config.animegarden).context("failed to initialize animegarden")?;
     let downloads = DownloadCoordinator::new(Arc::new(PlanningDownloadEngine));
+    let discovery = ResourceDiscoveryCoordinator::new(animegarden);
     let router = routes::build_router(AppState {
         config: config.clone(),
         pool,
         bangumi,
         yuc,
         downloads,
+        discovery,
     });
 
     let address = format!("{}:{}", config.server.host, config.server.port);

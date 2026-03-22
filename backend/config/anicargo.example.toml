@@ -15,6 +15,12 @@ request_timeout_secs = 15
 base_url = "https://yuc.wiki"
 request_timeout_secs = 10
 
+[animegarden]
+base_url = "https://api.animes.garden"
+request_timeout_secs = 20
+page_size = 25
+max_pages = 2
+
 [auth]
 default_admin_username = "admin"
 default_admin_password = "change-me-admin"

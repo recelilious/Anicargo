@@ -298,6 +298,10 @@ pub struct DownloadJobDto {
     pub engine_name: String,
     pub engine_job_ref: Option<String>,
     pub notes: Option<String>,
+    pub selected_candidate_id: Option<i64>,
+    pub selection_updated_at: Option<String>,
+    pub last_search_run_id: Option<i64>,
+    pub search_status: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -313,6 +317,39 @@ pub struct AdminDownloadQueueResponse {
 pub struct ForceDownloadResponse {
     pub bangumi_subject_id: i64,
     pub decision: DownloadDecisionDto,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceCandidateDto {
+    pub id: i64,
+    pub download_job_id: i64,
+    pub search_run_id: i64,
+    pub bangumi_subject_id: i64,
+    pub provider: String,
+    pub provider_resource_id: String,
+    pub title: String,
+    pub href: String,
+    pub magnet: String,
+    pub release_type: String,
+    pub size_bytes: i64,
+    pub fansub_name: Option<String>,
+    pub publisher_name: String,
+    pub source_created_at: String,
+    pub source_fetched_at: String,
+    pub resolution: Option<String>,
+    pub locale_hint: Option<String>,
+    pub is_raw: bool,
+    pub score: f64,
+    pub rejected_reason: Option<String>,
+    pub discovered_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminDownloadCandidatesResponse {
+    pub download_job_id: i64,
+    pub items: Vec<ResourceCandidateDto>,
 }
 
 #[derive(Debug, Deserialize)]

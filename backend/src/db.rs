@@ -10,7 +10,9 @@ use sqlx::{
 use crate::{
     auth::{AdminIdentity, ViewerIdentity, generate_token, hash_password, verify_password},
     config::{AppConfig, AuthConfig},
-    types::{AdminCountsDto, AppError, DownloadJobDto, FansubRuleDto, PolicyDto},
+    types::{
+        AdminCountsDto, AppError, DownloadJobDto, FansubRuleDto, PolicyDto, ResourceCandidateDto,
+    },
 };
 
 #[derive(Debug, FromRow)]
@@ -57,8 +59,37 @@ struct DownloadJobRow {
     engine_name: String,
     engine_job_ref: Option<String>,
     notes: Option<String>,
+    selected_candidate_id: Option<i64>,
+    selection_updated_at: Option<String>,
+    last_search_run_id: Option<i64>,
+    search_status: String,
     created_at: String,
     updated_at: String,
+}
+
+#[derive(Debug, FromRow)]
+struct ResourceCandidateRow {
+    id: i64,
+    download_job_id: i64,
+    search_run_id: i64,
+    bangumi_subject_id: i64,
+    provider: String,
+    provider_resource_id: String,
+    title: String,
+    href: String,
+    magnet: String,
+    release_type: String,
+    size_bytes: i64,
+    fansub_name: Option<String>,
+    publisher_name: String,
+    source_created_at: String,
+    source_fetched_at: String,
+    resolution: Option<String>,
+    locale_hint: Option<String>,
+    is_raw: i64,
+    score: f64,
+    rejected_reason: Option<String>,
+    discovered_at: String,
 }
 
 pub struct NewDownloadJob {
@@ -73,6 +104,28 @@ pub struct NewDownloadJob {
     pub engine_name: String,
     pub engine_job_ref: Option<String>,
     pub notes: Option<String>,
+}
+
+pub struct NewResourceCandidate {
+    pub download_job_id: i64,
+    pub search_run_id: i64,
+    pub bangumi_subject_id: i64,
+    pub provider: String,
+    pub provider_resource_id: String,
+    pub title: String,
+    pub href: String,
+    pub magnet: String,
+    pub release_type: String,
+    pub size_bytes: i64,
+    pub fansub_name: Option<String>,
+    pub publisher_name: String,
+    pub source_created_at: String,
+    pub source_fetched_at: String,
+    pub resolution: Option<String>,
+    pub locale_hint: Option<String>,
+    pub is_raw: bool,
+    pub score: f64,
+    pub rejected_reason: Option<String>,
 }
 
 pub async fn connect_and_migrate(config: &AppConfig) -> anyhow::Result<SqlitePool> {
@@ -612,6 +665,10 @@ pub async fn find_open_download_job(
             engine_name,
             engine_job_ref,
             notes,
+            selected_candidate_id,
+            selection_updated_at,
+            last_search_run_id,
+            search_status,
             created_at,
             updated_at
          FROM download_jobs
@@ -680,6 +737,10 @@ pub async fn create_download_job(
         engine_name: job.engine_name,
         engine_job_ref: job.engine_job_ref,
         notes: job.notes,
+        selected_candidate_id: None,
+        selection_updated_at: None,
+        last_search_run_id: None,
+        search_status: "idle".to_owned(),
         created_at: now.clone(),
         updated_at: now,
     })
@@ -728,6 +789,10 @@ pub async fn list_download_jobs(
             engine_name,
             engine_job_ref,
             notes,
+            selected_candidate_id,
+            selection_updated_at,
+            last_search_run_id,
+            search_status,
             created_at,
             updated_at
          FROM download_jobs
@@ -740,6 +805,347 @@ pub async fn list_download_jobs(
     .map_err(|_| AppError::internal("failed to list download jobs"))?;
 
     Ok(rows.into_iter().map(map_download_job).collect())
+}
+
+pub async fn start_resource_search_run(
+    pool: &SqlitePool,
+    download_job_id: i64,
+    bangumi_subject_id: i64,
+    strategy: &str,
+) -> Result<i64, AppError> {
+    let now = now_string();
+
+    let result = sqlx::query(
+        "INSERT INTO resource_search_runs (
+            download_job_id,
+            bangumi_subject_id,
+            strategy,
+            status,
+            created_at
+         ) VALUES (?1, ?2, ?3, 'running', ?4)",
+    )
+    .bind(download_job_id)
+    .bind(bangumi_subject_id)
+    .bind(strategy)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to create resource search run"))?;
+
+    sqlx::query(
+        "UPDATE download_jobs
+         SET search_status = 'running',
+             updated_at = ?2
+         WHERE id = ?1",
+    )
+    .bind(download_job_id)
+    .bind(now_string())
+    .execute(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to mark download job as searching"))?;
+
+    Ok(result.last_insert_rowid())
+}
+
+pub async fn finish_resource_search_run(
+    pool: &SqlitePool,
+    search_run_id: i64,
+    download_job_id: i64,
+    status: &str,
+    candidate_count: i64,
+    best_candidate_id: Option<i64>,
+    notes: Option<&str>,
+) -> Result<(), AppError> {
+    let now = now_string();
+
+    sqlx::query(
+        "UPDATE resource_search_runs
+         SET status = ?2,
+             candidate_count = ?3,
+             best_candidate_id = ?4,
+             notes = ?5,
+             completed_at = ?6
+         WHERE id = ?1",
+    )
+    .bind(search_run_id)
+    .bind(status)
+    .bind(candidate_count)
+    .bind(best_candidate_id)
+    .bind(notes)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to finish resource search run"))?;
+
+    sqlx::query(
+        "UPDATE download_jobs
+         SET last_search_run_id = ?2,
+             search_status = ?3,
+             updated_at = ?4
+         WHERE id = ?1",
+    )
+    .bind(download_job_id)
+    .bind(search_run_id)
+    .bind(status)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to update download job search state"))?;
+
+    Ok(())
+}
+
+pub async fn create_resource_candidate(
+    pool: &SqlitePool,
+    candidate: NewResourceCandidate,
+) -> Result<ResourceCandidateDto, AppError> {
+    let now = now_string();
+    let result = sqlx::query(
+        "INSERT INTO resource_candidates (
+            download_job_id,
+            search_run_id,
+            bangumi_subject_id,
+            provider,
+            provider_resource_id,
+            title,
+            href,
+            magnet,
+            release_type,
+            size_bytes,
+            fansub_name,
+            publisher_name,
+            source_created_at,
+            source_fetched_at,
+            resolution,
+            locale_hint,
+            is_raw,
+            score,
+            rejected_reason,
+            discovered_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+         ON CONFLICT(download_job_id, provider, provider_resource_id) DO UPDATE SET
+            search_run_id = excluded.search_run_id,
+            title = excluded.title,
+            href = excluded.href,
+            magnet = excluded.magnet,
+            release_type = excluded.release_type,
+            size_bytes = excluded.size_bytes,
+            fansub_name = excluded.fansub_name,
+            publisher_name = excluded.publisher_name,
+            source_created_at = excluded.source_created_at,
+            source_fetched_at = excluded.source_fetched_at,
+            resolution = excluded.resolution,
+            locale_hint = excluded.locale_hint,
+            is_raw = excluded.is_raw,
+            score = excluded.score,
+            rejected_reason = excluded.rejected_reason,
+            discovered_at = excluded.discovered_at",
+    )
+    .bind(candidate.download_job_id)
+    .bind(candidate.search_run_id)
+    .bind(candidate.bangumi_subject_id)
+    .bind(&candidate.provider)
+    .bind(&candidate.provider_resource_id)
+    .bind(&candidate.title)
+    .bind(&candidate.href)
+    .bind(&candidate.magnet)
+    .bind(&candidate.release_type)
+    .bind(candidate.size_bytes)
+    .bind(candidate.fansub_name.as_deref())
+    .bind(&candidate.publisher_name)
+    .bind(&candidate.source_created_at)
+    .bind(&candidate.source_fetched_at)
+    .bind(candidate.resolution.as_deref())
+    .bind(candidate.locale_hint.as_deref())
+    .bind(bool_to_int(candidate.is_raw))
+    .bind(candidate.score)
+    .bind(candidate.rejected_reason.as_deref())
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to create resource candidate"))?;
+
+    let row = sqlx::query_as::<_, ResourceCandidateRow>(
+        "SELECT
+            id,
+            download_job_id,
+            search_run_id,
+            bangumi_subject_id,
+            provider,
+            provider_resource_id,
+            title,
+            href,
+            magnet,
+            release_type,
+            size_bytes,
+            fansub_name,
+            publisher_name,
+            source_created_at,
+            source_fetched_at,
+            resolution,
+            locale_hint,
+            is_raw,
+            score,
+            rejected_reason,
+            discovered_at
+         FROM resource_candidates
+         WHERE download_job_id = ?1 AND provider = ?2 AND provider_resource_id = ?3",
+    )
+    .bind(candidate.download_job_id)
+    .bind(&candidate.provider)
+    .bind(&candidate.provider_resource_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to read resource candidate"))?;
+
+    if result.rows_affected() < 1 {
+        return Err(AppError::internal("failed to store resource candidate"));
+    }
+
+    Ok(map_resource_candidate(row))
+}
+
+pub async fn assign_download_job_candidate(
+    pool: &SqlitePool,
+    download_job_id: i64,
+    candidate_id: Option<i64>,
+) -> Result<(), AppError> {
+    let now = now_string();
+
+    sqlx::query(
+        "UPDATE download_jobs
+         SET selected_candidate_id = ?2,
+             selection_updated_at = ?3,
+             updated_at = ?3
+         WHERE id = ?1",
+    )
+    .bind(download_job_id)
+    .bind(candidate_id)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to assign selected resource candidate"))?;
+
+    Ok(())
+}
+
+pub async fn current_selected_candidate_for_job(
+    pool: &SqlitePool,
+    download_job_id: i64,
+) -> Result<Option<ResourceCandidateDto>, AppError> {
+    let row = sqlx::query_as::<_, ResourceCandidateRow>(
+        "SELECT
+            resource_candidates.id,
+            resource_candidates.download_job_id,
+            resource_candidates.search_run_id,
+            resource_candidates.bangumi_subject_id,
+            resource_candidates.provider,
+            resource_candidates.provider_resource_id,
+            resource_candidates.title,
+            resource_candidates.href,
+            resource_candidates.magnet,
+            resource_candidates.release_type,
+            resource_candidates.size_bytes,
+            resource_candidates.fansub_name,
+            resource_candidates.publisher_name,
+            resource_candidates.source_created_at,
+            resource_candidates.source_fetched_at,
+            resource_candidates.resolution,
+            resource_candidates.locale_hint,
+            resource_candidates.is_raw,
+            resource_candidates.score,
+            resource_candidates.rejected_reason,
+            resource_candidates.discovered_at
+         FROM download_jobs
+         INNER JOIN resource_candidates ON resource_candidates.id = download_jobs.selected_candidate_id
+         WHERE download_jobs.id = ?1",
+    )
+    .bind(download_job_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to read selected resource candidate"))?;
+
+    Ok(row.map(map_resource_candidate))
+}
+
+pub async fn latest_selected_candidate_for_subject(
+    pool: &SqlitePool,
+    bangumi_subject_id: i64,
+) -> Result<Option<ResourceCandidateDto>, AppError> {
+    let row = sqlx::query_as::<_, ResourceCandidateRow>(
+        "SELECT
+            resource_candidates.id,
+            resource_candidates.download_job_id,
+            resource_candidates.search_run_id,
+            resource_candidates.bangumi_subject_id,
+            resource_candidates.provider,
+            resource_candidates.provider_resource_id,
+            resource_candidates.title,
+            resource_candidates.href,
+            resource_candidates.magnet,
+            resource_candidates.release_type,
+            resource_candidates.size_bytes,
+            resource_candidates.fansub_name,
+            resource_candidates.publisher_name,
+            resource_candidates.source_created_at,
+            resource_candidates.source_fetched_at,
+            resource_candidates.resolution,
+            resource_candidates.locale_hint,
+            resource_candidates.is_raw,
+            resource_candidates.score,
+            resource_candidates.rejected_reason,
+            resource_candidates.discovered_at
+         FROM download_jobs
+         INNER JOIN resource_candidates ON resource_candidates.id = download_jobs.selected_candidate_id
+         WHERE download_jobs.bangumi_subject_id = ?1
+         ORDER BY download_jobs.selection_updated_at DESC, download_jobs.created_at DESC
+         LIMIT 1",
+    )
+    .bind(bangumi_subject_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to read latest selected candidate"))?;
+
+    Ok(row.map(map_resource_candidate))
+}
+
+pub async fn list_resource_candidates(
+    pool: &SqlitePool,
+    download_job_id: i64,
+) -> Result<Vec<ResourceCandidateDto>, AppError> {
+    let rows = sqlx::query_as::<_, ResourceCandidateRow>(
+        "SELECT
+            id,
+            download_job_id,
+            search_run_id,
+            bangumi_subject_id,
+            provider,
+            provider_resource_id,
+            title,
+            href,
+            magnet,
+            release_type,
+            size_bytes,
+            fansub_name,
+            publisher_name,
+            source_created_at,
+            source_fetched_at,
+            resolution,
+            locale_hint,
+            is_raw,
+            score,
+            rejected_reason,
+            discovered_at
+         FROM resource_candidates
+         WHERE download_job_id = ?1
+         ORDER BY rejected_reason IS NOT NULL ASC, score DESC, source_created_at DESC",
+    )
+    .bind(download_job_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to list resource candidates"))?;
+
+    Ok(rows.into_iter().map(map_resource_candidate).collect())
 }
 
 async fn count(pool: &SqlitePool, query: &str) -> Result<i64, AppError> {
@@ -817,7 +1223,37 @@ fn map_download_job(row: DownloadJobRow) -> DownloadJobDto {
         engine_name: row.engine_name,
         engine_job_ref: row.engine_job_ref,
         notes: row.notes,
+        selected_candidate_id: row.selected_candidate_id,
+        selection_updated_at: row.selection_updated_at,
+        last_search_run_id: row.last_search_run_id,
+        search_status: row.search_status,
         created_at: row.created_at,
         updated_at: row.updated_at,
+    }
+}
+
+fn map_resource_candidate(row: ResourceCandidateRow) -> ResourceCandidateDto {
+    ResourceCandidateDto {
+        id: row.id,
+        download_job_id: row.download_job_id,
+        search_run_id: row.search_run_id,
+        bangumi_subject_id: row.bangumi_subject_id,
+        provider: row.provider,
+        provider_resource_id: row.provider_resource_id,
+        title: row.title,
+        href: row.href,
+        magnet: row.magnet,
+        release_type: row.release_type,
+        size_bytes: row.size_bytes,
+        fansub_name: row.fansub_name,
+        publisher_name: row.publisher_name,
+        source_created_at: row.source_created_at,
+        source_fetched_at: row.source_fetched_at,
+        resolution: row.resolution,
+        locale_hint: row.locale_hint,
+        is_raw: row.is_raw != 0,
+        score: row.score,
+        rejected_reason: row.rejected_reason,
+        discovered_at: row.discovered_at,
     }
 }

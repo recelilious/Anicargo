@@ -9,19 +9,22 @@ use sqlx::SqlitePool;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::{
+    animegarden::AnimeGardenSearchProfile,
     auth::{
         AdminIdentity, ViewerIdentity, extract_admin_token, extract_device_id, extract_user_token,
     },
     bangumi::{BangumiClient, BangumiSearchQuery, SearchFacets},
     config::AppConfig,
     db,
+    discovery::ResourceDiscoveryCoordinator,
     downloads::{DownloadCoordinator, DownloadDemandInput},
     types::{
-        AdminDashboardResponse, AdminDownloadQueueResponse, ApiEnvelope, AppError, AuthResponse,
-        BootstrapResponse, CalendarDayDto, CalendarResponse, CredentialsRequest, FansubRuleDto,
-        ForceDownloadResponse, HealthResponse, SearchRequest, SearchResponse, SubjectCardDto,
-        SubjectDetailDto, SubjectDetailResponse, SubscriptionStateDto, ToggleSubscriptionResponse,
-        UpdatePolicyRequest, UpsertFansubRuleRequest, ViewerSummary,
+        AdminDashboardResponse, AdminDownloadCandidatesResponse, AdminDownloadQueueResponse,
+        ApiEnvelope, AppError, AuthResponse, BootstrapResponse, CalendarDayDto, CalendarResponse,
+        CredentialsRequest, FansubRuleDto, ForceDownloadResponse, HealthResponse, SearchRequest,
+        SearchResponse, SubjectCardDto, SubjectDetailDto, SubjectDetailResponse,
+        SubscriptionStateDto, ToggleSubscriptionResponse, UpdatePolicyRequest,
+        UpsertFansubRuleRequest, ViewerSummary,
     },
     yuc::YucClient,
 };
@@ -33,6 +36,7 @@ pub struct AppState {
     pub bangumi: BangumiClient,
     pub yuc: YucClient,
     pub downloads: DownloadCoordinator,
+    pub discovery: ResourceDiscoveryCoordinator,
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -54,6 +58,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/admin/logout", post(admin_logout))
         .route("/api/admin/dashboard", get(admin_dashboard))
         .route("/api/admin/downloads", get(admin_download_queue))
+        .route(
+            "/api/admin/downloads/{job_id}/candidates",
+            get(admin_download_candidates),
+        )
         .route(
             "/api/admin/downloads/{subject_id}/force",
             post(force_download_job),
@@ -238,14 +246,14 @@ async fn toggle_subscription(
     let policy = db::load_policy(&state.pool).await?;
     let (is_subscribed, subscription_count) =
         db::toggle_subscription(&state.pool, &viewer, subject_id).await?;
-    let release_status = resolve_subject_release_status(&state.bangumi, subject_id).await;
+    let profile = resolve_subject_search_profile(&state.bangumi, subject_id).await;
     let download = state
         .downloads
         .reconcile_subscription_demand(
             &state.pool,
             DownloadDemandInput {
                 bangumi_subject_id: subject_id,
-                release_status,
+                release_status: profile.release_status.clone(),
                 subscription_count,
                 threshold: policy.subscription_threshold,
                 trigger_kind: "subscription",
@@ -254,6 +262,24 @@ async fn toggle_subscription(
             },
         )
         .await?;
+
+    if download.reason == "queued_threshold_job" {
+        if let Some(job) = download.job.as_ref() {
+            let discovery_profile = profile.to_discovery_profile();
+            if let Err(error) = state
+                .discovery
+                .discover_for_job(&state.pool, job, &discovery_profile, &policy)
+                .await
+            {
+                tracing::warn!(
+                    job_id = job.id,
+                    subject_id,
+                    error = %error,
+                    "Resource discovery failed after subscription-triggered queueing"
+                );
+            }
+        }
+    }
 
     Ok(Json(ApiEnvelope::new(ToggleSubscriptionResponse {
         bangumi_subject_id: subject_id,
@@ -391,6 +417,20 @@ async fn admin_download_queue(
     Ok(Json(ApiEnvelope::new(AdminDownloadQueueResponse { items })))
 }
 
+async fn admin_download_candidates(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(job_id): Path<i64>,
+) -> Result<Json<ApiEnvelope<AdminDownloadCandidatesResponse>>, AppError> {
+    require_admin(&state.pool, &headers).await?;
+    let items = db::list_resource_candidates(&state.pool, job_id).await?;
+
+    Ok(Json(ApiEnvelope::new(AdminDownloadCandidatesResponse {
+        download_job_id: job_id,
+        items,
+    })))
+}
+
 async fn force_download_job(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -399,14 +439,14 @@ async fn force_download_job(
     let admin = require_admin(&state.pool, &headers).await?;
     let policy = db::load_policy(&state.pool).await?;
     let subscription_count = db::total_subscription_count(&state.pool, subject_id).await?;
-    let release_status = resolve_subject_release_status(&state.bangumi, subject_id).await;
+    let profile = resolve_subject_search_profile(&state.bangumi, subject_id).await;
     let decision = state
         .downloads
         .reconcile_subscription_demand(
             &state.pool,
             DownloadDemandInput {
                 bangumi_subject_id: subject_id,
-                release_status,
+                release_status: profile.release_status.clone(),
                 subscription_count,
                 threshold: policy.subscription_threshold,
                 trigger_kind: "admin_force",
@@ -415,6 +455,22 @@ async fn force_download_job(
             },
         )
         .await?;
+
+    if let Some(job) = decision.job.as_ref() {
+        let discovery_profile = profile.to_discovery_profile();
+        if let Err(error) = state
+            .discovery
+            .discover_for_job(&state.pool, job, &discovery_profile, &policy)
+            .await
+        {
+            tracing::warn!(
+                job_id = job.id,
+                subject_id,
+                error = %error,
+                "Resource discovery failed after admin force queueing"
+            );
+        }
+    }
 
     Ok(Json(ApiEnvelope::new(ForceDownloadResponse {
         bangumi_subject_id: subject_id,
@@ -541,16 +597,47 @@ async fn enrich_detail(yuc: &YucClient, detail: SubjectDetailDto) -> SubjectDeta
     yuc.enrich_detail(detail).await
 }
 
-async fn resolve_subject_release_status(bangumi: &BangumiClient, subject_id: i64) -> String {
+async fn resolve_subject_search_profile(
+    bangumi: &BangumiClient,
+    subject_id: i64,
+) -> AnimeGardenSearchProfileWithStatus {
     match bangumi.fetch_subject(subject_id).await {
-        Ok(subject) => subject.to_card().release_status,
+        Ok(subject) => AnimeGardenSearchProfileWithStatus {
+            bangumi_subject_id: subject_id,
+            title: subject.name.clone(),
+            title_cn: subject.name_cn.clone(),
+            release_status: subject.to_card().release_status,
+        },
         Err(error) => {
             tracing::warn!(
                 subject_id,
                 error = %error,
-                "Failed to resolve subject release status; falling back to completed"
+                "Failed to resolve subject metadata for resource discovery; falling back to subject id only"
             );
-            "completed".to_owned()
+            AnimeGardenSearchProfileWithStatus {
+                bangumi_subject_id: subject_id,
+                title: String::new(),
+                title_cn: String::new(),
+                release_status: "completed".to_owned(),
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AnimeGardenSearchProfileWithStatus {
+    bangumi_subject_id: i64,
+    title: String,
+    title_cn: String,
+    release_status: String,
+}
+
+impl AnimeGardenSearchProfileWithStatus {
+    fn to_discovery_profile(&self) -> AnimeGardenSearchProfile {
+        AnimeGardenSearchProfile {
+            bangumi_subject_id: self.bangumi_subject_id,
+            title: self.title.clone(),
+            title_cn: self.title_cn.clone(),
         }
     }
 }
