@@ -334,6 +334,7 @@ export type ResourceLibraryItem = {
 export type ResourceLibraryResponse = {
   items: ResourceLibraryItem[];
   total: number;
+  totalSizeBytes: number;
   page: number;
   pageSize: number;
   hasNextPage: boolean;

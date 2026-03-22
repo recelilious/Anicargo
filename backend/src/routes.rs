@@ -313,13 +313,14 @@ async fn resources(
     let page = request.page.unwrap_or(1).max(1);
     let page_size = request.page_size.unwrap_or(30).clamp(1, 60);
     let offset = (page - 1) * page_size;
-    let (total, items) =
+    let (total, total_size_bytes, items) =
         db::list_resource_library_items(&state.pool, request.keyword.as_deref(), page_size, offset)
             .await?;
 
     Ok(Json(ApiEnvelope::new(ResourceLibraryResponse {
         items,
         total,
+        total_size_bytes,
         page,
         page_size,
         has_next_page: offset + page_size < total,

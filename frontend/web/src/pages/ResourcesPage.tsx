@@ -33,20 +33,61 @@ const useStyles = makeStyles({
     display: "flex",
     justifyContent: "space-between",
     gap: "16px",
-    alignItems: "flex-end",
+    alignItems: "flex-start",
     flexWrap: "wrap",
   },
-  stats: {
+  contentGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+    gap: "16px",
+  },
+  panel: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "14px",
+    padding: "18px",
+    backgroundColor: "var(--app-surface-1)",
+    border: "1px solid var(--app-border)",
+    boxShadow: "var(--app-card-shadow)",
+    minWidth: 0,
+  },
+  panelHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
     gap: "12px",
+    flexWrap: "wrap",
+  },
+  panelStats: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(120px, 1fr))",
+    gap: "10px",
+    width: "min(320px, 100%)",
+  },
+  statBox: {
+    padding: "12px 14px",
+    borderRadius: "18px",
+    border: "1px solid var(--app-border)",
+    backgroundColor: "var(--app-surface-2)",
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+    minWidth: 0,
+  },
+  listViewport: {
+    height: "clamp(440px, calc(100vh - 290px), 760px)",
+    overflowY: "auto",
+    overflowX: "hidden",
+    paddingRight: "6px",
   },
   progressGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+    gridTemplateColumns: "1fr",
+    gridAutoRows: "192px",
     gap: "12px",
   },
   progressCard: {
+    height: "100%",
     padding: "16px 18px",
     display: "flex",
     flexDirection: "column",
@@ -54,6 +95,7 @@ const useStyles = makeStyles({
     backgroundColor: "var(--app-surface-1)",
     border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)",
+    minWidth: 0,
   },
   progressHeader: {
     display: "flex",
@@ -66,12 +108,36 @@ const useStyles = makeStyles({
     gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
     gap: "8px",
   },
+  titleBlock: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+    minWidth: 0,
+  },
+  titleLine: {
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+  subtitleLine: {
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    color: "var(--app-muted)",
+  },
+  progressText: {
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
   list: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+    gridTemplateColumns: "1fr",
+    gridAutoRows: "156px",
     gap: "12px",
   },
   itemCard: {
+    height: "100%",
     padding: "16px 18px",
     display: "flex",
     flexDirection: "column",
@@ -161,6 +227,7 @@ export function ResourcesPage() {
   const [items, setItems] = useState<ResourceLibraryItem[]>([]);
   const [downloads, setDownloads] = useState<ActiveDownload[]>([]);
   const [total, setTotal] = useState(0);
+  const [totalSizeBytes, setTotalSizeBytes] = useState(0);
   const [page, setPage] = useState(1);
   const [hasNextPage, setHasNextPage] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -190,6 +257,7 @@ export function ResourcesPage() {
 
         setItems(resourceResponse.items);
         setTotal(resourceResponse.total);
+        setTotalSizeBytes(resourceResponse.totalSizeBytes);
         setPage(resourceResponse.page);
         setHasNextPage(resourceResponse.hasNextPage);
         setDownloads(downloadResponse.items);
@@ -247,13 +315,48 @@ export function ResourcesPage() {
       setPage(response.page);
       setHasNextPage(response.hasNextPage);
       setTotal(response.total);
+      setTotalSizeBytes(response.totalSizeBytes);
     } finally {
       setIsLoadingMore(false);
     }
   }
 
-  const playableCount = useMemo(() => items.filter((item) => item.status === "ready").length, [items]);
+  const sortedDownloads = useMemo(() => {
+    const priority = (state: string) => {
+      switch (state) {
+        case "downloading":
+          return 0;
+        case "starting":
+          return 1;
+        case "searching":
+          return 2;
+        case "queued":
+          return 3;
+        case "seeding":
+          return 4;
+        default:
+          return 5;
+      }
+    };
 
+    return [...downloads].sort((left, right) => {
+      const stateRank = priority(left.state) - priority(right.state);
+      if (stateRank !== 0) {
+        return stateRank;
+      }
+
+      return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+    });
+  }, [downloads]);
+
+  const activeDownloadCount = useMemo(
+    () => downloads.filter((item) => item.state === "downloading" || item.state === "starting").length,
+    [downloads]
+  );
+  const totalDownloadSpeed = useMemo(
+    () => downloads.reduce((sum, item) => sum + item.downloadRateBytes, 0),
+    [downloads]
+  );
   return (
     <section className={styles.page}>
       <Card className={styles.surfaceCard}>
@@ -284,98 +387,151 @@ export function ResourcesPage() {
         </div>
       </Card>
 
-      <div className={styles.stats}>
-        <Card className={styles.surfaceCard}>
-          <Text weight="semibold">进行中的下载</Text>
-          <Text>{downloads.length}</Text>
-        </Card>
-        <Card className={styles.surfaceCard}>
-          <Text weight="semibold">资源总数</Text>
-          <Text>{total}</Text>
-        </Card>
-        <Card className={styles.surfaceCard}>
-          <Text weight="semibold">当前可播</Text>
-          <Text>{playableCount}</Text>
-        </Card>
-      </div>
-
-      {downloads.length > 0 ? (
-        <div className={styles.progressGrid}>
-          {downloads.map((download) => {
-            const total = Math.max(download.totalBytes, download.downloadedBytes);
-            const progressValue = total > 0 ? download.downloadedBytes / total : 0;
-
-            return (
-              <Link key={`${download.bangumiSubjectId}-${download.slotKey}`} className={styles.link} to={`/title/${download.bangumiSubjectId}`}>
-                <Card className={styles.progressCard}>
-                  <div className={styles.progressHeader}>
-                    <div>
-                      <Text weight="semibold">{download.titleCn || download.title}</Text>
-                      <Text className={styles.muted}>{download.sourceFansubName ?? download.sourceTitle}</Text>
-                    </div>
-                    <Text className={styles.muted}>{formatDownloadState(download.state)}</Text>
-                  </div>
-
-                  <ProgressBar value={Math.max(0, Math.min(1, progressValue))} />
-                  <Text>{formatProgress(download)}</Text>
-
-                  <div className={styles.progressMeta}>
-                    <div>
-                      <Text size={200} className={styles.muted}>
-                        速度
-                      </Text>
-                      <Text weight="semibold">{formatSpeed(download.downloadRateBytes)}</Text>
-                    </div>
-                    <div>
-                      <Text size={200} className={styles.muted}>
-                        Peer
-                      </Text>
-                      <Text weight="semibold">{download.peerCount}</Text>
-                    </div>
-                    <div>
-                      <Text size={200} className={styles.muted}>
-                        片段
-                      </Text>
-                      <Text weight="semibold">{download.episodeIndex ?? "?"}</Text>
-                    </div>
-                  </div>
-                </Card>
-              </Link>
-            );
-          })}
-        </div>
-      ) : null}
-
       {isLoading ? <Spinner label="正在读取资源..." /> : null}
       {error ? <Text>{error}</Text> : null}
 
-      {!isLoading && items.length === 0 ? (
-        <Card className={styles.surfaceCard}>
-          <Text weight="semibold">当前没有命中的资源</Text>
-        </Card>
-      ) : null}
+      <div className={styles.contentGrid}>
+        <section className={styles.panel}>
+          <div className={styles.panelHeader}>
+            <Text weight="semibold" size={700}>
+              下载进度
+            </Text>
 
-      <div className={styles.list}>
-        {items.map((item) => (
-          <Link key={item.id} className={styles.link} to={`/title/${item.bangumiSubjectId}`}>
+            <div className={styles.panelStats}>
+              <div className={styles.statBox}>
+                <Text size={200} className={styles.muted}>
+                  下载中
+                </Text>
+                <Text weight="semibold">{activeDownloadCount}</Text>
+              </div>
+              <div className={styles.statBox}>
+                <Text size={200} className={styles.muted}>
+                  下载速度
+                </Text>
+                <Text weight="semibold">{formatSpeed(totalDownloadSpeed)}</Text>
+              </div>
+            </div>
+          </div>
+
+          <div className={styles.listViewport}>
+            <div className={styles.progressGrid}>
+              {sortedDownloads.map((download) => {
+                const total = Math.max(download.totalBytes, download.downloadedBytes);
+                const progressValue = total > 0 ? download.downloadedBytes / total : 0;
+
+                return (
+                  <Link key={`${download.bangumiSubjectId}-${download.slotKey}`} className={styles.link} to={`/title/${download.bangumiSubjectId}`}>
+                    <Card className={styles.progressCard}>
+                      <div className={styles.progressHeader}>
+                        <div className={styles.titleBlock}>
+                          <Text weight="semibold" className={styles.titleLine}>
+                            {download.titleCn || download.title}
+                          </Text>
+                          <Text className={styles.subtitleLine}>
+                            {download.sourceFansubName ?? download.sourceTitle}
+                          </Text>
+                        </div>
+                        <Text className={styles.muted}>{formatDownloadState(download.state)}</Text>
+                      </div>
+
+                      <ProgressBar value={Math.max(0, Math.min(1, progressValue))} />
+                      <Text className={styles.progressText}>{formatProgress(download)}</Text>
+
+                      <div className={styles.progressMeta}>
+                        <div>
+                          <Text size={200} className={styles.muted}>
+                            速度
+                          </Text>
+                          <Text weight="semibold" className={styles.progressText}>
+                            {formatSpeed(download.downloadRateBytes)}
+                          </Text>
+                        </div>
+                        <div>
+                          <Text size={200} className={styles.muted}>
+                            Peer
+                          </Text>
+                          <Text weight="semibold">{download.peerCount}</Text>
+                        </div>
+                        <div>
+                          <Text size={200} className={styles.muted}>
+                            片段
+                          </Text>
+                          <Text weight="semibold" className={styles.progressText}>
+                            {download.episodeIndex ?? "?"}
+                          </Text>
+                        </div>
+                      </div>
+                    </Card>
+                  </Link>
+                );
+              })}
+
+              {!isLoading && sortedDownloads.length === 0 ? (
+                <Card className={styles.progressCard}>
+                  <Text weight="semibold">当前没有活动下载</Text>
+                </Card>
+              ) : null}
+            </div>
+          </div>
+        </section>
+
+        <section className={styles.panel}>
+          <div className={styles.panelHeader}>
+            <Text weight="semibold" size={700}>
+              已下载资源
+            </Text>
+
+            <div className={styles.panelStats}>
+              <div className={styles.statBox}>
+                <Text size={200} className={styles.muted}>
+                  资源总数
+                </Text>
+                <Text weight="semibold">{total}</Text>
+              </div>
+              <div className={styles.statBox}>
+                <Text size={200} className={styles.muted}>
+                  占用空间
+                </Text>
+                <Text weight="semibold">{formatBytes(totalSizeBytes)}</Text>
+              </div>
+            </div>
+          </div>
+
+          {!isLoading && items.length === 0 ? (
             <Card className={styles.itemCard}>
-              <Text weight="semibold">{item.fileName}</Text>
-              <Text className={styles.muted}>Bangumi {item.bangumiSubjectId}</Text>
-              <Text>{describeEpisode(item)}</Text>
-              <Text>{formatBytes(item.sizeBytes)}</Text>
-              <Text className={styles.muted}>{item.sourceFansubName ?? item.sourceTitle}</Text>
+              <Text weight="semibold">当前没有命中的资源</Text>
             </Card>
-          </Link>
-        ))}
-      </div>
+          ) : (
+            <div className={styles.listViewport}>
+              <div className={styles.list}>
+                {items.map((item) => (
+                  <Link key={item.id} className={styles.link} to={`/title/${item.bangumiSubjectId}`}>
+                    <Card className={styles.itemCard}>
+                      <Text weight="semibold" className={styles.titleLine}>
+                        {item.fileName}
+                      </Text>
+                      <Text className={styles.subtitleLine}>Bangumi {item.bangumiSubjectId}</Text>
+                      <Text className={styles.titleLine}>{describeEpisode(item)}</Text>
+                      <Text className={styles.titleLine}>{formatBytes(item.sizeBytes)}</Text>
+                      <Text className={styles.subtitleLine}>
+                        {item.sourceFansubName ?? item.sourceTitle}
+                      </Text>
+                    </Card>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
 
-      {hasNextPage ? (
-        <div className={styles.actions}>
-          <Button appearance="primary" onClick={() => void loadMore()} disabled={isLoadingMore}>
-            {isLoadingMore ? "正在加载..." : "加载更多"}
-          </Button>
-        </div>
-      ) : null}
+          {hasNextPage ? (
+            <div className={styles.actions}>
+              <Button appearance="primary" onClick={() => void loadMore()} disabled={isLoadingMore}>
+                {isLoadingMore ? "正在加载..." : "加载更多"}
+              </Button>
+            </div>
+          ) : null}
+        </section>
+      </div>
     </section>
   );
 }

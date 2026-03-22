@@ -518,6 +518,7 @@ pub struct ResourceLibraryItemDto {
 pub struct ResourceLibraryResponse {
     pub items: Vec<ResourceLibraryItemDto>,
     pub total: usize,
+    pub total_size_bytes: i64,
     pub page: usize,
     pub page_size: usize,
     pub has_next_page: bool,

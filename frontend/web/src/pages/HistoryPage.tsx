@@ -21,9 +21,42 @@ const useStyles = makeStyles({
     border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)",
   },
+  headerRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "16px",
+    flexWrap: "wrap",
+  },
+  statBox: {
+    padding: "12px 14px",
+    minWidth: "132px",
+    borderRadius: "18px",
+    border: "1px solid var(--app-border)",
+    backgroundColor: "var(--app-surface-2)",
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+  },
+  historyPanel: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "14px",
+    padding: "18px",
+    backgroundColor: "var(--app-surface-1)",
+    border: "1px solid var(--app-border)",
+    boxShadow: "var(--app-card-shadow)",
+  },
+  listViewport: {
+    height: "clamp(440px, calc(100vh - 290px), 760px)",
+    overflowY: "auto",
+    overflowX: "hidden",
+    paddingRight: "6px",
+  },
   list: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+    gridAutoRows: "176px",
     gap: "12px",
   },
   link: {
@@ -31,8 +64,9 @@ const useStyles = makeStyles({
     textDecorationLine: "none",
   },
   historyCard: {
+    height: "100%",
     display: "grid",
-    gridTemplateColumns: "84px minmax(0, 1fr)",
+    gridTemplateColumns: "92px minmax(0, 1fr)",
     gap: "14px",
     padding: "14px",
     backgroundColor: "var(--app-surface-1)",
@@ -40,8 +74,8 @@ const useStyles = makeStyles({
     boxShadow: "var(--app-card-shadow)",
   },
   poster: {
-    width: "84px",
-    height: "116px",
+    width: "92px",
+    height: "100%",
     borderRadius: "16px",
     backgroundColor: "var(--app-fallback-hero)",
     backgroundSize: "cover",
@@ -58,6 +92,11 @@ const useStyles = makeStyles({
     overflow: "hidden",
     WebkitLineClamp: "2",
     WebkitBoxOrient: "vertical",
+  },
+  singleLine: {
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
   },
   muted: {
     color: "var(--app-muted)",
@@ -169,14 +208,18 @@ export function HistoryPage() {
   return (
     <section className={styles.page}>
       <Card className={styles.surfaceCard}>
-        <Text weight="semibold" size={800}>
-          历史记录
-        </Text>
-      </Card>
+        <div className={styles.headerRow}>
+          <Text weight="semibold" size={800}>
+            历史记录
+          </Text>
 
-      <Card className={styles.surfaceCard}>
-        <Text weight="semibold">已记录</Text>
-        <Text>{total}</Text>
+          <div className={styles.statBox}>
+            <Text size={200} className={styles.muted}>
+              已记录
+            </Text>
+            <Text weight="semibold">{total}</Text>
+          </div>
+        </div>
       </Card>
 
       {isLoading ? <Spinner label="正在读取历史记录..." /> : null}
@@ -188,47 +231,55 @@ export function HistoryPage() {
         </Card>
       ) : null}
 
-      <div className={styles.list}>
-        {items.map((item) => (
-          <Link
-            key={`${item.bangumiSubjectId}-${item.bangumiEpisodeId}-${item.lastPlayedAt}`}
-            className={styles.link}
-            to={`/watch/${item.bangumiSubjectId}/${item.bangumiEpisodeId}`}
-            onClick={rememberCurrentPosition}
-          >
-            <Card className={styles.historyCard}>
-              <div
-                className={styles.poster}
-                style={{
-                  backgroundImage: item.imagePortrait ? `url(${item.imagePortrait})` : undefined,
-                }}
-              />
+      <section className={styles.historyPanel}>
+        <div className={styles.listViewport}>
+          <div className={styles.list}>
+            {items.map((item) => (
+              <Link
+                key={`${item.bangumiSubjectId}-${item.bangumiEpisodeId}-${item.lastPlayedAt}`}
+                className={styles.link}
+                to={`/watch/${item.bangumiSubjectId}/${item.bangumiEpisodeId}`}
+                onClick={rememberCurrentPosition}
+              >
+                <Card className={styles.historyCard}>
+                  <div
+                    className={styles.poster}
+                    style={{
+                      backgroundImage: item.imagePortrait ? `url(${item.imagePortrait})` : undefined,
+                    }}
+                  />
 
-              <div className={styles.body}>
-                <Text weight="semibold" className={styles.title}>
-                  {item.subjectTitleCn || item.subjectTitle}
-                </Text>
-                <Text className={styles.title}>
-                  第 {item.episodeNumber ?? "?"} 集 · {item.episodeTitleCn || item.episodeTitle || "未命名"}
-                </Text>
-                <Text className={styles.muted}>{item.fileName ?? "资源文件待确认"}</Text>
-                <Text className={styles.muted}>{item.sourceFansubName ?? "未标注字幕组"}</Text>
-                <Text className={styles.muted}>
-                  最近播放 {formatPlayedAt(item.lastPlayedAt)} · {item.playCount} 次
-                </Text>
-              </div>
-            </Card>
-          </Link>
-        ))}
-      </div>
-
-      {hasNextPage ? (
-        <div className={styles.actions}>
-          <Card className={styles.loadMoreCard} onClick={() => void loadMore()}>
-            <Text weight="semibold">{isLoadingMore ? "正在加载..." : "加载更多"}</Text>
-          </Card>
+                  <div className={styles.body}>
+                    <Text weight="semibold" className={styles.title}>
+                      {item.subjectTitleCn || item.subjectTitle}
+                    </Text>
+                    <Text className={styles.title}>
+                      第 {item.episodeNumber ?? "?"} 集 · {item.episodeTitleCn || item.episodeTitle || "未命名"}
+                    </Text>
+                    <Text className={`${styles.muted} ${styles.singleLine}`.trim()}>
+                      {item.fileName ?? "资源文件待确认"}
+                    </Text>
+                    <Text className={`${styles.muted} ${styles.singleLine}`.trim()}>
+                      {item.sourceFansubName ?? "未标注字幕组"}
+                    </Text>
+                    <Text className={`${styles.muted} ${styles.singleLine}`.trim()}>
+                      最近播放 {formatPlayedAt(item.lastPlayedAt)} · {item.playCount} 次
+                    </Text>
+                  </div>
+                </Card>
+              </Link>
+            ))}
+          </div>
         </div>
-      ) : null}
+
+        {hasNextPage ? (
+          <div className={styles.actions}>
+            <Card className={styles.loadMoreCard} onClick={() => void loadMore()}>
+              <Text weight="semibold">{isLoadingMore ? "正在加载..." : "加载更多"}</Text>
+            </Card>
+          </div>
+        ) : null}
+      </section>
     </section>
   );
 }

@@ -24,8 +24,28 @@ const useStyles = makeStyles({
     display: "flex",
     justifyContent: "space-between",
     gap: "16px",
-    alignItems: "flex-end",
+    alignItems: "flex-start",
     flexWrap: "wrap",
+  },
+  titleBlock: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+  },
+  headerStats: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(120px, 1fr))",
+    gap: "12px",
+    width: "min(320px, 100%)",
+  },
+  statBox: {
+    padding: "12px 14px",
+    borderRadius: "18px",
+    border: "1px solid var(--app-border)",
+    backgroundColor: "var(--app-surface-2)",
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
   },
   controls: {
     display: "grid",
@@ -33,11 +53,6 @@ const useStyles = makeStyles({
     gap: "12px",
     alignItems: "end",
     width: "min(560px, 100%)",
-  },
-  stats: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-    gap: "12px",
   },
   grid: {
     display: "grid",
@@ -140,9 +155,26 @@ export function SubscriptionsPage() {
     <section className={styles.page}>
       <Card className={styles.surfaceCard}>
         <div className={styles.headerRow}>
-          <Text weight="semibold" size={800}>
-            我的订阅
-          </Text>
+          <div className={styles.titleBlock}>
+            <Text weight="semibold" size={800}>
+              我的订阅
+            </Text>
+
+            <div className={styles.headerStats}>
+              <div className={styles.statBox}>
+                <Text size={200} className={styles.muted}>
+                  当前已加载
+                </Text>
+                <Text weight="semibold">{items.length}</Text>
+              </div>
+              <div className={styles.statBox}>
+                <Text size={200} className={styles.muted}>
+                  订阅总数
+                </Text>
+                <Text weight="semibold">{total}</Text>
+              </div>
+            </div>
+          </div>
 
           <div className={styles.controls}>
             <Field label="搜索">
@@ -173,17 +205,6 @@ export function SubscriptionsPage() {
           </div>
         </div>
       </Card>
-
-      <div className={styles.stats}>
-        <Card className={styles.surfaceCard}>
-          <Text weight="semibold">当前已加载</Text>
-          <Text>{items.length}</Text>
-        </Card>
-        <Card className={styles.surfaceCard}>
-          <Text weight="semibold">订阅总数</Text>
-          <Text>{total}</Text>
-        </Card>
-      </div>
 
       {isLoading ? <Spinner label="正在读取订阅..." /> : null}
       {error ? <Text>{error}</Text> : null}

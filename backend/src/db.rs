@@ -2182,7 +2182,7 @@ pub async fn list_resource_library_items(
     keyword: Option<&str>,
     limit: usize,
     offset: usize,
-) -> Result<(usize, Vec<ResourceLibraryItemDto>), AppError> {
+) -> Result<(usize, i64, Vec<ResourceLibraryItemDto>), AppError> {
     let limit = limit.clamp(1, 100) as i64;
     let offset = offset.max(0) as i64;
     let keyword = keyword
@@ -2204,6 +2204,22 @@ pub async fn list_resource_library_items(
     .fetch_one(pool)
     .await
     .map_err(|_| AppError::internal("failed to count resource library rows"))?;
+
+    let total_size_bytes = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT SUM(media_inventory.size_bytes)
+         FROM media_inventory
+         INNER JOIN download_executions ON download_executions.id = media_inventory.download_execution_id
+         WHERE media_inventory.status = 'ready'
+           AND (?1 IS NULL
+                OR media_inventory.file_name LIKE ?1
+                OR download_executions.source_title LIKE ?1
+                OR CAST(media_inventory.bangumi_subject_id AS TEXT) LIKE ?1)",
+    )
+    .bind(keyword.as_deref())
+    .fetch_one(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to sum resource library size"))?
+    .unwrap_or(0);
 
     let rows = sqlx::query_as::<_, ResourceLibraryRow>(
         "SELECT
@@ -2245,6 +2261,7 @@ pub async fn list_resource_library_items(
 
     Ok((
         total.max(0) as usize,
+        total_size_bytes.max(0),
         rows.into_iter().map(map_resource_library_item).collect(),
     ))
 }
