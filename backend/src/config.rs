@@ -11,6 +11,7 @@ pub struct AppConfig {
     pub bangumi: BangumiConfig,
     pub yuc: YucConfig,
     pub animegarden: AnimeGardenConfig,
+    pub telemetry: TelemetryConfig,
     pub auth: AuthConfig,
 }
 
@@ -55,6 +56,13 @@ pub struct AuthConfig {
     pub admin_session_hours: i64,
 }
 
+#[derive(Debug, Clone)]
+pub struct TelemetryConfig {
+    pub log_dir: PathBuf,
+    pub enable_terminal_ui: bool,
+    pub refresh_interval_secs: u64,
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "anicargo-server")]
 pub struct CliArgs {
@@ -77,6 +85,7 @@ struct PartialConfig {
     bangumi: Option<PartialBangumiConfig>,
     yuc: Option<PartialYucConfig>,
     animegarden: Option<PartialAnimeGardenConfig>,
+    telemetry: Option<PartialTelemetryConfig>,
     auth: Option<PartialAuthConfig>,
 }
 
@@ -121,6 +130,13 @@ struct PartialAuthConfig {
     admin_session_hours: Option<i64>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct PartialTelemetryConfig {
+    log_dir: Option<PathBuf>,
+    enable_terminal_ui: Option<bool>,
+    refresh_interval_secs: Option<u64>,
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -146,6 +162,11 @@ impl Default for AppConfig {
                 request_timeout_secs: 20,
                 page_size: 25,
                 max_pages: 2,
+            },
+            telemetry: TelemetryConfig {
+                log_dir: PathBuf::from("runtime/logs"),
+                enable_terminal_ui: true,
+                refresh_interval_secs: 1,
             },
             auth: AuthConfig {
                 default_admin_username: "admin".to_owned(),
@@ -253,6 +274,18 @@ impl AppConfig {
             }
             if let Some(max_pages) = animegarden.max_pages {
                 self.animegarden.max_pages = max_pages.max(1);
+            }
+        }
+
+        if let Some(telemetry) = partial.telemetry {
+            if let Some(log_dir) = telemetry.log_dir {
+                self.telemetry.log_dir = log_dir;
+            }
+            if let Some(enable_terminal_ui) = telemetry.enable_terminal_ui {
+                self.telemetry.enable_terminal_ui = enable_terminal_ui;
+            }
+            if let Some(refresh_interval_secs) = telemetry.refresh_interval_secs {
+                self.telemetry.refresh_interval_secs = refresh_interval_secs.max(1);
             }
         }
 

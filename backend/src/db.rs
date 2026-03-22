@@ -128,6 +128,18 @@ pub struct NewResourceCandidate {
     pub rejected_reason: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct RuntimeOverview {
+    pub devices: i64,
+    pub users: i64,
+    pub active_sessions: i64,
+    pub subscriptions: i64,
+    pub open_download_jobs: i64,
+    pub jobs_with_selection: i64,
+    pub running_searches: i64,
+    pub resource_candidates: i64,
+}
+
 pub async fn connect_and_migrate(config: &AppConfig) -> anyhow::Result<SqlitePool> {
     if let Some(parent) = config.storage.database_path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -579,6 +591,42 @@ pub async fn admin_counts(pool: &SqlitePool) -> Result<AdminCountsDto, AppError>
         users,
         subscriptions: device_subscriptions + user_subscriptions,
         fansub_rules,
+    })
+}
+
+pub async fn runtime_overview(pool: &SqlitePool) -> Result<RuntimeOverview, AppError> {
+    let devices = count(pool, "SELECT COUNT(*) FROM devices").await?;
+    let users = count(pool, "SELECT COUNT(*) FROM users").await?;
+    let user_sessions = count(pool, "SELECT COUNT(*) FROM user_sessions").await?;
+    let admin_sessions = count(pool, "SELECT COUNT(*) FROM admin_sessions").await?;
+    let subscriptions = count(pool, "SELECT COUNT(*) FROM device_subscriptions").await?
+        + count(pool, "SELECT COUNT(*) FROM user_subscriptions").await?;
+    let open_download_jobs = count(
+        pool,
+        "SELECT COUNT(*) FROM download_jobs WHERE lifecycle IN ('pending', 'queued', 'planning', 'searching', 'downloading', 'seeding')",
+    )
+    .await?;
+    let jobs_with_selection = count(
+        pool,
+        "SELECT COUNT(*) FROM download_jobs WHERE selected_candidate_id IS NOT NULL",
+    )
+    .await?;
+    let running_searches = count(
+        pool,
+        "SELECT COUNT(*) FROM resource_search_runs WHERE status = 'running'",
+    )
+    .await?;
+    let resource_candidates = count(pool, "SELECT COUNT(*) FROM resource_candidates").await?;
+
+    Ok(RuntimeOverview {
+        devices,
+        users,
+        active_sessions: user_sessions + admin_sessions,
+        subscriptions,
+        open_download_jobs,
+        jobs_with_selection,
+        running_searches,
+        resource_candidates,
     })
 }
 

@@ -409,6 +409,44 @@ pub struct AdminDashboardResponse {
     pub counts: AdminCountsDto,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeHttpStatsDto {
+    pub active_requests: u64,
+    pub total_requests: u64,
+    pub failed_requests: u64,
+    pub incoming_bytes: u64,
+    pub outgoing_bytes: u64,
+    pub last_route: String,
+    pub last_status: u16,
+    pub last_latency_ms: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeOverviewDto {
+    pub devices: i64,
+    pub users: i64,
+    pub active_sessions: i64,
+    pub subscriptions: i64,
+    pub open_download_jobs: i64,
+    pub jobs_with_selection: i64,
+    pub running_searches: i64,
+    pub resource_candidates: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminRuntimeResponse {
+    pub server_address: String,
+    pub uptime_seconds: u64,
+    pub uptime_label: String,
+    pub log_dir: String,
+    pub download_engine: String,
+    pub http: RuntimeHttpStatsDto,
+    pub runtime: RuntimeOverviewDto,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdatePolicyRequest {

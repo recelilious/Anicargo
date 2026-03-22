@@ -2,10 +2,12 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
     http::HeaderMap,
+    middleware,
     routing::{get, post, put},
 };
 use futures::stream::{self, StreamExt};
 use sqlx::SqlitePool;
+use std::sync::Arc;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::{
@@ -18,13 +20,14 @@ use crate::{
     db,
     discovery::ResourceDiscoveryCoordinator,
     downloads::{DownloadCoordinator, DownloadDemandInput},
+    telemetry::{self, RuntimeMetrics},
     types::{
         AdminDashboardResponse, AdminDownloadCandidatesResponse, AdminDownloadQueueResponse,
-        ApiEnvelope, AppError, AuthResponse, BootstrapResponse, CalendarDayDto, CalendarResponse,
-        CredentialsRequest, FansubRuleDto, ForceDownloadResponse, HealthResponse, SearchRequest,
-        SearchResponse, SubjectCardDto, SubjectDetailDto, SubjectDetailResponse,
-        SubscriptionStateDto, ToggleSubscriptionResponse, UpdatePolicyRequest,
-        UpsertFansubRuleRequest, ViewerSummary,
+        AdminRuntimeResponse, ApiEnvelope, AppError, AuthResponse, BootstrapResponse,
+        CalendarDayDto, CalendarResponse, CredentialsRequest, FansubRuleDto, ForceDownloadResponse,
+        HealthResponse, RuntimeHttpStatsDto, RuntimeOverviewDto, SearchRequest, SearchResponse,
+        SubjectCardDto, SubjectDetailDto, SubjectDetailResponse, SubscriptionStateDto,
+        ToggleSubscriptionResponse, UpdatePolicyRequest, UpsertFansubRuleRequest, ViewerSummary,
     },
     yuc::YucClient,
 };
@@ -37,9 +40,12 @@ pub struct AppState {
     pub yuc: YucClient,
     pub downloads: DownloadCoordinator,
     pub discovery: ResourceDiscoveryCoordinator,
+    pub metrics: Arc<RuntimeMetrics>,
 }
 
 pub fn build_router(state: AppState) -> Router {
+    let metrics = state.metrics.clone();
+
     Router::new()
         .route("/api/health", get(health))
         .route("/api/public/bootstrap", get(bootstrap))
@@ -57,6 +63,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/admin/login", post(admin_login))
         .route("/api/admin/logout", post(admin_logout))
         .route("/api/admin/dashboard", get(admin_dashboard))
+        .route("/api/admin/runtime", get(admin_runtime))
         .route("/api/admin/downloads", get(admin_download_queue))
         .route(
             "/api/admin/downloads/{job_id}/candidates",
@@ -69,6 +76,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/admin/policy", put(update_policy))
         .route("/api/admin/fansub-rules", post(create_fansub_rule))
         .with_state(state)
+        .layer(middleware::from_fn_with_state(
+            metrics,
+            telemetry::track_http_metrics,
+        ))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
 }
@@ -417,6 +428,44 @@ async fn admin_download_queue(
     Ok(Json(ApiEnvelope::new(AdminDownloadQueueResponse { items })))
 }
 
+async fn admin_runtime(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ApiEnvelope<AdminRuntimeResponse>>, AppError> {
+    require_admin(&state.pool, &headers).await?;
+
+    let snapshot = state.metrics.snapshot();
+    let overview = db::runtime_overview(&state.pool).await?;
+
+    Ok(Json(ApiEnvelope::new(AdminRuntimeResponse {
+        server_address: snapshot.server_address,
+        uptime_seconds: snapshot.uptime.as_secs(),
+        uptime_label: format_runtime_duration(snapshot.uptime),
+        log_dir: state.config.telemetry.log_dir.display().to_string(),
+        download_engine: state.downloads.engine_name().to_owned(),
+        http: RuntimeHttpStatsDto {
+            active_requests: snapshot.active_requests,
+            total_requests: snapshot.request_total,
+            failed_requests: snapshot.request_failures,
+            incoming_bytes: snapshot.request_bytes,
+            outgoing_bytes: snapshot.response_bytes,
+            last_route: snapshot.last_route,
+            last_status: snapshot.last_status,
+            last_latency_ms: snapshot.last_latency_ms,
+        },
+        runtime: RuntimeOverviewDto {
+            devices: overview.devices,
+            users: overview.users,
+            active_sessions: overview.active_sessions,
+            subscriptions: overview.subscriptions,
+            open_download_jobs: overview.open_download_jobs,
+            jobs_with_selection: overview.jobs_with_selection,
+            running_searches: overview.running_searches,
+            resource_candidates: overview.resource_candidates,
+        },
+    })))
+}
+
 async fn admin_download_candidates(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -689,4 +738,12 @@ fn parse_broadcast_time(value: Option<&str>) -> Option<u16> {
     let hour = hour.parse::<u16>().ok()?;
     let minute = minute.parse::<u16>().ok()?;
     Some(hour * 60 + minute)
+}
+
+fn format_runtime_duration(duration: std::time::Duration) -> String {
+    let total = duration.as_secs();
+    let hours = total / 3600;
+    let minutes = (total % 3600) / 60;
+    let seconds = total % 60;
+    format!("{hours:02}:{minutes:02}:{seconds:02}")
 }

@@ -21,6 +21,11 @@ request_timeout_secs = 20
 page_size = 25
 max_pages = 2
 
+[telemetry]
+log_dir = "runtime/logs"
+enable_terminal_ui = true
+refresh_interval_secs = 1
+
 [auth]
 default_admin_username = "admin"
 default_admin_password = "change-me-admin"

@@ -87,6 +87,10 @@ impl DownloadCoordinator {
         Self { engine }
     }
 
+    pub fn engine_name(&self) -> &'static str {
+        self.engine.name()
+    }
+
     pub async fn reconcile_subscription_demand(
         &self,
         pool: &SqlitePool,
