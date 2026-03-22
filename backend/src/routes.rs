@@ -15,12 +15,13 @@ use crate::{
     bangumi::{BangumiClient, BangumiSearchQuery, SearchFacets},
     config::AppConfig,
     db,
+    downloads::{DownloadCoordinator, DownloadDemandInput},
     types::{
-        AdminDashboardResponse, ApiEnvelope, AppError, AuthResponse, BootstrapResponse,
-        CalendarDayDto, CalendarResponse, CredentialsRequest, FansubRuleDto, HealthResponse,
-        SearchRequest, SearchResponse, SubjectCardDto, SubjectDetailDto, SubjectDetailResponse,
-        SubscriptionStateDto, ToggleSubscriptionResponse, UpdatePolicyRequest,
-        UpsertFansubRuleRequest, ViewerSummary,
+        AdminDashboardResponse, AdminDownloadQueueResponse, ApiEnvelope, AppError, AuthResponse,
+        BootstrapResponse, CalendarDayDto, CalendarResponse, CredentialsRequest, FansubRuleDto,
+        ForceDownloadResponse, HealthResponse, SearchRequest, SearchResponse, SubjectCardDto,
+        SubjectDetailDto, SubjectDetailResponse, SubscriptionStateDto, ToggleSubscriptionResponse,
+        UpdatePolicyRequest, UpsertFansubRuleRequest, ViewerSummary,
     },
     yuc::YucClient,
 };
@@ -31,6 +32,7 @@ pub struct AppState {
     pub pool: SqlitePool,
     pub bangumi: BangumiClient,
     pub yuc: YucClient,
+    pub downloads: DownloadCoordinator,
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -51,6 +53,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/admin/login", post(admin_login))
         .route("/api/admin/logout", post(admin_logout))
         .route("/api/admin/dashboard", get(admin_dashboard))
+        .route("/api/admin/downloads", get(admin_download_queue))
+        .route(
+            "/api/admin/downloads/{subject_id}/force",
+            post(force_download_job),
+        )
         .route("/api/admin/policy", put(update_policy))
         .route("/api/admin/fansub-rules", post(create_fansub_rule))
         .with_state(state)
@@ -231,6 +238,22 @@ async fn toggle_subscription(
     let policy = db::load_policy(&state.pool).await?;
     let (is_subscribed, subscription_count) =
         db::toggle_subscription(&state.pool, &viewer, subject_id).await?;
+    let release_status = resolve_subject_release_status(&state.bangumi, subject_id).await;
+    let download = state
+        .downloads
+        .reconcile_subscription_demand(
+            &state.pool,
+            DownloadDemandInput {
+                bangumi_subject_id: subject_id,
+                release_status,
+                subscription_count,
+                threshold: policy.subscription_threshold,
+                trigger_kind: "subscription",
+                requested_by: viewer_to_download_requester(&viewer),
+                force: false,
+            },
+        )
+        .await?;
 
     Ok(Json(ApiEnvelope::new(ToggleSubscriptionResponse {
         bangumi_subject_id: subject_id,
@@ -240,6 +263,7 @@ async fn toggle_subscription(
             threshold: policy.subscription_threshold,
             source: viewer_to_summary(&viewer),
         },
+        download,
     })))
 }
 
@@ -357,6 +381,47 @@ async fn admin_dashboard(
     })))
 }
 
+async fn admin_download_queue(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ApiEnvelope<AdminDownloadQueueResponse>>, AppError> {
+    require_admin(&state.pool, &headers).await?;
+    let items = state.downloads.list_jobs(&state.pool, 50).await?;
+
+    Ok(Json(ApiEnvelope::new(AdminDownloadQueueResponse { items })))
+}
+
+async fn force_download_job(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(subject_id): Path<i64>,
+) -> Result<Json<ApiEnvelope<ForceDownloadResponse>>, AppError> {
+    let admin = require_admin(&state.pool, &headers).await?;
+    let policy = db::load_policy(&state.pool).await?;
+    let subscription_count = db::total_subscription_count(&state.pool, subject_id).await?;
+    let release_status = resolve_subject_release_status(&state.bangumi, subject_id).await;
+    let decision = state
+        .downloads
+        .reconcile_subscription_demand(
+            &state.pool,
+            DownloadDemandInput {
+                bangumi_subject_id: subject_id,
+                release_status,
+                subscription_count,
+                threshold: policy.subscription_threshold,
+                trigger_kind: "admin_force",
+                requested_by: format!("admin:{}", admin.username),
+                force: true,
+            },
+        )
+        .await?;
+
+    Ok(Json(ApiEnvelope::new(ForceDownloadResponse {
+        bangumi_subject_id: subject_id,
+        decision,
+    })))
+}
+
 async fn update_policy(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -439,6 +504,13 @@ fn viewer_to_summary(viewer: &ViewerIdentity) -> ViewerSummary {
     }
 }
 
+fn viewer_to_download_requester(viewer: &ViewerIdentity) -> String {
+    match viewer {
+        ViewerIdentity::Device { id } => format!("device:{id}"),
+        ViewerIdentity::User { id, username } => format!("user:{id}:{username}"),
+    }
+}
+
 fn validate_credentials(username: &str, password: &str) -> Result<(), AppError> {
     if username.trim().len() < 3 {
         return Err(AppError::bad_request(
@@ -467,6 +539,20 @@ async fn enrich_cards(yuc: &YucClient, cards: Vec<SubjectCardDto>) -> Vec<Subjec
 
 async fn enrich_detail(yuc: &YucClient, detail: SubjectDetailDto) -> SubjectDetailDto {
     yuc.enrich_detail(detail).await
+}
+
+async fn resolve_subject_release_status(bangumi: &BangumiClient, subject_id: i64) -> String {
+    match bangumi.fetch_subject(subject_id).await {
+        Ok(subject) => subject.to_card().release_status,
+        Err(error) => {
+            tracing::warn!(
+                subject_id,
+                error = %error,
+                "Failed to resolve subject release status; falling back to completed"
+            );
+            "completed".to_owned()
+        }
+    }
 }
 
 fn normalize_terms(values: &[String]) -> Vec<String> {

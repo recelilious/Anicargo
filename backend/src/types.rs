@@ -272,6 +272,47 @@ pub struct SubscriptionStateDto {
 pub struct ToggleSubscriptionResponse {
     pub bangumi_subject_id: i64,
     pub subscription: SubscriptionStateDto,
+    pub download: DownloadDecisionDto,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadDecisionDto {
+    pub demand_state: String,
+    pub reason: String,
+    pub job: Option<DownloadJobDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadJobDto {
+    pub id: i64,
+    pub bangumi_subject_id: i64,
+    pub trigger_kind: String,
+    pub requested_by: String,
+    pub release_status: String,
+    pub season_mode: String,
+    pub lifecycle: String,
+    pub subscription_count: i64,
+    pub threshold_snapshot: i64,
+    pub engine_name: String,
+    pub engine_job_ref: Option<String>,
+    pub notes: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminDownloadQueueResponse {
+    pub items: Vec<DownloadJobDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForceDownloadResponse {
+    pub bangumi_subject_id: i64,
+    pub decision: DownloadDecisionDto,
 }
 
 #[derive(Debug, Deserialize)]

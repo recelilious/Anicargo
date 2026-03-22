@@ -2,15 +2,21 @@ mod auth;
 mod bangumi;
 mod config;
 mod db;
+mod downloads;
 mod routes;
 mod types;
 mod yuc;
 
 use anyhow::Context;
+use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
-    bangumi::BangumiClient, config::AppConfig, db::connect_and_migrate, routes::AppState,
+    bangumi::BangumiClient,
+    config::AppConfig,
+    db::connect_and_migrate,
+    downloads::{DownloadCoordinator, PlanningDownloadEngine},
+    routes::AppState,
     yuc::YucClient,
 };
 
@@ -33,11 +39,13 @@ async fn main() -> anyhow::Result<()> {
 
     let bangumi = BangumiClient::new(&config.bangumi).context("failed to initialize bangumi")?;
     let yuc = YucClient::new(&config.yuc).context("failed to initialize yuc")?;
+    let downloads = DownloadCoordinator::new(Arc::new(PlanningDownloadEngine));
     let router = routes::build_router(AppState {
         config: config.clone(),
         pool,
         bangumi,
         yuc,
+        downloads,
     });
 
     let address = format!("{}:{}", config.server.host, config.server.port);
