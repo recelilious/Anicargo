@@ -1,8 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Card, Spinner, Text, makeStyles } from "@fluentui/react-components";
 import { useParams } from "react-router-dom";
 
-import { buildApiUrl, fetchEpisodePlayback, fetchSubjectDetail } from "../api";
+import {
+  buildApiUrl,
+  fetchEpisodePlayback,
+  fetchSubjectDetail,
+  recordPlaybackHistory
+} from "../api";
 import { useSession } from "../session";
 import type { Episode, EpisodePlaybackResponse, SubjectDetailResponse } from "../types";
 
@@ -71,6 +76,7 @@ export function WatchPage() {
   const styles = useStyles();
   const { subjectId, episodeId } = useParams();
   const { deviceId, userToken } = useSession();
+  const hasRecordedPlaybackRef = useRef(false);
   const [detail, setDetail] = useState<SubjectDetailResponse | null>(null);
   const [episode, setEpisode] = useState<Episode | null>(null);
   const [playback, setPlayback] = useState<EpisodePlaybackResponse | null>(null);
@@ -85,6 +91,7 @@ export function WatchPage() {
     let isMounted = true;
     setIsLoading(true);
     setError(null);
+    hasRecordedPlaybackRef.current = false;
 
     const numericSubjectId = Number(subjectId);
     const numericEpisodeId = Number(episodeId);
@@ -122,6 +129,29 @@ export function WatchPage() {
     };
   }, [subjectId, episodeId, deviceId, userToken]);
 
+  async function handlePlaybackStart() {
+    if (!subjectId || !episodeId || !playback?.media || hasRecordedPlaybackRef.current) {
+      return;
+    }
+
+    hasRecordedPlaybackRef.current = true;
+
+    try {
+      await recordPlaybackHistory(
+        {
+          bangumiSubjectId: Number(subjectId),
+          bangumiEpisodeId: Number(episodeId),
+          mediaInventoryId: playback.media.mediaInventoryId
+        },
+        deviceId,
+        userToken
+      );
+    } catch (recordError) {
+      hasRecordedPlaybackRef.current = false;
+      console.warn("Failed to record playback history", recordError);
+    }
+  }
+
   if (isLoading) {
     return <Spinner label="正在准备播放..." />;
   }
@@ -136,6 +166,7 @@ export function WatchPage() {
             <video
               className={styles.video}
               controls
+              onPlay={() => void handlePlaybackStart()}
               preload="metadata"
               src={streamUrl}
               playsInline

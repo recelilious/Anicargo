@@ -189,6 +189,23 @@ struct SubjectEpisodeAvailabilityRow {
     status: String,
 }
 
+#[derive(Debug, FromRow)]
+struct ViewerSubscriptionRow {
+    bangumi_subject_id: i64,
+    subscribed_at: String,
+    latest_ready_at: Option<String>,
+}
+
+#[derive(Debug, FromRow)]
+struct PlaybackHistoryRow {
+    bangumi_subject_id: i64,
+    bangumi_episode_id: i64,
+    file_name: Option<String>,
+    source_fansub_name: Option<String>,
+    last_played_at: String,
+    play_count: i64,
+}
+
 pub struct NewDownloadJob {
     pub bangumi_subject_id: i64,
     pub trigger_kind: String,
@@ -307,6 +324,23 @@ pub struct SubjectEpisodeAvailability {
     pub episode_end_index: Option<f64>,
     pub is_collection: bool,
     pub status: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ViewerSubscriptionEntry {
+    pub bangumi_subject_id: i64,
+    pub subscribed_at: String,
+    pub latest_ready_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PlaybackHistoryEntry {
+    pub bangumi_subject_id: i64,
+    pub bangumi_episode_id: i64,
+    pub file_name: Option<String>,
+    pub source_fansub_name: Option<String>,
+    pub last_played_at: String,
+    pub play_count: i64,
 }
 
 pub async fn connect_and_migrate(config: &AppConfig) -> anyhow::Result<SqlitePool> {
@@ -653,6 +687,55 @@ pub async fn subscription_state(
         is_subscribed,
         total_subscription_count(pool, bangumi_subject_id).await?,
     ))
+}
+
+pub async fn list_viewer_subscription_subjects(
+    pool: &SqlitePool,
+    viewer: &ViewerIdentity,
+) -> Result<Vec<ViewerSubscriptionEntry>, AppError> {
+    let rows = match viewer {
+        ViewerIdentity::Device { id } => sqlx::query_as::<_, ViewerSubscriptionRow>(
+            "SELECT
+                    device_subscriptions.bangumi_subject_id,
+                    device_subscriptions.created_at AS subscribed_at,
+                    MAX(media_inventory.updated_at) AS latest_ready_at
+                 FROM device_subscriptions
+                 LEFT JOIN media_inventory
+                    ON media_inventory.bangumi_subject_id = device_subscriptions.bangumi_subject_id
+                   AND media_inventory.status = 'ready'
+                 WHERE device_subscriptions.device_id = ?1
+                 GROUP BY device_subscriptions.bangumi_subject_id, device_subscriptions.created_at",
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AppError::internal("failed to list device subscriptions"))?,
+        ViewerIdentity::User { id, .. } => sqlx::query_as::<_, ViewerSubscriptionRow>(
+            "SELECT
+                    user_subscriptions.bangumi_subject_id,
+                    user_subscriptions.created_at AS subscribed_at,
+                    MAX(media_inventory.updated_at) AS latest_ready_at
+                 FROM user_subscriptions
+                 LEFT JOIN media_inventory
+                    ON media_inventory.bangumi_subject_id = user_subscriptions.bangumi_subject_id
+                   AND media_inventory.status = 'ready'
+                 WHERE user_subscriptions.user_id = ?1
+                 GROUP BY user_subscriptions.bangumi_subject_id, user_subscriptions.created_at",
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AppError::internal("failed to list user subscriptions"))?,
+    };
+
+    Ok(rows
+        .into_iter()
+        .map(|row| ViewerSubscriptionEntry {
+            bangumi_subject_id: row.bangumi_subject_id,
+            subscribed_at: row.subscribed_at,
+            latest_ready_at: row.latest_ready_at,
+        })
+        .collect())
 }
 
 pub async fn load_policy(pool: &SqlitePool) -> Result<PolicyDto, AppError> {
@@ -2166,6 +2249,107 @@ pub async fn list_resource_library_items(
     ))
 }
 
+pub async fn record_playback_history(
+    pool: &SqlitePool,
+    viewer: &ViewerIdentity,
+    bangumi_subject_id: i64,
+    bangumi_episode_id: i64,
+    media_inventory_id: i64,
+) -> Result<(), AppError> {
+    let (viewer_kind, viewer_key) = viewer_history_identity(viewer);
+    let now = now_string();
+
+    sqlx::query(
+        "INSERT INTO playback_history (
+            viewer_kind,
+            viewer_key,
+            bangumi_subject_id,
+            bangumi_episode_id,
+            media_inventory_id,
+            last_played_at,
+            created_at,
+            play_count
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 1)
+         ON CONFLICT(viewer_kind, viewer_key, bangumi_episode_id) DO UPDATE SET
+            bangumi_subject_id = excluded.bangumi_subject_id,
+            media_inventory_id = excluded.media_inventory_id,
+            last_played_at = excluded.last_played_at,
+            play_count = playback_history.play_count + 1",
+    )
+    .bind(&viewer_kind)
+    .bind(&viewer_key)
+    .bind(bangumi_subject_id)
+    .bind(bangumi_episode_id)
+    .bind(media_inventory_id)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to record playback history"))?;
+
+    Ok(())
+}
+
+pub async fn list_viewer_playback_history(
+    pool: &SqlitePool,
+    viewer: &ViewerIdentity,
+    limit: usize,
+    offset: usize,
+) -> Result<(usize, Vec<PlaybackHistoryEntry>), AppError> {
+    let limit = limit.clamp(1, 100) as i64;
+    let offset = offset.max(0) as i64;
+    let (viewer_kind, viewer_key) = viewer_history_identity(viewer);
+
+    let total = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM playback_history
+         WHERE viewer_kind = ?1
+           AND viewer_key = ?2",
+    )
+    .bind(&viewer_kind)
+    .bind(&viewer_key)
+    .fetch_one(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to count playback history rows"))?;
+
+    let rows = sqlx::query_as::<_, PlaybackHistoryRow>(
+        "SELECT
+            playback_history.bangumi_subject_id,
+            playback_history.bangumi_episode_id,
+            media_inventory.file_name,
+            download_executions.source_fansub_name,
+            playback_history.last_played_at,
+            playback_history.play_count
+         FROM playback_history
+         LEFT JOIN media_inventory ON media_inventory.id = playback_history.media_inventory_id
+         LEFT JOIN download_executions ON download_executions.id = media_inventory.download_execution_id
+         WHERE playback_history.viewer_kind = ?1
+           AND playback_history.viewer_key = ?2
+         ORDER BY playback_history.last_played_at DESC, playback_history.bangumi_episode_id DESC
+         LIMIT ?3 OFFSET ?4",
+    )
+    .bind(viewer_kind)
+    .bind(viewer_key)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to list playback history rows"))?;
+
+    Ok((
+        total.max(0) as usize,
+        rows.into_iter()
+            .map(|row| PlaybackHistoryEntry {
+                bangumi_subject_id: row.bangumi_subject_id,
+                bangumi_episode_id: row.bangumi_episode_id,
+                file_name: row.file_name,
+                source_fansub_name: row.source_fansub_name,
+                last_played_at: row.last_played_at,
+                play_count: row.play_count,
+            })
+            .collect(),
+    ))
+}
+
 async fn count(pool: &SqlitePool, query: &str) -> Result<i64, AppError> {
     sqlx::query_scalar::<_, i64>(query)
         .fetch_one(pool)
@@ -2178,6 +2362,13 @@ async fn sum_i64(pool: &SqlitePool, query: &str) -> Result<i64, AppError> {
         .fetch_one(pool)
         .await
         .map_err(|_| AppError::internal("failed to aggregate rows"))
+}
+
+fn viewer_history_identity(viewer: &ViewerIdentity) -> (&'static str, String) {
+    match viewer {
+        ViewerIdentity::Device { id } => ("device", id.clone()),
+        ViewerIdentity::User { id, .. } => ("user", id.to_string()),
+    }
 }
 
 async fn create_user_session(

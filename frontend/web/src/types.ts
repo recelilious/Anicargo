@@ -338,3 +338,59 @@ export type ResourceLibraryResponse = {
   pageSize: number;
   hasNextPage: boolean;
 };
+
+export type SubjectCollectionResponse = {
+  items: SubjectCard[];
+  total: number;
+  page: number;
+  pageSize: number;
+  hasNextPage: boolean;
+};
+
+export type ActiveDownload = {
+  bangumiSubjectId: number;
+  title: string;
+  titleCn: string;
+  imagePortrait: string | null;
+  releaseStatus: "airing" | "completed" | "upcoming";
+  slotKey: string;
+  episodeIndex: number | null;
+  episodeEndIndex: number | null;
+  isCollection: boolean;
+  state: string;
+  sourceTitle: string;
+  sourceFansubName: string | null;
+  downloadedBytes: number;
+  totalBytes: number;
+  downloadRateBytes: number;
+  uploadRateBytes: number;
+  peerCount: number;
+  updatedAt: string;
+};
+
+export type ActiveDownloadsResponse = {
+  items: ActiveDownload[];
+};
+
+export type PlaybackHistoryItem = {
+  bangumiSubjectId: number;
+  bangumiEpisodeId: number;
+  episodeNumber: number | null;
+  subjectTitle: string;
+  subjectTitleCn: string;
+  episodeTitle: string;
+  episodeTitleCn: string;
+  imagePortrait: string | null;
+  fileName: string | null;
+  sourceFansubName: string | null;
+  lastPlayedAt: string;
+  playCount: number;
+};
+
+export type PlaybackHistoryResponse = {
+  items: PlaybackHistoryItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  hasNextPage: boolean;
+};

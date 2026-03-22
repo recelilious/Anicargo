@@ -1,4 +1,5 @@
 import type {
+  ActiveDownloadsResponse,
   AdminAuthResponse,
   AdminDashboardResponse,
   AdminRuntimeResponse,
@@ -9,10 +10,12 @@ import type {
   DownloadExecutionEvent,
   DownloadJob,
   EpisodePlaybackResponse,
+  PlaybackHistoryResponse,
   Policy,
   ResourceCandidate,
   ResourceLibraryResponse,
   SearchResponse,
+  SubjectCollectionResponse,
   SubjectDownloadStatus,
   SubjectDetailResponse
 } from "./types";
@@ -98,6 +101,40 @@ export function toggleSubscription(subjectId: number, deviceId: string, userToke
   return request<{ bangumiSubjectId: number; subscription: SubjectDetailResponse["subscription"] }>(
     `/api/public/subscriptions/${subjectId}/toggle`,
     { method: "POST" },
+    deviceId,
+    userToken ?? undefined
+  );
+}
+
+export function fetchSubscriptions(params: URLSearchParams, deviceId: string, userToken: string | null) {
+  return request<SubjectCollectionResponse>(
+    `/api/public/subscriptions?${params.toString()}`,
+    {},
+    deviceId,
+    userToken ?? undefined
+  );
+}
+
+export function fetchPlaybackHistory(params: URLSearchParams, deviceId: string, userToken: string | null) {
+  return request<PlaybackHistoryResponse>(
+    `/api/public/history?${params.toString()}`,
+    {},
+    deviceId,
+    userToken ?? undefined
+  );
+}
+
+export function recordPlaybackHistory(
+  payload: { bangumiSubjectId: number; bangumiEpisodeId: number; mediaInventoryId: number },
+  deviceId: string,
+  userToken: string | null
+) {
+  return request<boolean>(
+    "/api/public/history/playback",
+    {
+      method: "POST",
+      body: JSON.stringify(payload)
+    },
     deviceId,
     userToken ?? undefined
   );
@@ -192,6 +229,10 @@ export function activateAdminDownload(deviceId: string, adminToken: string, jobI
 
 export function fetchResources(params: URLSearchParams, deviceId: string, userToken: string | null) {
   return request<ResourceLibraryResponse>(`/api/public/resources?${params.toString()}`, {}, deviceId, userToken ?? undefined);
+}
+
+export function fetchActiveDownloads(deviceId: string, userToken: string | null) {
+  return request<ActiveDownloadsResponse>("/api/public/downloads/active", {}, deviceId, userToken ?? undefined);
 }
 
 export function updatePolicy(deviceId: string, adminToken: string, policy: Policy) {

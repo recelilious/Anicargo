@@ -8,8 +8,11 @@ use axum::{
 };
 use futures::stream::{self, StreamExt};
 use sqlx::SqlitePool;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::Arc,
+};
 use tower::ServiceExt;
 use tower_http::{cors::CorsLayer, services::ServeFile, trace::TraceLayer};
 
@@ -25,13 +28,16 @@ use crate::{
     downloads::{DownloadCoordinator, DownloadDemandInput},
     telemetry::{self, RuntimeMetrics},
     types::{
-        ActivateDownloadResponse, AdminDashboardResponse, AdminDownloadCandidatesResponse,
+        ActivateDownloadResponse, ActiveDownloadDto, ActiveDownloadsResponse,
+        AdminDashboardResponse, AdminDownloadCandidatesResponse,
         AdminDownloadExecutionEventsResponse, AdminDownloadExecutionsResponse,
         AdminDownloadQueueResponse, AdminRuntimeResponse, ApiEnvelope, AppError, AuthResponse,
         BootstrapResponse, CalendarDayDto, CalendarResponse, CredentialsRequest,
         EpisodePlaybackMediaDto, EpisodePlaybackResponse, FansubRuleDto, ForceDownloadResponse,
-        HealthResponse, ResourceLibraryRequest, ResourceLibraryResponse, RuntimeHttpStatsDto,
-        RuntimeOverviewDto, SearchRequest, SearchResponse, SubjectCardDto, SubjectDetailDto,
+        HealthResponse, PlaybackHistoryItemDto, PlaybackHistoryRecordRequest,
+        PlaybackHistoryResponse, ResourceLibraryRequest, ResourceLibraryResponse,
+        RuntimeHttpStatsDto, RuntimeOverviewDto, SearchRequest, SearchResponse, SubjectCardDto,
+        SubjectCollectionRequest, SubjectCollectionResponse, SubjectDetailDto,
         SubjectDetailResponse, SubscriptionStateDto, ToggleSubscriptionResponse,
         UpdatePolicyRequest, UpsertFansubRuleRequest, ViewerSummary,
     },
@@ -57,7 +63,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/public/bootstrap", get(bootstrap))
         .route("/api/public/calendar", get(calendar))
         .route("/api/public/search", get(search))
+        .route("/api/public/subscriptions", get(subscriptions))
+        .route("/api/public/history", get(playback_history))
         .route("/api/public/resources", get(resources))
+        .route("/api/public/downloads/active", get(active_downloads))
         .route(
             "/api/public/subjects/{subject_id}/download-status",
             get(subject_download_status),
@@ -74,6 +83,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/public/subscriptions/{subject_id}/toggle",
             post(toggle_subscription),
+        )
+        .route(
+            "/api/public/history/playback",
+            post(record_playback_history),
         )
         .route("/api/auth/register", post(register))
         .route("/api/auth/login", post(login))
@@ -232,6 +245,67 @@ async fn search(
     })))
 }
 
+async fn subscriptions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(request): Query<SubjectCollectionRequest>,
+) -> Result<Json<ApiEnvelope<SubjectCollectionResponse>>, AppError> {
+    let device_id = require_device_id(&headers)?;
+    db::touch_device(&state.pool, &device_id).await?;
+    let viewer = resolve_viewer(&state.pool, &headers, &device_id).await?;
+
+    let page = request.page.unwrap_or(1).max(1);
+    let page_size = request.page_size.unwrap_or(30).clamp(1, 60);
+    let keyword = request.keyword.unwrap_or_default();
+    let sort = normalize_collection_sort(request.sort.as_deref());
+    let subscriptions = db::list_viewer_subscription_subjects(&state.pool, &viewer).await?;
+    let mut items =
+        hydrate_subscription_cards(&state.bangumi, &state.yuc, subscriptions, &keyword).await;
+
+    sort_subscription_items(&mut items, &sort);
+
+    let total = items.len();
+    let offset = (page - 1) * page_size;
+    let paged_items = items
+        .into_iter()
+        .skip(offset)
+        .take(page_size)
+        .map(|item| item.card)
+        .collect();
+
+    Ok(Json(ApiEnvelope::new(SubjectCollectionResponse {
+        items: paged_items,
+        total,
+        page,
+        page_size,
+        has_next_page: offset + page_size < total,
+    })))
+}
+
+async fn playback_history(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(request): Query<ResourceLibraryRequest>,
+) -> Result<Json<ApiEnvelope<PlaybackHistoryResponse>>, AppError> {
+    let device_id = require_device_id(&headers)?;
+    db::touch_device(&state.pool, &device_id).await?;
+    let viewer = resolve_viewer(&state.pool, &headers, &device_id).await?;
+    let page = request.page.unwrap_or(1).max(1);
+    let page_size = request.page_size.unwrap_or(30).clamp(1, 60);
+    let offset = (page - 1) * page_size;
+    let (total, history) =
+        db::list_viewer_playback_history(&state.pool, &viewer, page_size, offset).await?;
+    let items = hydrate_playback_history(&state.bangumi, &state.yuc, history).await;
+
+    Ok(Json(ApiEnvelope::new(PlaybackHistoryResponse {
+        items,
+        total,
+        page,
+        page_size,
+        has_next_page: offset + page_size < total,
+    })))
+}
+
 async fn resources(
     State(state): State<AppState>,
     Query(request): Query<ResourceLibraryRequest>,
@@ -250,6 +324,16 @@ async fn resources(
         page_size,
         has_next_page: offset + page_size < total,
     })))
+}
+
+async fn active_downloads(
+    State(state): State<AppState>,
+) -> Result<Json<ApiEnvelope<ActiveDownloadsResponse>>, AppError> {
+    let executions =
+        db::list_active_download_executions(&state.pool, state.downloads.engine_name(), 24).await?;
+    let items = hydrate_active_downloads(&state.bangumi, &state.yuc, executions).await;
+
+    Ok(Json(ApiEnvelope::new(ActiveDownloadsResponse { items })))
 }
 
 async fn subject_detail(
@@ -439,39 +523,20 @@ async fn toggle_subscription(
 
     if download.reason == "queued_threshold_job" {
         if let Some(job) = download.job.as_ref() {
+            let background_state = state.clone();
+            let background_job = job.clone();
+            let background_policy = policy.clone();
             let discovery_profile = profile.to_discovery_profile();
-            match state
-                .discovery
-                .discover_for_job(&state.pool, job, &discovery_profile, &policy)
-                .await
-            {
-                Ok(_) => {
-                    if let Err(error) = state
-                        .downloads
-                        .materialize_selected_candidate(
-                            &state.pool,
-                            &state.config.storage.media_root,
-                            job.id,
-                        )
-                        .await
-                    {
-                        tracing::warn!(
-                            job_id = job.id,
-                            subject_id,
-                            error = %error,
-                            "Download execution activation failed after subscription-triggered queueing"
-                        );
-                    }
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        job_id = job.id,
-                        subject_id,
-                        error = %error,
-                        "Resource discovery failed after subscription-triggered queueing"
-                    );
-                }
-            }
+            tokio::spawn(async move {
+                run_download_pipeline(
+                    background_state,
+                    background_job,
+                    discovery_profile,
+                    background_policy,
+                    "subscription trigger",
+                )
+                .await;
+            });
         }
     }
 
@@ -485,6 +550,27 @@ async fn toggle_subscription(
         },
         download,
     })))
+}
+
+async fn record_playback_history(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<PlaybackHistoryRecordRequest>,
+) -> Result<Json<ApiEnvelope<bool>>, AppError> {
+    let device_id = require_device_id(&headers)?;
+    db::touch_device(&state.pool, &device_id).await?;
+    let viewer = resolve_viewer(&state.pool, &headers, &device_id).await?;
+
+    db::record_playback_history(
+        &state.pool,
+        &viewer,
+        payload.bangumi_subject_id,
+        payload.bangumi_episode_id,
+        payload.media_inventory_id,
+    )
+    .await?;
+
+    Ok(Json(ApiEnvelope::new(true)))
 }
 
 async fn register(
@@ -929,6 +1015,313 @@ async fn resolve_subject_search_profile(
     }
 }
 
+async fn run_download_pipeline(
+    state: AppState,
+    job: crate::types::DownloadJobDto,
+    discovery_profile: AnimeGardenSearchProfile,
+    policy: crate::types::PolicyDto,
+    reason: &'static str,
+) {
+    match state
+        .discovery
+        .discover_for_job(&state.pool, &job, &discovery_profile, &policy)
+        .await
+    {
+        Ok(_) => {
+            if let Err(error) = state
+                .downloads
+                .materialize_selected_candidate(
+                    &state.pool,
+                    &state.config.storage.media_root,
+                    job.id,
+                )
+                .await
+            {
+                tracing::warn!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    error = %error,
+                    reason,
+                    "Download execution activation failed after background queueing"
+                );
+            }
+        }
+        Err(error) => {
+            tracing::warn!(
+                job_id = job.id,
+                subject_id = job.bangumi_subject_id,
+                error = %error,
+                reason,
+                "Resource discovery failed after background queueing"
+            );
+        }
+    }
+}
+
+async fn fetch_subject_card_map(
+    bangumi: &BangumiClient,
+    yuc: &YucClient,
+    subject_ids: &[i64],
+) -> HashMap<i64, SubjectCardDto> {
+    let unique_ids = subject_ids
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    stream::iter(unique_ids.into_iter().map(|subject_id| {
+        let bangumi = bangumi.clone();
+        let yuc = yuc.clone();
+        async move {
+            match bangumi.fetch_subject(subject_id).await {
+                Ok(subject) => Some((subject_id, yuc.enrich_card(subject.to_card()).await)),
+                Err(error) => {
+                    tracing::warn!(
+                        subject_id,
+                        error = %error,
+                        "Failed to fetch Bangumi subject card for user collection"
+                    );
+                    None
+                }
+            }
+        }
+    }))
+    .buffer_unordered(8)
+    .filter_map(|item| async move { item })
+    .collect::<HashMap<_, _>>()
+    .await
+}
+
+#[derive(Debug, Clone)]
+struct HydratedSubscriptionItem {
+    card: SubjectCardDto,
+    subscribed_at: String,
+    latest_ready_at: Option<String>,
+}
+
+async fn hydrate_subscription_cards(
+    bangumi: &BangumiClient,
+    yuc: &YucClient,
+    entries: Vec<db::ViewerSubscriptionEntry>,
+    keyword: &str,
+) -> Vec<HydratedSubscriptionItem> {
+    let card_map = fetch_subject_card_map(
+        bangumi,
+        yuc,
+        &entries
+            .iter()
+            .map(|entry| entry.bangumi_subject_id)
+            .collect::<Vec<_>>(),
+    )
+    .await;
+    let keyword = keyword.trim().to_lowercase();
+
+    entries
+        .into_iter()
+        .filter_map(|entry| {
+            let card = card_map.get(&entry.bangumi_subject_id)?.clone();
+            if !keyword.is_empty() {
+                let title = card.title.to_lowercase();
+                let title_cn = card.title_cn.to_lowercase();
+                if !title.contains(&keyword) && !title_cn.contains(&keyword) {
+                    return None;
+                }
+            }
+
+            Some(HydratedSubscriptionItem {
+                card,
+                subscribed_at: entry.subscribed_at,
+                latest_ready_at: entry.latest_ready_at,
+            })
+        })
+        .collect()
+}
+
+fn sort_subscription_items(items: &mut [HydratedSubscriptionItem], sort: &str) {
+    match sort {
+        "rating" => items.sort_by(|left, right| {
+            let left_score = left.card.rating_score.unwrap_or(-1.0);
+            let right_score = right.card.rating_score.unwrap_or(-1.0);
+            right_score
+                .total_cmp(&left_score)
+                .then_with(|| left.card.title_cn.cmp(&right.card.title_cn))
+                .then_with(|| left.card.title.cmp(&right.card.title))
+        }),
+        "title" => items.sort_by(|left, right| {
+            left.card
+                .title_cn
+                .cmp(&right.card.title_cn)
+                .then_with(|| left.card.title.cmp(&right.card.title))
+        }),
+        _ => items.sort_by(|left, right| {
+            let left_key = left
+                .latest_ready_at
+                .as_deref()
+                .unwrap_or(left.subscribed_at.as_str());
+            let right_key = right
+                .latest_ready_at
+                .as_deref()
+                .unwrap_or(right.subscribed_at.as_str());
+
+            right_key
+                .cmp(left_key)
+                .then_with(|| left.card.title_cn.cmp(&right.card.title_cn))
+                .then_with(|| left.card.title.cmp(&right.card.title))
+        }),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SubjectHistoryMetadata {
+    detail: SubjectDetailDto,
+    episodes: Vec<EpisodeRaw>,
+}
+
+async fn fetch_subject_history_metadata_map(
+    bangumi: &BangumiClient,
+    yuc: &YucClient,
+    subject_ids: &[i64],
+) -> HashMap<i64, SubjectHistoryMetadata> {
+    let unique_ids = subject_ids
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    stream::iter(unique_ids.into_iter().map(|subject_id| {
+        let bangumi = bangumi.clone();
+        let yuc = yuc.clone();
+        async move {
+            let subject = match bangumi.fetch_subject(subject_id).await {
+                Ok(subject) => subject,
+                Err(error) => {
+                    tracing::warn!(
+                        subject_id,
+                        error = %error,
+                        "Failed to fetch Bangumi subject for playback history"
+                    );
+                    return None;
+                }
+            };
+            let episodes = match bangumi.fetch_episodes(subject_id).await {
+                Ok(episodes) => episodes,
+                Err(error) => {
+                    tracing::warn!(
+                        subject_id,
+                        error = %error,
+                        "Failed to fetch Bangumi episodes for playback history"
+                    );
+                    return None;
+                }
+            };
+
+            Some((
+                subject_id,
+                SubjectHistoryMetadata {
+                    detail: yuc.enrich_detail(subject.to_detail()).await,
+                    episodes,
+                },
+            ))
+        }
+    }))
+    .buffer_unordered(6)
+    .filter_map(|item| async move { item })
+    .collect::<HashMap<_, _>>()
+    .await
+}
+
+async fn hydrate_playback_history(
+    bangumi: &BangumiClient,
+    yuc: &YucClient,
+    entries: Vec<db::PlaybackHistoryEntry>,
+) -> Vec<PlaybackHistoryItemDto> {
+    let metadata = fetch_subject_history_metadata_map(
+        bangumi,
+        yuc,
+        &entries
+            .iter()
+            .map(|entry| entry.bangumi_subject_id)
+            .collect::<Vec<_>>(),
+    )
+    .await;
+
+    entries
+        .into_iter()
+        .filter_map(|entry| {
+            let metadata = metadata.get(&entry.bangumi_subject_id)?;
+            let episode = metadata
+                .episodes
+                .iter()
+                .find(|episode| episode.id == entry.bangumi_episode_id);
+
+            Some(PlaybackHistoryItemDto {
+                bangumi_subject_id: entry.bangumi_subject_id,
+                bangumi_episode_id: entry.bangumi_episode_id,
+                episode_number: episode.and_then(EpisodeRaw::preferred_episode_number),
+                subject_title: metadata.detail.title.clone(),
+                subject_title_cn: metadata.detail.title_cn.clone(),
+                episode_title: episode.map(|item| item.name.clone()).unwrap_or_default(),
+                episode_title_cn: episode.map(|item| item.name_cn.clone()).unwrap_or_default(),
+                image_portrait: metadata.detail.image_portrait.clone(),
+                file_name: entry.file_name,
+                source_fansub_name: entry.source_fansub_name,
+                last_played_at: entry.last_played_at,
+                play_count: entry.play_count,
+            })
+        })
+        .collect()
+}
+
+async fn hydrate_active_downloads(
+    bangumi: &BangumiClient,
+    yuc: &YucClient,
+    executions: Vec<crate::types::DownloadExecutionDto>,
+) -> Vec<ActiveDownloadDto> {
+    let card_map = fetch_subject_card_map(
+        bangumi,
+        yuc,
+        &executions
+            .iter()
+            .map(|execution| execution.bangumi_subject_id)
+            .collect::<Vec<_>>(),
+    )
+    .await;
+
+    executions
+        .into_iter()
+        .map(|execution| {
+            let fallback_title = execution.source_title.clone();
+            let card = card_map.get(&execution.bangumi_subject_id);
+            ActiveDownloadDto {
+                bangumi_subject_id: execution.bangumi_subject_id,
+                title: card
+                    .map(|item| item.title.clone())
+                    .unwrap_or_else(|| fallback_title.clone()),
+                title_cn: card.map(|item| item.title_cn.clone()).unwrap_or_default(),
+                image_portrait: card.and_then(|item| item.image_portrait.clone()),
+                release_status: card
+                    .map(|item| item.release_status.clone())
+                    .unwrap_or_else(|| "completed".to_owned()),
+                slot_key: execution.slot_key,
+                episode_index: execution.episode_index,
+                episode_end_index: execution.episode_end_index,
+                is_collection: execution.is_collection,
+                state: execution.state,
+                source_title: execution.source_title,
+                source_fansub_name: execution.source_fansub_name,
+                downloaded_bytes: execution.downloaded_bytes,
+                total_bytes: execution.source_size_bytes.max(execution.downloaded_bytes),
+                download_rate_bytes: execution.download_rate_bytes,
+                upload_rate_bytes: execution.upload_rate_bytes,
+                peer_count: execution.peer_count,
+                updated_at: execution.updated_at,
+            }
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 struct AnimeGardenSearchProfileWithStatus {
     bangumi_subject_id: i64,
@@ -954,6 +1347,13 @@ fn normalize_terms(values: &[String]) -> Vec<String> {
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .collect()
+}
+
+fn normalize_collection_sort(sort: Option<&str>) -> String {
+    match sort.unwrap_or("updated") {
+        "updated" | "rating" | "title" => sort.unwrap_or("updated").to_owned(),
+        _ => "updated".to_owned(),
+    }
 }
 
 fn normalize_sort(sort: Option<&str>) -> String {

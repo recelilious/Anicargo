@@ -1,21 +1,19 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeftRegular } from "@fluentui/react-icons";
 import { Badge, Button, Card, Spinner, Text, makeStyles, tokens } from "@fluentui/react-components";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
-import { fetchSubjectDetail, fetchSubjectDownloadStatus, toggleSubscription } from "../api";
+import { fetchSubjectDetail, toggleSubscription } from "../api";
 import { EpisodeCard } from "../components/EpisodeCard";
 import { resolveReturnScrollTop, type RouteState } from "../navigation";
 import { useSession } from "../session";
-import type { SubjectDetailResponse, SubjectDownloadStatus } from "../types";
-
-const ACTIVE_LIFECYCLES = new Set(["queued", "planning", "searching", "staged", "starting", "downloading"]);
+import type { SubjectDetailResponse } from "../types";
 
 const useStyles = makeStyles({
   page: {
     display: "flex",
     flexDirection: "column",
-    gap: "20px"
+    gap: "20px",
   },
   hero: {
     position: "relative",
@@ -24,7 +22,7 @@ const useStyles = makeStyles({
     padding: "28px",
     color: "#ffffff",
     boxShadow: "var(--app-card-shadow-strong)",
-    border: "1px solid var(--app-border)"
+    border: "1px solid var(--app-border)",
   },
   heroBackdrop: {
     position: "absolute",
@@ -32,96 +30,60 @@ const useStyles = makeStyles({
     backgroundSize: "cover",
     backgroundPosition: "center center",
     filter: "blur(14px)",
-    transform: "scale(1.06)"
+    transform: "scale(1.06)",
   },
   heroOverlay: {
     position: "absolute",
     inset: 0,
-    backgroundColor: "rgba(18, 10, 8, 0.68)"
+    backgroundColor: "rgba(18, 10, 8, 0.68)",
   },
   heroContent: {
     position: "relative",
     display: "flex",
     flexDirection: "column",
-    gap: "16px"
+    gap: "16px",
   },
   heroTopRow: {
     display: "flex",
-    justifyContent: "flex-start"
+    justifyContent: "flex-start",
   },
   titleGroup: {
     display: "flex",
     flexDirection: "column",
     gap: "6px",
-    alignItems: "flex-start"
+    alignItems: "flex-start",
   },
   subtitle: {
-    color: "rgba(255, 245, 238, 0.86)"
+    color: "rgba(255, 245, 238, 0.86)",
   },
   badges: {
     display: "flex",
     gap: "8px",
-    flexWrap: "wrap"
+    flexWrap: "wrap",
   },
   buttonRow: {
     display: "flex",
     alignItems: "center",
     gap: "12px",
-    flexWrap: "wrap"
+    flexWrap: "wrap",
   },
   subscribeButton: {
     alignSelf: "flex-start",
-    minWidth: "132px"
+    minWidth: "132px",
   },
   backButton: {
-    minWidth: "108px"
+    minWidth: "108px",
   },
   heroInfo: {
     display: "flex",
     flexDirection: "column",
     gap: "14px",
-    marginTop: "2px"
-  },
-  statusCard: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "12px",
-    padding: "16px 18px",
-    borderRadius: tokens.borderRadiusXLarge,
-    backgroundColor: "rgba(255, 248, 241, 0.1)",
-    border: "1px solid rgba(255, 244, 236, 0.18)",
-    backdropFilter: "blur(10px)"
-  },
-  statusHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "12px",
-    alignItems: "flex-start",
-    flexWrap: "wrap"
-  },
-  statusGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
-    gap: "12px"
-  },
-  statusMetric: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px"
-  },
-  noticeCard: {
-    padding: "14px 16px",
-    borderRadius: tokens.borderRadiusXLarge,
-    backgroundColor: "rgba(214, 195, 178, 0.18)",
-    border: "1px solid rgba(255, 244, 236, 0.24)",
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px"
+    marginTop: "2px",
   },
   statGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-    gap: "12px"
+    gap: "12px",
   },
   statCard: {
     display: "flex",
@@ -131,11 +93,11 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusXLarge,
     backgroundColor: "rgba(255, 248, 241, 0.1)",
     border: "1px solid rgba(255, 244, 236, 0.18)",
-    backdropFilter: "blur(10px)"
+    backdropFilter: "blur(10px)",
   },
   statLabel: {
     display: "block",
-    color: "rgba(255, 245, 238, 0.72)"
+    color: "rgba(255, 245, 238, 0.72)",
   },
   summaryCard: {
     padding: "16px 18px",
@@ -145,16 +107,16 @@ const useStyles = makeStyles({
     backdropFilter: "blur(10px)",
     display: "flex",
     flexDirection: "column",
-    gap: "8px"
+    gap: "8px",
   },
   summaryText: {
     color: "rgba(255, 245, 238, 0.92)",
-    lineHeight: "1.6"
+    lineHeight: "1.6",
   },
   infoGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: "12px"
+    gap: "12px",
   },
   infoCard: {
     minWidth: 0,
@@ -165,7 +127,7 @@ const useStyles = makeStyles({
     backdropFilter: "blur(10px)",
     display: "flex",
     flexDirection: "column",
-    gap: "6px"
+    gap: "6px",
   },
   infoValue: {
     display: "block",
@@ -174,18 +136,18 @@ const useStyles = makeStyles({
     lineHeight: "1.5",
     whiteSpace: "normal",
     wordBreak: "normal",
-    overflowWrap: "anywhere"
+    overflowWrap: "anywhere",
   },
   episodesSection: {
     display: "flex",
     flexDirection: "column",
-    gap: "14px"
+    gap: "14px",
   },
   episodesGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: "12px"
-  }
+    gap: "12px",
+  },
 });
 
 function formatRating(score: number | null) {
@@ -204,70 +166,6 @@ function formatSubscriptionSource(source: SubjectDetailResponse["subscription"][
   return source.kind === "user" ? "账号订阅" : "设备订阅";
 }
 
-function formatBytes(value: number) {
-  if (!value) {
-    return "0 B";
-  }
-
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let size = value;
-  let unitIndex = 0;
-
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024;
-    unitIndex += 1;
-  }
-
-  return `${size >= 10 || unitIndex === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unitIndex]}`;
-}
-
-function formatSpeed(value: number) {
-  return value > 0 ? `${formatBytes(value)}/s` : "0 B/s";
-}
-
-function formatDownloadLifecycle(status: SubjectDownloadStatus | null) {
-  if (!status) {
-    return "未进入下载流程";
-  }
-
-  switch (status.jobLifecycle) {
-    case "queued":
-      return "已进入队列";
-    case "planning":
-      return "正在规划";
-    case "searching":
-      return "正在搜索资源";
-    case "staged":
-      return "资源已就绪，等待执行";
-    case "starting":
-      return "下载引擎启动中";
-    case "downloading":
-      return "正在下载";
-    case "seeding":
-      return "已完成，正在做种";
-    case "completed":
-      return "已完成";
-    case "failed":
-      return "下载失败";
-    default:
-      return status.demandState === "threshold_met" ? "等待入队" : "等待订阅阈值";
-  }
-}
-
-function formatDownloadProgress(status: SubjectDownloadStatus | null) {
-  if (!status) {
-    return "暂无下载进度";
-  }
-
-  const totalBytes = Math.max(status.totalBytes, status.downloadedBytes);
-  if (totalBytes > 0) {
-    const progress = ((status.downloadedBytes / totalBytes) * 100).toFixed(1);
-    return `${formatBytes(status.downloadedBytes)} / ${formatBytes(totalBytes)} (${progress}%)`;
-  }
-
-  return formatBytes(status.downloadedBytes);
-}
-
 export function SubjectPage() {
   const styles = useStyles();
   const navigate = useNavigate();
@@ -275,13 +173,10 @@ export function SubjectPage() {
   const { subjectId } = useParams();
   const { deviceId, userToken } = useSession();
   const [detail, setDetail] = useState<SubjectDetailResponse | null>(null);
-  const [downloadStatus, setDownloadStatus] = useState<SubjectDownloadStatus | null>(null);
-  const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubscribing, setIsSubscribing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const routeState = (location.state as RouteState | null) ?? null;
-  const readyMediaCountRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!subjectId) {
@@ -295,8 +190,6 @@ export function SubjectPage() {
       .then((response) => {
         if (isMounted) {
           setDetail(response);
-          setDownloadStatus(response.downloadStatus);
-          readyMediaCountRef.current = response.downloadStatus?.readyMediaCount ?? 0;
           setError(null);
         }
       })
@@ -316,65 +209,53 @@ export function SubjectPage() {
     };
   }, [deviceId, subjectId, userToken]);
 
-  useEffect(() => {
+  async function handleToggleSubscription() {
     if (!subjectId || !detail) {
       return;
     }
 
-    const shouldPoll =
-      detail.subscription.isSubscribed ||
-      (downloadStatus?.jobLifecycle != null && ACTIVE_LIFECYCLES.has(downloadStatus.jobLifecycle));
+    const previousSubscription = detail.subscription;
+    const nextIsSubscribed = !previousSubscription.isSubscribed;
+    const optimisticCount = Math.max(
+      0,
+      previousSubscription.subscriptionCount + (nextIsSubscribed ? 1 : -1),
+    );
 
-    if (!shouldPoll) {
-      return;
-    }
-
-    let isMounted = true;
-    const interval = window.setInterval(() => {
-      void fetchSubjectDownloadStatus(Number(subjectId), deviceId, userToken).then((status) => {
-        if (!isMounted) {
-          return;
-        }
-
-        const previousReadyCount = readyMediaCountRef.current ?? 0;
-        const nextReadyCount = status?.readyMediaCount ?? 0;
-        if (nextReadyCount > previousReadyCount) {
-          setDownloadNotice(
-            nextReadyCount > 0
-              ? `订阅资源已入库，当前已有 ${nextReadyCount} 个可用文件。`
-              : "订阅资源状态已更新。"
-          );
-        }
-        readyMediaCountRef.current = nextReadyCount;
-        setDownloadStatus(status);
-      });
-    }, 5000);
-
-    return () => {
-      isMounted = false;
-      window.clearInterval(interval);
-    };
-  }, [detail, deviceId, downloadStatus?.jobLifecycle, subjectId, userToken]);
-
-  async function handleToggleSubscription() {
-    if (!subjectId) {
-      return;
-    }
-
+    setDetail((current) =>
+      current
+        ? {
+            ...current,
+            subscription: {
+              ...current.subscription,
+              isSubscribed: nextIsSubscribed,
+              subscriptionCount: optimisticCount,
+            },
+          }
+        : current,
+    );
     setIsSubscribing(true);
+    setError(null);
+
     try {
       const response = await toggleSubscription(Number(subjectId), deviceId, userToken);
       setDetail((current) =>
         current
           ? {
               ...current,
-              subscription: response.subscription
+              subscription: response.subscription,
             }
-          : current
+          : current,
       );
-      const nextStatus = await fetchSubjectDownloadStatus(Number(subjectId), deviceId, userToken);
-      setDownloadStatus(nextStatus);
-      readyMediaCountRef.current = nextStatus?.readyMediaCount ?? 0;
+    } catch (nextError) {
+      setDetail((current) =>
+        current
+          ? {
+              ...current,
+              subscription: previousSubscription,
+            }
+          : current,
+      );
+      setError((nextError as Error).message);
     } finally {
       setIsSubscribing(false);
     }
@@ -388,7 +269,7 @@ export function SubjectPage() {
 
     const restoreScrollTop = resolveReturnScrollTop(routeState.fromPath);
     navigate(routeState.fromPath, {
-      state: typeof restoreScrollTop === "number" ? ({ restoreScrollTop } satisfies RouteState) : undefined
+      state: typeof restoreScrollTop === "number" ? ({ restoreScrollTop } satisfies RouteState) : undefined,
     });
   }
 
@@ -411,7 +292,7 @@ export function SubjectPage() {
               : detail.subject.imagePortrait
                 ? `url(${detail.subject.imagePortrait})`
                 : undefined,
-            backgroundColor: "var(--app-fallback-hero)"
+            backgroundColor: "var(--app-fallback-hero)",
           }}
         />
         <div className={styles.heroOverlay} />
@@ -452,68 +333,6 @@ export function SubjectPage() {
           </div>
 
           <div className={styles.heroInfo}>
-            {downloadStatus ? (
-              <div className={styles.statusCard}>
-                <div className={styles.statusHeader}>
-                  <div>
-                    <Text size={200} className={styles.statLabel}>
-                      下载状态
-                    </Text>
-                    <Text weight="semibold">{formatDownloadLifecycle(downloadStatus)}</Text>
-                  </div>
-                  <Badge appearance={downloadStatus.readyMediaCount > 0 ? "filled" : "outline"}>
-                    {downloadStatus.readyMediaCount > 0 ? "已有可播放资源" : "等待资源"}
-                  </Badge>
-                </div>
-
-                <div className={styles.statusGrid}>
-                  <div className={styles.statusMetric}>
-                    <Text size={200} className={styles.statLabel}>
-                      当前进度
-                    </Text>
-                    <Text weight="semibold">{formatDownloadProgress(downloadStatus)}</Text>
-                  </div>
-
-                  <div className={styles.statusMetric}>
-                    <Text size={200} className={styles.statLabel}>
-                      下载速度
-                    </Text>
-                    <Text weight="semibold">{formatSpeed(downloadStatus.downloadRateBytes)}</Text>
-                  </div>
-
-                  <div className={styles.statusMetric}>
-                    <Text size={200} className={styles.statLabel}>
-                      Peer
-                    </Text>
-                    <Text weight="semibold">{downloadStatus.peerCount}</Text>
-                  </div>
-
-                  <div className={styles.statusMetric}>
-                    <Text size={200} className={styles.statLabel}>
-                      已入库文件
-                    </Text>
-                    <Text weight="semibold">{downloadStatus.readyMediaCount}</Text>
-                  </div>
-                </div>
-
-                {downloadStatus.sourceTitle ? (
-                  <Text className={styles.subtitle}>
-                    当前资源：{downloadStatus.sourceTitle}
-                    {downloadStatus.sourceFansubName ? ` · ${downloadStatus.sourceFansubName}` : ""}
-                  </Text>
-                ) : null}
-              </div>
-            ) : null}
-
-            {downloadNotice ? (
-              <div className={styles.noticeCard}>
-                <Text size={200} className={styles.statLabel}>
-                  订阅更新
-                </Text>
-                <Text weight="semibold">{downloadNotice}</Text>
-              </div>
-            ) : null}
-
             <div className={styles.statGrid}>
               <div className={styles.statCard}>
                 <Text size={200} className={styles.statLabel}>
@@ -562,7 +381,9 @@ export function SubjectPage() {
                     <Text size={200} className={styles.statLabel}>
                       {item.key}
                     </Text>
-                    <Text className={styles.infoValue}>{item.value}</Text>
+                    <Text weight="semibold" className={styles.infoValue}>
+                      {item.value}
+                    </Text>
                   </div>
                 ))}
               </div>
@@ -571,17 +392,19 @@ export function SubjectPage() {
         </div>
       </Card>
 
-      <section className={styles.episodesSection}>
+      {error ? <Text>{error}</Text> : null}
+
+      <div className={styles.episodesSection}>
         <Text weight="semibold" size={700}>
           剧集
         </Text>
 
         <div className={styles.episodesGrid}>
           {detail.episodes.map((episode) => (
-            <EpisodeCard key={episode.bangumiEpisodeId} episode={episode} subjectId={detail.subject.bangumiSubjectId} />
+            <EpisodeCard key={episode.bangumiEpisodeId} subjectId={detail.subject.bangumiSubjectId} episode={episode} />
           ))}
         </div>
-      </section>
+      </div>
     </section>
   );
 }

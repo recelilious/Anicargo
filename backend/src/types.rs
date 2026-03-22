@@ -476,6 +476,19 @@ pub struct ResourceLibraryRequest {
     pub page_size: Option<usize>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubjectCollectionRequest {
+    #[serde(default)]
+    pub keyword: Option<String>,
+    #[serde(default)]
+    pub sort: Option<String>,
+    #[serde(default)]
+    pub page: Option<usize>,
+    #[serde(default)]
+    pub page_size: Option<usize>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceLibraryItemDto {
@@ -510,6 +523,45 @@ pub struct ResourceLibraryResponse {
     pub has_next_page: bool,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubjectCollectionResponse {
+    pub items: Vec<SubjectCardDto>,
+    pub total: usize,
+    pub page: usize,
+    pub page_size: usize,
+    pub has_next_page: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveDownloadDto {
+    pub bangumi_subject_id: i64,
+    pub title: String,
+    pub title_cn: String,
+    pub image_portrait: Option<String>,
+    pub release_status: String,
+    pub slot_key: String,
+    pub episode_index: Option<f64>,
+    pub episode_end_index: Option<f64>,
+    pub is_collection: bool,
+    pub state: String,
+    pub source_title: String,
+    pub source_fansub_name: Option<String>,
+    pub downloaded_bytes: i64,
+    pub total_bytes: i64,
+    pub download_rate_bytes: i64,
+    pub upload_rate_bytes: i64,
+    pub peer_count: i64,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveDownloadsResponse {
+    pub items: Vec<ActiveDownloadDto>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EpisodePlaybackMediaDto {
@@ -532,6 +584,41 @@ pub struct EpisodePlaybackResponse {
     pub availability_state: String,
     pub note: String,
     pub media: Option<EpisodePlaybackMediaDto>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackHistoryRecordRequest {
+    pub bangumi_subject_id: i64,
+    pub bangumi_episode_id: i64,
+    pub media_inventory_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackHistoryItemDto {
+    pub bangumi_subject_id: i64,
+    pub bangumi_episode_id: i64,
+    pub episode_number: Option<f64>,
+    pub subject_title: String,
+    pub subject_title_cn: String,
+    pub episode_title: String,
+    pub episode_title_cn: String,
+    pub image_portrait: Option<String>,
+    pub file_name: Option<String>,
+    pub source_fansub_name: Option<String>,
+    pub last_played_at: String,
+    pub play_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackHistoryResponse {
+    pub items: Vec<PlaybackHistoryItemDto>,
+    pub total: usize,
+    pub page: usize,
+    pub page_size: usize,
+    pub has_next_page: bool,
 }
 
 #[derive(Debug, Deserialize)]

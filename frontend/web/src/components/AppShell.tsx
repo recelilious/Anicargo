@@ -1,5 +1,12 @@
 import { useEffect } from "react";
-import { BoxRegular, CalendarLtrRegular, SearchRegular, SettingsRegular } from "@fluentui/react-icons";
+import {
+  BookmarkRegular,
+  BoxRegular,
+  CalendarLtrRegular,
+  HistoryRegular,
+  SearchRegular,
+  SettingsRegular,
+} from "@fluentui/react-icons";
 import { Badge, Button, Text, makeStyles, tokens } from "@fluentui/react-components";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
@@ -12,7 +19,7 @@ const useStyles = makeStyles({
     display: "grid",
     gridTemplateColumns: "220px 1fr",
     backgroundColor: "var(--app-bg)",
-    overflow: "hidden"
+    overflow: "hidden",
   },
   rail: {
     display: "flex",
@@ -22,13 +29,13 @@ const useStyles = makeStyles({
     padding: "22px 14px",
     borderRight: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: "var(--app-rail)",
-    overflow: "hidden"
+    overflow: "hidden",
   },
   brand: {
     display: "flex",
     flexDirection: "column",
     gap: "2px",
-    padding: "2px 6px 0"
+    padding: "2px 6px 0",
   },
   profileCard: {
     display: "flex",
@@ -38,58 +45,60 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusXLarge,
     backgroundColor: "var(--app-panel)",
     border: "1px solid var(--app-border)",
-    boxShadow: "var(--app-card-shadow)"
+    boxShadow: "var(--app-card-shadow)",
   },
   profileMeta: {
     display: "flex",
     flexDirection: "column",
     gap: "2px",
-    minWidth: 0
+    minWidth: 0,
   },
   profileSubtitle: {
-    color: "var(--app-muted)"
+    color: "var(--app-muted)",
   },
   nav: {
     display: "flex",
     flexDirection: "column",
-    gap: "8px"
+    gap: "8px",
   },
   navLink: {
-    textDecorationLine: "none"
+    textDecorationLine: "none",
   },
   navButton: {
     width: "100%",
     justifyContent: "flex-start",
-    borderRadius: tokens.borderRadiusLarge
+    borderRadius: tokens.borderRadiusLarge,
   },
   active: {
     backgroundColor: "var(--app-selected-bg)",
-    color: "var(--app-selected-fg)"
+    color: "var(--app-selected-fg)",
   },
   footer: {
     marginTop: "auto",
     display: "flex",
     flexDirection: "column",
     gap: "8px",
-    padding: "0 6px"
+    padding: "0 6px",
   },
   adminHint: {
-    color: "var(--app-muted)"
+    color: "var(--app-muted)",
   },
   content: {
     minWidth: 0,
     height: "100vh",
     padding: "24px 28px 40px",
     overflowY: "auto",
-    overflowX: "hidden"
-  }
+    overflowX: "hidden",
+  },
 });
 
 const navItems = [
   { to: "/search", label: "搜索", icon: SearchRegular },
   { to: "/", label: "新番时间表", icon: CalendarLtrRegular },
+  { to: "/subscriptions", label: "订阅", icon: BookmarkRegular },
   { to: "/resources", label: "资源", icon: BoxRegular },
-  { to: "/settings", label: "设置", icon: SettingsRegular }
+  { to: "/history", label: "历史记录", icon: HistoryRegular },
+  { to: "/settings", label: "设置", icon: SettingsRegular },
 ] as const;
 
 export function AppShell() {
@@ -147,7 +156,7 @@ export function AppShell() {
 
         <div className={styles.footer}>
           <Text size={200} className={styles.adminHint}>
-            管理入口：/admin
+            管理入口：`/admin`
           </Text>
         </div>
       </aside>
