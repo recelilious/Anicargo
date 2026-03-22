@@ -1,10 +1,14 @@
-use std::time::Duration;
+use std::{
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use anyhow::Context;
 use chrono::{Local, NaiveDate};
-use reqwest::Client;
+use reqwest::{Client, Response, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use tracing::warn;
 
 use crate::{
     config::BangumiConfig,
@@ -16,7 +20,16 @@ pub struct BangumiClient {
     base_url: String,
     http: Client,
     user_agent: String,
+    calendar_cache: Arc<Mutex<Option<CachedCalendar>>>,
 }
+
+#[derive(Clone)]
+struct CachedCalendar {
+    fetched_at: Instant,
+    days: Vec<CalendarDayRaw>,
+}
+
+const CALENDAR_CACHE_TTL: Duration = Duration::from_secs(300);
 
 impl BangumiClient {
     pub fn new(config: &BangumiConfig) -> anyhow::Result<Self> {
@@ -29,21 +42,49 @@ impl BangumiClient {
             base_url: config.base_url.trim_end_matches('/').to_owned(),
             http,
             user_agent: config.user_agent.clone(),
+            calendar_cache: Arc::new(Mutex::new(None)),
         })
     }
 
     pub async fn fetch_calendar(&self) -> Result<Vec<CalendarDayRaw>, AppError> {
-        self.http
-            .get(format!("{}/calendar", self.base_url))
-            .header(reqwest::header::USER_AGENT, &self.user_agent)
-            .send()
-            .await
-            .map_err(|_| AppError::upstream("failed to reach Bangumi calendar"))?
-            .error_for_status()
-            .map_err(|_| AppError::upstream("Bangumi calendar returned an error"))?
-            .json::<Vec<CalendarDayRaw>>()
-            .await
-            .map_err(|_| AppError::upstream("failed to parse Bangumi calendar response"))
+        if let Some(days) = self.load_fresh_calendar_cache() {
+            return Ok(days);
+        }
+
+        let url = format!("{}/calendar", self.base_url);
+        let response = self
+            .send_request(
+                self.http
+                    .get(&url)
+                    .header(reqwest::header::USER_AGENT, &self.user_agent),
+                "calendar",
+                &url,
+            )
+            .await;
+
+        let days = match response {
+            Ok(response) => self.parse_calendar_response(response, &url).await,
+            Err(error) => Err(error),
+        };
+
+        match days {
+            Ok(days) => {
+                self.store_calendar_cache(&days);
+                Ok(days)
+            }
+            Err(error) => {
+                if let Some(days) = self.load_any_calendar_cache() {
+                    warn!(
+                        error = %error,
+                        cached_items = days.len(),
+                        "Bangumi calendar fetch failed; serving stale calendar cache"
+                    );
+                    return Ok(days);
+                }
+
+                Err(error)
+            }
+        }
     }
 
     pub async fn search_subjects(
@@ -53,55 +94,220 @@ impl BangumiClient {
         offset: usize,
     ) -> Result<SearchResponseRaw, AppError> {
         let payload = request.to_payload();
+        let url = format!(
+            "{}/v0/search/subjects?limit={}&offset={}",
+            self.base_url, limit, offset
+        );
 
-        self.http
-            .post(format!(
-                "{}/v0/search/subjects?limit={}&offset={}",
-                self.base_url, limit, offset
-            ))
-            .header(reqwest::header::USER_AGENT, &self.user_agent)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|_| AppError::upstream("failed to reach Bangumi search"))?
-            .error_for_status()
-            .map_err(|_| AppError::upstream("Bangumi search returned an error"))?
-            .json::<SearchResponseRaw>()
-            .await
-            .map_err(|_| AppError::upstream("failed to parse Bangumi search response"))
+        let response = self
+            .send_request(
+                self.http
+                    .post(&url)
+                    .header(reqwest::header::USER_AGENT, &self.user_agent)
+                    .json(&payload),
+                "search",
+                &url,
+            )
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(self.search_status_error(response, &url).await);
+        }
+
+        response.json::<SearchResponseRaw>().await.map_err(|error| {
+            warn!(url = %url, error = %error, "Failed to parse Bangumi search response");
+            AppError::upstream("failed to parse Bangumi search response")
+        })
     }
 
     pub async fn fetch_subject(&self, subject_id: i64) -> Result<SubjectRaw, AppError> {
-        self.http
-            .get(format!("{}/v0/subjects/{}", self.base_url, subject_id))
-            .header(reqwest::header::USER_AGENT, &self.user_agent)
-            .send()
-            .await
-            .map_err(|_| AppError::upstream("failed to reach Bangumi subject detail"))?
-            .error_for_status()
-            .map_err(|_| AppError::not_found("subject not found on Bangumi"))?
-            .json::<SubjectRaw>()
-            .await
-            .map_err(|_| AppError::upstream("failed to parse Bangumi subject detail"))
+        let url = format!("{}/v0/subjects/{}", self.base_url, subject_id);
+        let response = self
+            .send_request(
+                self.http
+                    .get(&url)
+                    .header(reqwest::header::USER_AGENT, &self.user_agent),
+                "subject detail",
+                &url,
+            )
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(self.subject_status_error(response, &url).await);
+        }
+
+        response.json::<SubjectRaw>().await.map_err(|error| {
+            warn!(
+                url = %url,
+                subject_id,
+                error = %error,
+                "Failed to parse Bangumi subject detail response"
+            );
+            AppError::upstream("failed to parse Bangumi subject detail")
+        })
     }
 
     pub async fn fetch_episodes(&self, subject_id: i64) -> Result<Vec<EpisodeRaw>, AppError> {
-        self.http
-            .get(format!(
-                "{}/v0/episodes?subject_id={}&type=0",
-                self.base_url, subject_id
-            ))
-            .header(reqwest::header::USER_AGENT, &self.user_agent)
-            .send()
-            .await
-            .map_err(|_| AppError::upstream("failed to reach Bangumi episode list"))?
-            .error_for_status()
-            .map_err(|_| AppError::upstream("Bangumi episode list returned an error"))?
+        let url = format!(
+            "{}/v0/episodes?subject_id={}&type=0",
+            self.base_url, subject_id
+        );
+        let response = self
+            .send_request(
+                self.http
+                    .get(&url)
+                    .header(reqwest::header::USER_AGENT, &self.user_agent),
+                "episode list",
+                &url,
+            )
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(self.episodes_status_error(response, &url, subject_id).await);
+        }
+
+        response
             .json::<PagedEpisodesRaw>()
             .await
-            .map_err(|_| AppError::upstream("failed to parse Bangumi episode list"))
-            .map(|response| response.data)
+            .map_err(|error| {
+                warn!(
+                    url = %url,
+                    subject_id,
+                    error = %error,
+                    "Failed to parse Bangumi episode list response"
+                );
+                AppError::upstream("failed to parse Bangumi episode list")
+            })
+            .map(|payload| payload.data)
     }
+
+    fn load_fresh_calendar_cache(&self) -> Option<Vec<CalendarDayRaw>> {
+        let cache = self.calendar_cache.lock().ok()?;
+        let cached = cache.as_ref()?;
+        (cached.fetched_at.elapsed() <= CALENDAR_CACHE_TTL).then(|| cached.days.clone())
+    }
+
+    fn load_any_calendar_cache(&self) -> Option<Vec<CalendarDayRaw>> {
+        self.calendar_cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.as_ref().map(|cached| cached.days.clone()))
+    }
+
+    fn store_calendar_cache(&self, days: &[CalendarDayRaw]) {
+        if let Ok(mut cache) = self.calendar_cache.lock() {
+            *cache = Some(CachedCalendar {
+                fetched_at: Instant::now(),
+                days: days.to_vec(),
+            });
+        }
+    }
+
+    async fn parse_calendar_response(
+        &self,
+        response: Response,
+        url: &str,
+    ) -> Result<Vec<CalendarDayRaw>, AppError> {
+        if !response.status().is_success() {
+            return Err(self.calendar_status_error(response, url).await);
+        }
+
+        response
+            .json::<Vec<CalendarDayRaw>>()
+            .await
+            .map_err(|error| {
+                warn!(url = %url, error = %error, "Failed to parse Bangumi calendar response");
+                AppError::upstream("failed to parse Bangumi calendar response")
+            })
+    }
+
+    async fn send_request(
+        &self,
+        request: reqwest::RequestBuilder,
+        action: &str,
+        url: &str,
+    ) -> Result<Response, AppError> {
+        request.send().await.map_err(|error| {
+            warn!(action, url = %url, error = %error, "Failed to reach Bangumi");
+            AppError::upstream(format!("failed to reach Bangumi {action}"))
+        })
+    }
+
+    async fn calendar_status_error(&self, response: Response, url: &str) -> AppError {
+        let (status, body) = read_upstream_error(response).await;
+        warn!(
+            url = %url,
+            status = %status,
+            body = %body,
+            "Bangumi calendar returned an unsuccessful response"
+        );
+        AppError::upstream("Bangumi calendar returned an error")
+    }
+
+    async fn search_status_error(&self, response: Response, url: &str) -> AppError {
+        let (status, body) = read_upstream_error(response).await;
+        warn!(
+            url = %url,
+            status = %status,
+            body = %body,
+            "Bangumi search returned an unsuccessful response"
+        );
+
+        match status {
+            StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY => {
+                AppError::bad_request("Bangumi rejected the current search filters")
+            }
+            StatusCode::TOO_MANY_REQUESTS => {
+                AppError::upstream("Bangumi search is temporarily rate limited")
+            }
+            _ => AppError::upstream("Bangumi search returned an error"),
+        }
+    }
+
+    async fn subject_status_error(&self, response: Response, url: &str) -> AppError {
+        let (status, body) = read_upstream_error(response).await;
+        warn!(
+            url = %url,
+            status = %status,
+            body = %body,
+            "Bangumi subject detail returned an unsuccessful response"
+        );
+
+        if status == StatusCode::NOT_FOUND {
+            AppError::not_found("subject not found on Bangumi")
+        } else {
+            AppError::upstream("Bangumi subject detail returned an error")
+        }
+    }
+
+    async fn episodes_status_error(
+        &self,
+        response: Response,
+        url: &str,
+        subject_id: i64,
+    ) -> AppError {
+        let (status, body) = read_upstream_error(response).await;
+        warn!(
+            url = %url,
+            subject_id,
+            status = %status,
+            body = %body,
+            "Bangumi episode list returned an unsuccessful response"
+        );
+        AppError::upstream("Bangumi episode list returned an error")
+    }
+}
+
+async fn read_upstream_error(response: Response) -> (StatusCode, String) {
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .unwrap_or_default()
+        .chars()
+        .take(240)
+        .collect::<String>();
+    (status, body)
 }
 
 #[derive(Debug, Clone, Deserialize)]
