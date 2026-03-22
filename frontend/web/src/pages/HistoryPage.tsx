@@ -3,7 +3,7 @@ import { Card, Spinner, Text, makeStyles } from "@fluentui/react-components";
 import { Link, useLocation } from "react-router-dom";
 
 import { fetchPlaybackHistory } from "../api";
-import { buildRoutePath, rememberReturnTarget } from "../navigation";
+import { buildRoutePath, rememberReturnTarget, type RouteState } from "../navigation";
 import { useSession } from "../session";
 import type { PlaybackHistoryItem } from "../types";
 
@@ -205,6 +205,10 @@ export function HistoryPage() {
     rememberReturnTarget(buildRoutePath(location), scrollTop);
   }
 
+  const routeState: RouteState = {
+    fromPath: buildRoutePath(location),
+  };
+
   return (
     <section className={styles.page}>
       <Card className={styles.surfaceCard}>
@@ -239,6 +243,7 @@ export function HistoryPage() {
                 key={`${item.bangumiSubjectId}-${item.bangumiEpisodeId}-${item.lastPlayedAt}`}
                 className={styles.link}
                 to={`/watch/${item.bangumiSubjectId}/${item.bangumiEpisodeId}`}
+                state={routeState}
                 onClick={rememberCurrentPosition}
               >
                 <Card className={styles.historyCard}>

@@ -97,3 +97,32 @@ a {
   color: #eef3f8;
   background: #324355;
 }
+
+.anicargo-player {
+  width: 100%;
+  height: 100%;
+}
+
+.anicargo-player .art-video-player {
+  width: 100%;
+  height: 100%;
+  --art-background-color: #070a10;
+  --art-font-color: #f4efe9;
+  --art-text-shadow-color: rgba(0, 0, 0, 0.72);
+  --art-border-radius: 22px;
+  --art-control-height: 44px;
+  --art-control-opacity: 0.9;
+  --art-control-icon-size: 34px;
+  --art-widget-background: rgba(10, 14, 20, 0.9);
+  --art-progress-color: rgba(255, 255, 255, 0.2);
+  --art-loaded-color: rgba(255, 255, 255, 0.3);
+  --art-subtitle-font-size: 18px;
+  --art-subtitle-border: rgba(0, 0, 0, 0.92);
+  --art-theme: #4b2c23;
+  font-family: "JetBrains Mono Variable", "Maple Mono CN", monospace;
+}
+
+.anicargo-player .art-video-player .art-subtitle {
+  font-family: "JetBrains Mono Variable", "Maple Mono CN", monospace;
+  letter-spacing: 0.02em;
+}

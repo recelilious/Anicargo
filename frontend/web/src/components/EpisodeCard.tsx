@@ -1,6 +1,7 @@
 import { Badge, Card, Text, makeStyles, tokens } from "@fluentui/react-components";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
+import { buildRoutePath, rememberReturnTarget, type RouteState } from "../navigation";
 import type { Episode } from "../types";
 
 const useStyles = makeStyles({
@@ -36,9 +37,24 @@ export function EpisodeCard({
   subjectId: number;
 }) {
   const styles = useStyles();
+  const location = useLocation();
+
+  function rememberCurrentPosition() {
+    const scrollTop = document.getElementById("app-scroll-root")?.scrollTop ?? 0;
+    rememberReturnTarget(buildRoutePath(location), scrollTop);
+  }
+
+  const routeState: RouteState = {
+    fromPath: buildRoutePath(location),
+  };
 
   return (
-    <Link to={`/watch/${subjectId}/${episode.bangumiEpisodeId}`} className={styles.link}>
+    <Link
+      to={`/watch/${subjectId}/${episode.bangumiEpisodeId}`}
+      state={routeState}
+      className={styles.link}
+      onClick={rememberCurrentPosition}
+    >
       <Card className={styles.card} appearance="filled-alternative">
         <div>
           <Text weight="semibold">第 {episode.episodeNumber ?? episode.sort} 集</Text>

@@ -13,6 +13,7 @@
     "@fluentui/react-components": "^9.72.7",
     "@fluentui/react-icons": "^2.0.276",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
+    "artplayer": "^5.4.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.9.6"
