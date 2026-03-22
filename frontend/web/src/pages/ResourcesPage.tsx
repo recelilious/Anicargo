@@ -214,16 +214,43 @@ function formatDownloadState(state: string) {
   }
 }
 
+function formatEpisodeNumber(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function describeDownloadSlot(download: ActiveDownload) {
+  if (download.isCollection) {
+    if (download.episodeIndex != null && download.episodeEndIndex != null) {
+      return `合集 ${formatEpisodeNumber(download.episodeIndex)} - ${formatEpisodeNumber(download.episodeEndIndex)}`;
+    }
+
+    return "合集";
+  }
+
+  if (download.episodeIndex == null) {
+    return download.slotKey;
+  }
+
+  if (
+    download.episodeEndIndex != null &&
+    download.episodeEndIndex !== download.episodeIndex
+  ) {
+    return `第 ${formatEpisodeNumber(download.episodeIndex)} - ${formatEpisodeNumber(download.episodeEndIndex)} 集`;
+  }
+
+  return `第 ${formatEpisodeNumber(download.episodeIndex)} 集`;
+}
+
 function describeEpisode(item: ResourceLibraryItem) {
   if (item.episodeIndex == null) {
     return item.isCollection ? "合集" : "未映射";
   }
 
   if (item.episodeEndIndex != null && item.episodeEndIndex !== item.episodeIndex) {
-    return `${item.episodeIndex} - ${item.episodeEndIndex}`;
+    return `${formatEpisodeNumber(item.episodeIndex)} - ${formatEpisodeNumber(item.episodeEndIndex)}`;
   }
 
-  return `第 ${item.episodeIndex} 集`;
+  return `第 ${formatEpisodeNumber(item.episodeIndex)} 集`;
 }
 
 export function ResourcesPage() {
@@ -294,7 +321,7 @@ export function ResourcesPage() {
           setDownloads(response.items);
         }
       });
-    }, 5000);
+    }, 2000);
 
     return () => {
       isMounted = false;
@@ -434,6 +461,9 @@ export function ResourcesPage() {
                       <div className={styles.progressHeader}>
                         <div className={styles.titleBlock}>
                           <Text weight="semibold" className={styles.titleLine}>
+                            {describeDownloadSlot(download)}
+                          </Text>
+                          <Text className={styles.subtitleLine}>
                             {download.titleCn || download.title}
                           </Text>
                           <Text className={styles.subtitleLine}>
@@ -463,10 +493,10 @@ export function ResourcesPage() {
                         </div>
                         <div>
                           <Text size={200} className={styles.muted}>
-                            片段
+                            来源
                           </Text>
                           <Text weight="semibold" className={styles.progressText}>
-                            {download.episodeIndex ?? "?"}
+                            {download.sourceFansubName ?? "AnimeGarden"}
                           </Text>
                         </div>
                       </div>

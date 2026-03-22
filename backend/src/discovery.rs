@@ -185,7 +185,7 @@ fn choose_candidate(
     )
 }
 
-fn candidate_priority_key(
+pub(crate) fn candidate_priority_key(
     candidate: &ResourceCandidateDto,
     release_status: &str,
 ) -> (i64, i64, i64, i64) {
@@ -408,7 +408,7 @@ fn normalize_name(value: &str) -> String {
         .collect()
 }
 
-fn within_replacement_window(selection_updated_at: Option<&str>, hours: i64) -> bool {
+pub(crate) fn within_replacement_window(selection_updated_at: Option<&str>, hours: i64) -> bool {
     let Some(selection_updated_at) = selection_updated_at else {
         return true;
     };

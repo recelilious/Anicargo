@@ -1553,6 +1553,23 @@ pub async fn current_selected_candidate_for_job(
     Ok(row.map(map_resource_candidate))
 }
 
+pub async fn resource_candidate_by_id(
+    pool: &SqlitePool,
+    resource_candidate_id: i64,
+) -> Result<Option<ResourceCandidateDto>, AppError> {
+    let row = sqlx::query_as::<_, ResourceCandidateRow>(
+        "SELECT *
+         FROM resource_candidates
+         WHERE id = ?1",
+    )
+    .bind(resource_candidate_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to read resource candidate"))?;
+
+    Ok(row.map(map_resource_candidate))
+}
+
 pub async fn latest_selected_candidate_for_subject(
     pool: &SqlitePool,
     bangumi_subject_id: i64,

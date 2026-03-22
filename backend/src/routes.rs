@@ -9,7 +9,7 @@ use axum::{
 use futures::stream::{self, StreamExt};
 use sqlx::SqlitePool;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     path::PathBuf,
     sync::Arc,
 };
@@ -24,7 +24,7 @@ use crate::{
     bangumi::{BangumiClient, BangumiSearchQuery, EpisodeRaw, SearchFacets},
     config::AppConfig,
     db,
-    discovery::ResourceDiscoveryCoordinator,
+    discovery::{ResourceDiscoveryCoordinator, candidate_priority_key, within_replacement_window},
     downloads::{DownloadCoordinator, DownloadDemandInput},
     season_catalog,
     telemetry::{self, RuntimeMetrics},
@@ -36,6 +36,7 @@ use crate::{
         BootstrapResponse, CalendarResponse, CredentialsRequest, EpisodePlaybackMediaDto,
         EpisodePlaybackResponse, FansubRuleDto, ForceDownloadResponse, HealthResponse,
         PlaybackHistoryItemDto, PlaybackHistoryRecordRequest, PlaybackHistoryResponse,
+        ResourceCandidateDto,
         ResourceLibraryRequest, ResourceLibraryResponse, RuntimeHttpStatsDto, RuntimeOverviewDto,
         SearchRequest, SearchResponse, SubjectCardDto, SubjectCollectionRequest,
         SubjectCollectionResponse, SubjectDetailDto, SubjectDetailResponse, SubscriptionStateDto,
@@ -819,38 +820,14 @@ async fn force_download_job(
 
     if let Some(job) = decision.job.as_ref() {
         let discovery_profile = profile.to_discovery_profile();
-        match state
-            .discovery
-            .discover_for_job(&state.pool, job, &discovery_profile, &policy)
-            .await
-        {
-            Ok(_) => {
-                if let Err(error) = state
-                    .downloads
-                    .materialize_selected_candidate(
-                        &state.pool,
-                        &state.config.storage.media_root,
-                        job.id,
-                    )
-                    .await
-                {
-                    tracing::warn!(
-                        job_id = job.id,
-                        subject_id,
-                        error = %error,
-                        "Download execution activation failed after admin force queueing"
-                    );
-                }
-            }
-            Err(error) => {
-                tracing::warn!(
-                    job_id = job.id,
-                    subject_id,
-                    error = %error,
-                    "Resource discovery failed after admin force queueing"
-                );
-            }
-        }
+        run_download_pipeline(
+            state.clone(),
+            job.clone(),
+            discovery_profile,
+            policy.clone(),
+            "admin force trigger",
+        )
+        .await;
     }
 
     Ok(Json(ApiEnvelope::new(ForceDownloadResponse {
@@ -1017,16 +994,22 @@ async fn run_download_pipeline(
         .discover_for_job(&state.pool, &job, &discovery_profile, &policy)
         .await
     {
-        Ok(_) => {
-            if let Err(error) = state
-                .downloads
-                .materialize_selected_candidate(
-                    &state.pool,
-                    &state.config.storage.media_root,
-                    job.id,
-                )
-                .await
-            {
+        Ok(candidates) => {
+            let activation_result = if job.release_status == "airing" {
+                apply_airing_download_plan(&state, &job, &policy, &candidates).await
+            } else {
+                state
+                    .downloads
+                    .materialize_selected_candidate(
+                        &state.pool,
+                        &state.config.storage.media_root,
+                        job.id,
+                    )
+                    .await
+                    .map(|_| ())
+            };
+
+            if let Err(error) = activation_result {
                 tracing::warn!(
                     job_id = job.id,
                     subject_id = job.bangumi_subject_id,
@@ -1046,6 +1029,244 @@ async fn run_download_pipeline(
             );
         }
     }
+}
+
+#[derive(Debug, Default)]
+struct AiringDownloadPlan {
+    backlog_candidate_ids: Vec<i64>,
+    latest_candidate_id: Option<i64>,
+}
+
+async fn apply_airing_download_plan(
+    state: &AppState,
+    job: &crate::types::DownloadJobDto,
+    policy: &crate::types::PolicyDto,
+    candidates: &[ResourceCandidateDto],
+) -> Result<(), AppError> {
+    let plan = build_airing_download_plan(&state.pool, job, policy, candidates).await?;
+
+    for candidate_id in plan.backlog_candidate_ids {
+        state
+            .downloads
+            .materialize_candidate(
+                &state.pool,
+                &state.config.storage.media_root,
+                job.id,
+                candidate_id,
+            )
+            .await?;
+    }
+
+    if let Some(latest_candidate_id) = plan.latest_candidate_id {
+        let current_selected = db::current_selected_candidate_for_job(&state.pool, job.id).await?;
+        if current_selected.as_ref().map(|candidate| candidate.id) != Some(latest_candidate_id) {
+            db::assign_download_job_candidate(&state.pool, job.id, Some(latest_candidate_id))
+                .await?;
+        }
+
+        state
+            .downloads
+            .materialize_selected_candidate(
+                &state.pool,
+                &state.config.storage.media_root,
+                job.id,
+            )
+            .await?;
+    } else if db::current_selected_candidate_for_job(&state.pool, job.id)
+        .await?
+        .is_some()
+    {
+        state
+            .downloads
+            .materialize_selected_candidate(
+                &state.pool,
+                &state.config.storage.media_root,
+                job.id,
+            )
+            .await?;
+    }
+
+    Ok(())
+}
+
+async fn build_airing_download_plan(
+    pool: &SqlitePool,
+    job: &crate::types::DownloadJobDto,
+    policy: &crate::types::PolicyDto,
+    candidates: &[ResourceCandidateDto],
+) -> Result<AiringDownloadPlan, AppError> {
+    let eligible = candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.rejected_reason.is_none()
+                && !candidate.is_collection
+                && candidate.episode_index.is_some()
+        })
+        .collect::<Vec<_>>();
+
+    if eligible.is_empty() {
+        return Ok(AiringDownloadPlan::default());
+    }
+
+    let availability = db::list_subject_episode_availability(pool, job.bangumi_subject_id).await?;
+    let current_selected = db::current_selected_candidate_for_job(pool, job.id).await?;
+    let previous_selected = db::latest_selected_candidate_for_subject(pool, job.bangumi_subject_id)
+        .await?;
+
+    let mut candidates_by_episode = BTreeMap::<i64, Vec<&ResourceCandidateDto>>::new();
+    for candidate in eligible {
+        let Some(episode_index) = candidate.episode_index else {
+            continue;
+        };
+        candidates_by_episode
+            .entry(episode_sort_key(episode_index))
+            .or_default()
+            .push(candidate);
+    }
+
+    let Some((&latest_episode_key, latest_candidates)) = candidates_by_episode
+        .iter()
+        .next_back()
+        .map(|(key, value)| (key, value))
+    else {
+        return Ok(AiringDownloadPlan::default());
+    };
+
+    let mut preferred_fansub = previous_selected
+        .as_ref()
+        .and_then(|candidate| candidate.fansub_name.clone());
+    let mut backlog_candidate_ids = Vec::new();
+
+    for (episode_key, slot_candidates) in &candidates_by_episode {
+        if *episode_key == latest_episode_key {
+            continue;
+        }
+
+        let Some(episode_number) = slot_candidates
+            .first()
+            .and_then(|candidate| candidate.episode_index)
+        else {
+            continue;
+        };
+
+        let slot_key = slot_candidates[0].slot_key.as_str();
+        let already_covered = availability
+            .iter()
+            .any(|item| availability_covers_episode(item, episode_number));
+        let has_active_execution =
+            db::find_active_execution_for_job_slot(pool, job.id, slot_key).await?.is_some();
+
+        if already_covered || has_active_execution {
+            continue;
+        }
+
+        let Some(chosen) =
+            pick_slot_candidate(slot_candidates, &job.release_status, preferred_fansub.as_deref())
+        else {
+            continue;
+        };
+
+        if let Some(fansub_name) = chosen.fansub_name.clone() {
+            preferred_fansub = Some(fansub_name);
+        }
+        backlog_candidate_ids.push(chosen.id);
+    }
+
+    let latest_candidate = choose_latest_airing_candidate(
+        job,
+        policy,
+        current_selected.as_ref(),
+        latest_candidates,
+        preferred_fansub.as_deref(),
+    );
+
+    Ok(AiringDownloadPlan {
+        backlog_candidate_ids,
+        latest_candidate_id: latest_candidate.map(|candidate| candidate.id),
+    })
+}
+
+fn choose_latest_airing_candidate<'a>(
+    job: &crate::types::DownloadJobDto,
+    policy: &crate::types::PolicyDto,
+    current_selected: Option<&'a ResourceCandidateDto>,
+    latest_candidates: &[&'a ResourceCandidateDto],
+    preferred_fansub: Option<&str>,
+) -> Option<&'a ResourceCandidateDto> {
+    let best = pick_slot_candidate(latest_candidates, &job.release_status, preferred_fansub)?;
+
+    let Some(current) = current_selected else {
+        return Some(best);
+    };
+
+    if current.slot_key != best.slot_key {
+        return Some(best);
+    }
+
+    if !within_replacement_window(
+        job.selection_updated_at.as_deref(),
+        policy.replacement_window_hours,
+    ) {
+        return Some(current);
+    }
+
+    if slot_candidate_priority_key(best, &job.release_status, preferred_fansub)
+        > slot_candidate_priority_key(current, &job.release_status, preferred_fansub)
+    {
+        Some(best)
+    } else {
+        Some(current)
+    }
+}
+
+fn pick_slot_candidate<'a>(
+    candidates: &[&'a ResourceCandidateDto],
+    release_status: &str,
+    preferred_fansub: Option<&str>,
+) -> Option<&'a ResourceCandidateDto> {
+    candidates.iter().copied().max_by(|left, right| {
+        slot_candidate_priority_key(left, release_status, preferred_fansub).cmp(
+            &slot_candidate_priority_key(right, release_status, preferred_fansub),
+        )
+    })
+}
+
+fn slot_candidate_priority_key(
+    candidate: &ResourceCandidateDto,
+    release_status: &str,
+    preferred_fansub: Option<&str>,
+) -> (i64, i64, i64, i64) {
+    let (slot_weight, score_weight, quality_weight, freshness_weight) =
+        candidate_priority_key(candidate, release_status);
+    let continuity_bonus = if preferred_fansub
+        .zip(candidate.fansub_name.as_deref())
+        .is_some_and(|(left, right)| normalize_fansub_name(left) == normalize_fansub_name(right))
+    {
+        1_800
+    } else {
+        0
+    };
+
+    (
+        slot_weight,
+        score_weight + continuity_bonus,
+        quality_weight,
+        freshness_weight,
+    )
+}
+
+fn normalize_fansub_name(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| {
+            !character.is_whitespace() && !matches!(character, '(' | ')' | '[' | ']')
+        })
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn episode_sort_key(value: f64) -> i64 {
+    (value * 100.0).round() as i64
 }
 
 async fn fetch_subject_card_map(

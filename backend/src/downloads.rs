@@ -16,7 +16,7 @@ use crate::{
     media::{ParsedReleaseSlot, scan_video_files},
     types::{
         AppError, DownloadDecisionDto, DownloadExecutionDecisionDto, DownloadExecutionDto,
-        DownloadJobDto,
+        DownloadJobDto, ResourceCandidateDto,
     },
 };
 
@@ -522,8 +522,43 @@ impl DownloadCoordinator {
             .await?
             .ok_or_else(|| AppError::bad_request("download job has no selected candidate"))?;
 
+        self.materialize_candidate_for_job(pool, media_root, &job, &candidate)
+            .await
+    }
+
+    pub async fn materialize_candidate(
+        &self,
+        pool: &SqlitePool,
+        media_root: &Path,
+        job_id: i64,
+        resource_candidate_id: i64,
+    ) -> Result<DownloadExecutionDecisionDto, AppError> {
+        let job = db::download_job_by_id(pool, job_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("download job not found"))?;
+        let candidate = db::resource_candidate_by_id(pool, resource_candidate_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("resource candidate not found"))?;
+
+        if candidate.download_job_id != job.id {
+            return Err(AppError::bad_request(
+                "resource candidate does not belong to download job",
+            ));
+        }
+
+        self.materialize_candidate_for_job(pool, media_root, &job, &candidate)
+            .await
+    }
+
+    async fn materialize_candidate_for_job(
+        &self,
+        pool: &SqlitePool,
+        media_root: &Path,
+        job: &DownloadJobDto,
+        candidate: &ResourceCandidateDto,
+    ) -> Result<DownloadExecutionDecisionDto, AppError> {
         if let Some(existing) =
-            db::find_execution_for_job_candidate(pool, job_id, candidate.id).await?
+            db::find_execution_for_job_candidate(pool, job.id, candidate.id).await?
         {
             if is_active_execution_state(&existing.state) {
                 return Ok(DownloadExecutionDecisionDto {
@@ -535,14 +570,14 @@ impl DownloadCoordinator {
         }
 
         let replaced_execution =
-            db::find_active_execution_for_job_slot(pool, job_id, &candidate.slot_key).await?;
+            db::find_active_execution_for_job_slot(pool, job.id, &candidate.slot_key).await?;
         let execution_role = if replaced_execution.is_some() {
             "replacement"
         } else {
             "primary"
         }
         .to_owned();
-        let target_path = build_execution_target_path(media_root, &job, candidate.id);
+        let target_path = build_execution_target_path(media_root, job, candidate.id);
         ensure_execution_target_path(&target_path)?;
 
         let accepted = self
