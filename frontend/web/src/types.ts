@@ -9,6 +9,9 @@ export type Policy = {
   subscriptionThreshold: number;
   replacementWindowHours: number;
   preferSameFansub: boolean;
+  maxConcurrentDownloads: number;
+  uploadLimitMb: number;
+  downloadLimitMb: number;
 };
 
 export type BootstrapResponse = {

@@ -26,7 +26,9 @@ use crate::{
     config::AppConfig,
     db::connect_and_migrate,
     discovery::ResourceDiscoveryCoordinator,
-    downloads::{DownloadCoordinator, PlanningDownloadEngine, RqbitDownloadEngine},
+    downloads::{
+        DownloadCoordinator, DownloadRuntimeSettings, PlanningDownloadEngine, RqbitDownloadEngine,
+    },
     routes::AppState,
     telemetry::RuntimeMetrics,
     yuc::YucClient,
@@ -44,15 +46,32 @@ async fn main() -> anyhow::Result<()> {
     db::ensure_bootstrap_admin(&pool, &config.auth)
         .await
         .context("failed to ensure bootstrap admin")?;
+    db::apply_torrent_runtime_config(
+        &pool,
+        config.torrent.max_concurrent_downloads as i64,
+        config.torrent.upload_limit_mb as i64,
+        config.torrent.download_limit_mb as i64,
+    )
+    .await
+    .context("failed to apply torrent runtime config")?;
 
     let bangumi = BangumiClient::new(&config.bangumi).context("failed to initialize bangumi")?;
     let yuc = YucClient::new(&config.yuc).context("failed to initialize yuc")?;
     let animegarden =
         AnimeGardenClient::new(&config.animegarden).context("failed to initialize animegarden")?;
+    let download_runtime_settings = DownloadRuntimeSettings::new(
+        config.torrent.max_concurrent_downloads,
+        config.torrent.upload_limit_mb,
+        config.torrent.download_limit_mb,
+    );
     let download_engine = build_download_engine(&config)
         .await
         .context("failed to initialize download engine")?;
-    let downloads = DownloadCoordinator::new(download_engine);
+    let downloads = DownloadCoordinator::new(download_engine, download_runtime_settings);
+    downloads
+        .apply_runtime_settings(download_runtime_settings)
+        .await
+        .context("failed to apply startup download runtime settings")?;
     let download_engine_name = downloads.engine_name().to_owned();
     let discovery = ResourceDiscoveryCoordinator::new(animegarden);
     let address = format!("{}:{}", config.server.host, config.server.port);
@@ -72,6 +91,7 @@ async fn main() -> anyhow::Result<()> {
     spawn_download_sync_loop(
         downloads.clone(),
         pool.clone(),
+        config.storage.media_root.clone(),
         config.torrent.sync_interval_secs,
     );
     spawn_current_season_refresh_loop(yuc_for_sync, bangumi_for_sync, pool.clone());
@@ -117,6 +137,7 @@ async fn build_download_engine(
 fn spawn_download_sync_loop(
     downloads: DownloadCoordinator,
     pool: sqlx::SqlitePool,
+    media_root: std::path::PathBuf,
     sync_interval_secs: u64,
 ) {
     tokio::spawn(async move {
@@ -126,7 +147,7 @@ fn spawn_download_sync_loop(
         loop {
             interval.tick().await;
 
-            if let Err(error) = downloads.sync_active_executions(&pool).await {
+            if let Err(error) = downloads.sync_active_executions(&pool, &media_root).await {
                 warn!(error = %error, "Download execution sync loop failed");
             }
         }

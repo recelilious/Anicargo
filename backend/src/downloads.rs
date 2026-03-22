@@ -1,4 +1,9 @@
-use std::{fs, path::Path, sync::Arc};
+use std::{
+    fs,
+    num::NonZeroU32,
+    path::Path,
+    sync::{Arc, RwLock},
+};
 
 use anyhow::{Context, anyhow};
 use async_trait::async_trait;
@@ -89,9 +94,32 @@ pub struct EngineSyncAccepted {
     pub peer_count: i64,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct DownloadRuntimeSettings {
+    pub max_concurrent_downloads: usize,
+    pub upload_limit_mb: u64,
+    pub download_limit_mb: u64,
+}
+
+impl DownloadRuntimeSettings {
+    pub fn new(
+        max_concurrent_downloads: usize,
+        upload_limit_mb: u64,
+        download_limit_mb: u64,
+    ) -> Self {
+        Self {
+            max_concurrent_downloads: max_concurrent_downloads.max(1),
+            upload_limit_mb,
+            download_limit_mb,
+        }
+    }
+}
+
 #[async_trait]
 pub trait DownloadEngine: Send + Sync {
     fn name(&self) -> &'static str;
+    async fn apply_runtime_settings(&self, settings: DownloadRuntimeSettings)
+    -> anyhow::Result<()>;
     async fn queue(&self, request: EngineQueueRequest) -> anyhow::Result<EngineQueueAccepted>;
     async fn activate(
         &self,
@@ -115,6 +143,13 @@ pub struct PlanningDownloadEngine;
 impl DownloadEngine for PlanningDownloadEngine {
     fn name(&self) -> &'static str {
         "planning"
+    }
+
+    async fn apply_runtime_settings(
+        &self,
+        _settings: DownloadRuntimeSettings,
+    ) -> anyhow::Result<()> {
+        Ok(())
     }
 
     async fn queue(&self, request: EngineQueueRequest) -> anyhow::Result<EngineQueueAccepted> {
@@ -255,6 +290,27 @@ impl DownloadEngine for RqbitDownloadEngine {
         "rqbit"
     }
 
+    async fn apply_runtime_settings(
+        &self,
+        settings: DownloadRuntimeSettings,
+    ) -> anyhow::Result<()> {
+        self.session
+            .ratelimits
+            .set_upload_bps(limit_mb_to_non_zero_bps(settings.upload_limit_mb));
+        self.session
+            .ratelimits
+            .set_download_bps(limit_mb_to_non_zero_bps(settings.download_limit_mb));
+
+        info!(
+            max_concurrent_downloads = settings.max_concurrent_downloads,
+            upload_limit_mb = settings.upload_limit_mb,
+            download_limit_mb = settings.download_limit_mb,
+            "Applied runtime download settings to rqbit engine"
+        );
+
+        Ok(())
+    }
+
     async fn queue(&self, request: EngineQueueRequest) -> anyhow::Result<EngineQueueAccepted> {
         info!(
             subject_id = request.bangumi_subject_id,
@@ -385,15 +441,50 @@ impl DownloadEngine for RqbitDownloadEngine {
 #[derive(Clone)]
 pub struct DownloadCoordinator {
     engine: Arc<dyn DownloadEngine>,
+    runtime_settings: Arc<RwLock<DownloadRuntimeSettings>>,
 }
 
 impl DownloadCoordinator {
-    pub fn new(engine: Arc<dyn DownloadEngine>) -> Self {
-        Self { engine }
+    pub fn new(engine: Arc<dyn DownloadEngine>, runtime_settings: DownloadRuntimeSettings) -> Self {
+        Self {
+            engine,
+            runtime_settings: Arc::new(RwLock::new(runtime_settings)),
+        }
     }
 
     pub fn engine_name(&self) -> &'static str {
         self.engine.name()
+    }
+
+    pub fn runtime_settings(&self) -> DownloadRuntimeSettings {
+        *self
+            .runtime_settings
+            .read()
+            .expect("download runtime settings lock poisoned")
+    }
+
+    pub async fn apply_runtime_settings(
+        &self,
+        settings: DownloadRuntimeSettings,
+    ) -> Result<(), AppError> {
+        self.engine
+            .apply_runtime_settings(settings)
+            .await
+            .map_err(|error| {
+                warn!(
+                    engine = self.engine.name(),
+                    error = %error,
+                    "Failed to apply runtime download settings"
+                );
+                AppError::internal("failed to apply runtime download settings")
+            })?;
+
+        *self
+            .runtime_settings
+            .write()
+            .expect("download runtime settings lock poisoned") = settings;
+
+        Ok(())
     }
 
     pub async fn reconcile_subscription_demand(
@@ -591,6 +682,32 @@ impl DownloadCoordinator {
 
         let replaced_execution =
             db::find_active_execution_for_job_slot(pool, job.id, &candidate.slot_key).await?;
+        if !self.has_download_capacity(pool).await? {
+            let settings = self.runtime_settings();
+            let reason = format!(
+                "Waiting for a download slot ({}/{})",
+                db::count_running_download_executions(pool, self.engine.name()).await?,
+                settings.max_concurrent_downloads
+            );
+
+            info!(
+                job_id = job.id,
+                subject_id = job.bangumi_subject_id,
+                candidate_id = candidate.id,
+                slot_key = %candidate.slot_key,
+                max_concurrent_downloads = settings.max_concurrent_downloads,
+                "Deferring candidate activation because the concurrent download limit was reached"
+            );
+
+            db::update_download_job_lifecycle(pool, job.id, "queued", Some(&reason)).await?;
+
+            return Ok(DownloadExecutionDecisionDto {
+                reason: "deferred_by_concurrency_limit".to_owned(),
+                execution: None,
+                replaced_execution_id: replaced_execution.map(|execution| execution.id),
+            });
+        }
+
         let execution_role = if replaced_execution.is_some() {
             "replacement"
         } else {
@@ -762,6 +879,54 @@ impl DownloadCoordinator {
         })
     }
 
+    async fn has_download_capacity(&self, pool: &SqlitePool) -> Result<bool, AppError> {
+        let running = db::count_running_download_executions(pool, self.engine.name()).await?;
+        Ok(running < self.runtime_settings().max_concurrent_downloads as i64)
+    }
+
+    async fn activate_queued_candidates(
+        &self,
+        pool: &SqlitePool,
+        media_root: &Path,
+    ) -> Result<(), AppError> {
+        let settings = self.runtime_settings();
+        let running = db::count_running_download_executions(pool, self.engine.name()).await?;
+        let available_slots = settings
+            .max_concurrent_downloads
+            .saturating_sub(running.max(0) as usize);
+
+        if available_slots == 0 {
+            return Ok(());
+        }
+
+        let jobs =
+            db::list_jobs_ready_for_activation(pool, available_slots.saturating_mul(4).max(8))
+                .await?;
+        let mut activated = 0usize;
+
+        for job in jobs {
+            if activated >= available_slots {
+                break;
+            }
+
+            let decision = self
+                .materialize_selected_candidate(pool, media_root, job.id)
+                .await?;
+
+            match decision.reason.as_str() {
+                "activated_primary_execution" | "activated_replacement_execution" => {
+                    activated += 1;
+                }
+                "deferred_by_concurrency_limit" => {
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn list_executions(
         &self,
         pool: &SqlitePool,
@@ -770,7 +935,11 @@ impl DownloadCoordinator {
         db::list_download_executions(pool, job_id).await
     }
 
-    pub async fn sync_active_executions(&self, pool: &SqlitePool) -> Result<(), AppError> {
+    pub async fn sync_active_executions(
+        &self,
+        pool: &SqlitePool,
+        media_root: &Path,
+    ) -> Result<(), AppError> {
         let executions = db::list_active_download_executions(pool, self.engine.name(), 256).await?;
 
         for execution in executions {
@@ -881,6 +1050,8 @@ impl DownloadCoordinator {
                 }
             }
         }
+
+        self.activate_queued_candidates(pool, media_root).await?;
 
         Ok(())
     }
@@ -1055,6 +1226,15 @@ fn rqbit_peer_count(stats: &TorrentStats) -> i64 {
         .as_ref()
         .map(|live| live.snapshot.peer_stats.live as i64)
         .unwrap_or(0)
+}
+
+fn limit_mb_to_non_zero_bps(value: u64) -> Option<NonZeroU32> {
+    if value == 0 {
+        return None;
+    }
+
+    let bytes_per_second = value.saturating_mul(1024 * 1024).min(u32::MAX as u64) as u32;
+    NonZeroU32::new(bytes_per_second)
 }
 
 fn mib_per_sec_to_bytes_per_sec(value: f64) -> i64 {

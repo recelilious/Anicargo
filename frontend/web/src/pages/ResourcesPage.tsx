@@ -204,7 +204,7 @@ function formatProgress(download: ActiveDownload) {
 function formatDownloadState(state: string) {
   switch (state) {
     case "queued":
-      return "已进入队列";
+      return "已排队";
     case "starting":
       return "启动中";
     case "downloading":
@@ -213,6 +213,8 @@ function formatDownloadState(state: string) {
       return "已完成";
     case "searching":
       return "搜索中";
+    case "staged":
+      return "待启动";
     default:
       return state;
   }
@@ -367,8 +369,12 @@ export function ResourcesPage() {
   }
 
   const sortedDownloads = useMemo(() => {
-    const visibleDownloads = downloads.filter(
-      (item) => item.state === "staged" || item.state === "queued" || item.state === "searching" || item.state === "starting" || item.state === "downloading",
+    const visibleDownloads = downloads.filter((item) =>
+      item.state === "staged" ||
+      item.state === "queued" ||
+      item.state === "searching" ||
+      item.state === "starting" ||
+      item.state === "downloading"
     );
 
     return [...visibleDownloads].sort((left, right) => {
@@ -400,12 +406,13 @@ export function ResourcesPage() {
 
   const activeDownloadCount = useMemo(
     () => sortedDownloads.filter((item) => item.state === "downloading" || item.state === "starting").length,
-    [sortedDownloads]
+    [sortedDownloads],
   );
   const totalDownloadSpeed = useMemo(
     () => sortedDownloads.reduce((sum, item) => sum + item.downloadRateBytes, 0),
-    [sortedDownloads]
+    [sortedDownloads],
   );
+
   return (
     <section className={styles.page}>
       <Card className={styles.surfaceCard}>
@@ -469,7 +476,11 @@ export function ResourcesPage() {
                 const progressValue = total > 0 ? download.downloadedBytes / total : 0;
 
                 return (
-                  <Link key={`${download.bangumiSubjectId}-${download.slotKey}`} className={styles.link} to={`/title/${download.bangumiSubjectId}`}>
+                  <Link
+                    key={`${download.bangumiSubjectId}-${download.slotKey}`}
+                    className={styles.link}
+                    to={`/title/${download.bangumiSubjectId}`}
+                  >
                     <Card className={styles.progressCard}>
                       <div className={styles.progressHeader}>
                         <div className={styles.titleBlock}>
@@ -514,12 +525,6 @@ export function ResourcesPage() {
                   </Link>
                 );
               })}
-
-              {!isLoading && sortedDownloads.length === 0 ? (
-                <Card className={styles.progressCard}>
-                  <Text weight="semibold">当前没有活动下载</Text>
-                </Card>
-              ) : null}
             </div>
           </div>
         </section>
@@ -546,31 +551,25 @@ export function ResourcesPage() {
             </div>
           </div>
 
-          {!isLoading && items.length === 0 ? (
-            <Card className={styles.itemCard}>
-              <Text weight="semibold">当前没有命中的资源</Text>
-            </Card>
-          ) : (
-            <div className={styles.listViewport}>
-              <div className={styles.list}>
-                {items.map((item) => (
-                  <Link key={item.id} className={styles.link} to={`/title/${item.bangumiSubjectId}`}>
-                    <Card className={styles.itemCard}>
-                      <Text weight="semibold" className={styles.titleLine}>
-                        {item.fileName}
-                      </Text>
-                      <Text className={styles.subtitleLine}>Bangumi {item.bangumiSubjectId}</Text>
-                      <Text className={styles.titleLine}>{describeEpisode(item)}</Text>
-                      <Text className={styles.titleLine}>{formatBytes(item.sizeBytes)}</Text>
-                      <Text className={styles.subtitleLine}>
-                        {item.sourceFansubName ?? item.sourceTitle}
-                      </Text>
-                    </Card>
-                  </Link>
-                ))}
-              </div>
+          <div className={styles.listViewport}>
+            <div className={styles.list}>
+              {items.map((item) => (
+                <Link key={item.id} className={styles.link} to={`/title/${item.bangumiSubjectId}`}>
+                  <Card className={styles.itemCard}>
+                    <Text weight="semibold" className={styles.titleLine}>
+                      {item.fileName}
+                    </Text>
+                    <Text className={styles.subtitleLine}>Bangumi {item.bangumiSubjectId}</Text>
+                    <Text className={styles.titleLine}>{describeEpisode(item)}</Text>
+                    <Text className={styles.titleLine}>{formatBytes(item.sizeBytes)}</Text>
+                    <Text className={styles.subtitleLine}>
+                      {item.sourceFansubName ?? item.sourceTitle}
+                    </Text>
+                  </Card>
+                </Link>
+              ))}
             </div>
-          )}
+          </div>
 
           {hasNextPage ? (
             <div className={styles.actions}>

@@ -36,6 +36,9 @@ struct PolicyRow {
     subscription_threshold: i64,
     replacement_window_hours: i64,
     prefer_same_fansub: i64,
+    max_concurrent_downloads: i64,
+    upload_limit_mb: i64,
+    download_limit_mb: i64,
 }
 
 #[derive(Debug, FromRow)]
@@ -754,7 +757,12 @@ pub async fn list_viewer_subscription_subjects(
 
 pub async fn load_policy(pool: &SqlitePool) -> Result<PolicyDto, AppError> {
     let row = sqlx::query_as::<_, PolicyRow>(
-        "SELECT subscription_threshold, replacement_window_hours, prefer_same_fansub
+        "SELECT subscription_threshold,
+                replacement_window_hours,
+                prefer_same_fansub,
+                max_concurrent_downloads,
+                upload_limit_mb,
+                download_limit_mb
          FROM download_policies WHERE id = 1",
     )
     .fetch_one(pool)
@@ -765,6 +773,9 @@ pub async fn load_policy(pool: &SqlitePool) -> Result<PolicyDto, AppError> {
         subscription_threshold: row.subscription_threshold,
         replacement_window_hours: row.replacement_window_hours,
         prefer_same_fansub: row.prefer_same_fansub != 0,
+        max_concurrent_downloads: row.max_concurrent_downloads.max(1),
+        upload_limit_mb: row.upload_limit_mb.max(0),
+        download_limit_mb: row.download_limit_mb.max(0),
     })
 }
 
@@ -773,24 +784,58 @@ pub async fn update_policy(
     subscription_threshold: i64,
     replacement_window_hours: i64,
     prefer_same_fansub: bool,
+    max_concurrent_downloads: i64,
+    upload_limit_mb: i64,
+    download_limit_mb: i64,
 ) -> Result<PolicyDto, AppError> {
     sqlx::query(
         "UPDATE download_policies
          SET subscription_threshold = ?1,
              replacement_window_hours = ?2,
              prefer_same_fansub = ?3,
-             updated_at = ?4
+             max_concurrent_downloads = ?4,
+             upload_limit_mb = ?5,
+             download_limit_mb = ?6,
+             updated_at = ?7
          WHERE id = 1",
     )
     .bind(subscription_threshold)
     .bind(replacement_window_hours)
     .bind(bool_to_int(prefer_same_fansub))
+    .bind(max_concurrent_downloads.max(1))
+    .bind(upload_limit_mb.max(0))
+    .bind(download_limit_mb.max(0))
     .bind(now_string())
     .execute(pool)
     .await
     .map_err(|_| AppError::internal("failed to update download policy"))?;
 
     load_policy(pool).await
+}
+
+pub async fn apply_torrent_runtime_config(
+    pool: &SqlitePool,
+    max_concurrent_downloads: i64,
+    upload_limit_mb: i64,
+    download_limit_mb: i64,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "UPDATE download_policies
+         SET max_concurrent_downloads = ?1,
+             upload_limit_mb = ?2,
+             download_limit_mb = ?3,
+             updated_at = ?4
+         WHERE id = 1",
+    )
+    .bind(max_concurrent_downloads.max(1))
+    .bind(upload_limit_mb.max(0))
+    .bind(download_limit_mb.max(0))
+    .bind(now_string())
+    .execute(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to apply torrent runtime config"))?;
+
+    Ok(())
 }
 
 pub async fn list_fansub_rules(pool: &SqlitePool) -> Result<Vec<FansubRuleDto>, AppError> {
@@ -1970,6 +2015,43 @@ pub async fn list_active_download_executions(
     .map_err(|_| AppError::internal("failed to list active download executions"))?;
 
     Ok(rows.into_iter().map(map_download_execution).collect())
+}
+
+pub async fn count_running_download_executions(
+    pool: &SqlitePool,
+    engine_name: &str,
+) -> Result<i64, AppError> {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*)
+         FROM download_executions
+         WHERE engine_name = ?1
+           AND state IN ('starting', 'downloading')",
+    )
+    .bind(engine_name)
+    .fetch_one(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to count running download executions"))
+}
+
+pub async fn list_jobs_ready_for_activation(
+    pool: &SqlitePool,
+    limit: usize,
+) -> Result<Vec<DownloadJobDto>, AppError> {
+    let limit = limit.clamp(1, 256) as i64;
+    let rows = sqlx::query_as::<_, DownloadJobRow>(
+        "SELECT *
+         FROM download_jobs
+         WHERE selected_candidate_id IS NOT NULL
+           AND lifecycle IN ('queued', 'planning', 'searching', 'staged')
+         ORDER BY created_at ASC, id ASC
+         LIMIT ?1",
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to list jobs ready for activation"))?;
+
+    Ok(rows.into_iter().map(map_download_job).collect())
 }
 
 pub async fn mark_download_execution_replaced(

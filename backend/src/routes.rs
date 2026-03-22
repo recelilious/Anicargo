@@ -29,7 +29,7 @@ use crate::{
         ResourceDiscoveryCoordinator, candidate_priority_key, infer_season_hint_from_texts,
         within_replacement_window,
     },
-    downloads::{DownloadCoordinator, DownloadDemandInput},
+    downloads::{DownloadCoordinator, DownloadDemandInput, DownloadRuntimeSettings},
     season_catalog,
     telemetry::{self, RuntimeMetrics},
     types::{
@@ -855,8 +855,20 @@ async fn update_policy(
         payload.subscription_threshold,
         payload.replacement_window_hours,
         payload.prefer_same_fansub,
+        payload.max_concurrent_downloads,
+        payload.upload_limit_mb,
+        payload.download_limit_mb,
     )
     .await?;
+
+    state
+        .downloads
+        .apply_runtime_settings(DownloadRuntimeSettings::new(
+            policy.max_concurrent_downloads as usize,
+            policy.upload_limit_mb.max(0) as u64,
+            policy.download_limit_mb.max(0) as u64,
+        ))
+        .await?;
 
     Ok(Json(ApiEnvelope::new(policy)))
 }

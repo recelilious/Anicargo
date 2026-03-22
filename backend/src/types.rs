@@ -649,6 +649,9 @@ pub struct PolicyDto {
     pub subscription_threshold: i64,
     pub replacement_window_hours: i64,
     pub prefer_same_fansub: bool,
+    pub max_concurrent_downloads: i64,
+    pub upload_limit_mb: i64,
+    pub download_limit_mb: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -729,6 +732,9 @@ pub struct UpdatePolicyRequest {
     pub subscription_threshold: i64,
     pub replacement_window_hours: i64,
     pub prefer_same_fansub: bool,
+    pub max_concurrent_downloads: i64,
+    pub upload_limit_mb: i64,
+    pub download_limit_mb: i64,
 }
 
 #[derive(Debug, Deserialize)]

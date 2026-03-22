@@ -32,6 +32,9 @@ pub struct StorageConfig {
 pub struct TorrentConfig {
     pub engine: String,
     pub sync_interval_secs: u64,
+    pub max_concurrent_downloads: usize,
+    pub upload_limit_mb: u64,
+    pub download_limit_mb: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +86,12 @@ pub struct CliArgs {
     pub database_path: Option<PathBuf>,
     #[arg(long)]
     pub media_root: Option<PathBuf>,
+    #[arg(long = "max-concurrent-downloads")]
+    pub max_concurrent_downloads: Option<usize>,
+    #[arg(long = "upload-limit-mb")]
+    pub upload_limit_mb: Option<u64>,
+    #[arg(long = "download-limit-mb")]
+    pub download_limit_mb: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -113,6 +122,9 @@ struct PartialStorageConfig {
 struct PartialTorrentConfig {
     engine: Option<String>,
     sync_interval_secs: Option<u64>,
+    max_concurrent_downloads: Option<usize>,
+    upload_limit_mb: Option<u64>,
+    download_limit_mb: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -165,6 +177,9 @@ impl Default for AppConfig {
             torrent: TorrentConfig {
                 engine: "rqbit".to_owned(),
                 sync_interval_secs: 2,
+                max_concurrent_downloads: 5,
+                upload_limit_mb: 0,
+                download_limit_mb: 5,
             },
             bangumi: BangumiConfig {
                 base_url: "https://api.bgm.tv".to_owned(),
@@ -237,6 +252,18 @@ impl AppConfig {
             config.storage.media_root = media_root;
         }
 
+        if let Some(max_concurrent_downloads) = cli.max_concurrent_downloads {
+            config.torrent.max_concurrent_downloads = max_concurrent_downloads.max(1);
+        }
+
+        if let Some(upload_limit_mb) = cli.upload_limit_mb {
+            config.torrent.upload_limit_mb = upload_limit_mb;
+        }
+
+        if let Some(download_limit_mb) = cli.download_limit_mb {
+            config.torrent.download_limit_mb = download_limit_mb;
+        }
+
         Ok(config)
     }
 
@@ -265,6 +292,15 @@ impl AppConfig {
             }
             if let Some(sync_interval_secs) = torrent.sync_interval_secs {
                 self.torrent.sync_interval_secs = sync_interval_secs.max(1);
+            }
+            if let Some(max_concurrent_downloads) = torrent.max_concurrent_downloads {
+                self.torrent.max_concurrent_downloads = max_concurrent_downloads.max(1);
+            }
+            if let Some(upload_limit_mb) = torrent.upload_limit_mb {
+                self.torrent.upload_limit_mb = upload_limit_mb;
+            }
+            if let Some(download_limit_mb) = torrent.download_limit_mb {
+                self.torrent.download_limit_mb = download_limit_mb;
             }
         }
 

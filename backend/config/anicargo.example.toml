@@ -9,6 +9,9 @@ media_root = "runtime/media"
 [torrent]
 engine = "rqbit"
 sync_interval_secs = 2
+max_concurrent_downloads = 5
+upload_limit_mb = 0
+download_limit_mb = 5
 
 [bangumi]
 base_url = "https://api.bgm.tv"

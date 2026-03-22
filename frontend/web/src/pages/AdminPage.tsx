@@ -628,6 +628,63 @@ export function AdminPage() {
                       }
                     />
                   </Field>
+                  <Field label="最大同时下载数">
+                    <Input
+                      type="number"
+                      value={String(dashboard.policy.maxConcurrentDownloads)}
+                      onChange={(_, data) =>
+                        setDashboard((current) =>
+                          current
+                            ? {
+                                ...current,
+                                policy: {
+                                  ...current.policy,
+                                  maxConcurrentDownloads: Math.max(1, Number(data.value || 0))
+                                }
+                              }
+                            : current
+                        )
+                      }
+                    />
+                  </Field>
+                  <Field label="上行限速（MB/s，0 为不限速）">
+                    <Input
+                      type="number"
+                      value={String(dashboard.policy.uploadLimitMb)}
+                      onChange={(_, data) =>
+                        setDashboard((current) =>
+                          current
+                            ? {
+                                ...current,
+                                policy: {
+                                  ...current.policy,
+                                  uploadLimitMb: Math.max(0, Number(data.value || 0))
+                                }
+                              }
+                            : current
+                        )
+                      }
+                    />
+                  </Field>
+                  <Field label="下行限速（MB/s，0 为不限速）">
+                    <Input
+                      type="number"
+                      value={String(dashboard.policy.downloadLimitMb)}
+                      onChange={(_, data) =>
+                        setDashboard((current) =>
+                          current
+                            ? {
+                                ...current,
+                                policy: {
+                                  ...current.policy,
+                                  downloadLimitMb: Math.max(0, Number(data.value || 0))
+                                }
+                              }
+                            : current
+                        )
+                      }
+                    />
+                  </Field>
                   <Switch
                     checked={dashboard.policy.preferSameFansub}
                     onChange={(_, data) =>
