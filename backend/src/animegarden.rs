@@ -20,6 +20,7 @@ pub struct AnimeGardenSearchProfile {
     pub bangumi_subject_id: i64,
     pub title: String,
     pub title_cn: String,
+    pub season_hint: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +42,12 @@ pub struct AnimeGardenResource {
     pub fetched_at: String,
     pub fansub_name: Option<String>,
     pub publisher_name: String,
+    pub parsed_episode_number: Option<f64>,
+    pub parsed_episode_end_number: Option<f64>,
+    pub parsed_season_number: Option<i64>,
+    pub parsed_resolution: Option<String>,
+    pub parsed_language: Option<String>,
+    pub parsed_subtitles: Option<String>,
 }
 
 impl AnimeGardenClient {
@@ -112,6 +119,7 @@ impl AnimeGardenClient {
             let mut query = vec![
                 ("page".to_owned(), page.to_string()),
                 ("pageSize".to_owned(), self.page_size.to_string()),
+                ("metadata".to_owned(), "true".to_owned()),
             ];
             query.extend(extra_params.clone());
 
@@ -227,6 +235,8 @@ struct ResourceRaw {
     fetched_at: String,
     fansub: Option<FansubRaw>,
     publisher: PublisherRaw,
+    #[serde(default)]
+    metadata: Option<ResourceMetadataRaw>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -239,8 +249,100 @@ struct PublisherRaw {
     name: String,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct ResourceMetadataRaw {
+    #[serde(default)]
+    anipar: Option<AnimeGardenParseRaw>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct AnimeGardenParseRaw {
+    #[serde(default)]
+    episode: Option<AnimeGardenEpisodeRaw>,
+    #[serde(default)]
+    #[serde(rename = "episodeRange")]
+    episode_range: Option<AnimeGardenEpisodeRangeRaw>,
+    #[serde(default)]
+    season: Option<AnimeGardenSeasonRaw>,
+    #[serde(default)]
+    file: Option<AnimeGardenFileRaw>,
+    #[serde(default)]
+    language: Option<String>,
+    #[serde(default)]
+    subtitles: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct AnimeGardenEpisodeRaw {
+    number: f64,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct AnimeGardenEpisodeRangeRaw {
+    from: f64,
+    to: f64,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct AnimeGardenSeasonRaw {
+    number: i64,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct AnimeGardenFileRaw {
+    #[serde(default)]
+    video: Option<AnimeGardenVideoRaw>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct AnimeGardenVideoRaw {
+    #[serde(default)]
+    resolution: Option<String>,
+}
+
 impl From<ResourceRaw> for AnimeGardenResource {
     fn from(value: ResourceRaw) -> Self {
+        let parsed_episode_number = value
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.anipar.as_ref())
+            .and_then(|parsed| parsed.episode.as_ref().map(|episode| episode.number))
+            .or_else(|| {
+                value
+                    .metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.anipar.as_ref())
+                    .and_then(|parsed| parsed.episode_range.as_ref().map(|range| range.from))
+            });
+        let parsed_episode_end_number = value
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.anipar.as_ref())
+            .and_then(|parsed| parsed.episode_range.as_ref().map(|range| range.to))
+            .or(parsed_episode_number);
+        let parsed_season_number = value
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.anipar.as_ref())
+            .and_then(|parsed| parsed.season.as_ref().map(|season| season.number));
+        let parsed_resolution = value
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.anipar.as_ref())
+            .and_then(|parsed| parsed.file.as_ref())
+            .and_then(|file| file.video.as_ref())
+            .and_then(|video| video.resolution.clone());
+        let parsed_language = value
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.anipar.as_ref())
+            .and_then(|parsed| parsed.language.clone());
+        let parsed_subtitles = value
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.anipar.as_ref())
+            .and_then(|parsed| parsed.subtitles.clone());
+
         Self {
             provider: value.provider,
             provider_id: value.provider_id,
@@ -253,6 +355,12 @@ impl From<ResourceRaw> for AnimeGardenResource {
             fetched_at: value.fetched_at,
             fansub_name: value.fansub.map(|fansub| fansub.name),
             publisher_name: value.publisher.name,
+            parsed_episode_number,
+            parsed_episode_end_number,
+            parsed_season_number,
+            parsed_resolution,
+            parsed_language,
+            parsed_subtitles,
         }
     }
 }

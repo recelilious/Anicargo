@@ -24,7 +24,10 @@ use crate::{
     bangumi::{BangumiClient, BangumiSearchQuery, EpisodeRaw, SearchFacets},
     config::AppConfig,
     db,
-    discovery::{ResourceDiscoveryCoordinator, candidate_priority_key, within_replacement_window},
+    discovery::{
+        ResourceDiscoveryCoordinator, candidate_priority_key, infer_season_hint_from_texts,
+        within_replacement_window,
+    },
     downloads::{DownloadCoordinator, DownloadDemandInput},
     season_catalog,
     telemetry::{self, RuntimeMetrics},
@@ -36,11 +39,11 @@ use crate::{
         BootstrapResponse, CalendarResponse, CredentialsRequest, EpisodePlaybackMediaDto,
         EpisodePlaybackResponse, FansubRuleDto, ForceDownloadResponse, HealthResponse,
         PlaybackHistoryItemDto, PlaybackHistoryRecordRequest, PlaybackHistoryResponse,
-        ResourceCandidateDto,
-        ResourceLibraryRequest, ResourceLibraryResponse, RuntimeHttpStatsDto, RuntimeOverviewDto,
-        SearchRequest, SearchResponse, SubjectCardDto, SubjectCollectionRequest,
-        SubjectCollectionResponse, SubjectDetailDto, SubjectDetailResponse, SubscriptionStateDto,
-        ToggleSubscriptionResponse, UpdatePolicyRequest, UpsertFansubRuleRequest, ViewerSummary,
+        ResourceCandidateDto, ResourceLibraryRequest, ResourceLibraryResponse, RuntimeHttpStatsDto,
+        RuntimeOverviewDto, SearchRequest, SearchResponse, SubjectCardDto,
+        SubjectCollectionRequest, SubjectCollectionResponse, SubjectDetailDto,
+        SubjectDetailResponse, SubscriptionStateDto, ToggleSubscriptionResponse,
+        UpdatePolicyRequest, UpsertFansubRuleRequest, ViewerSummary,
     },
     yuc::YucClient,
 };
@@ -962,11 +965,14 @@ async fn resolve_subject_search_profile(
 ) -> AnimeGardenSearchProfileWithStatus {
     match db::cached_bangumi_subject_summary(pool, subject_id).await {
         Ok(Some(cached)) => {
+            let season_hint =
+                infer_season_hint_from_texts([cached.title.as_str(), cached.title_cn.as_str()]);
             return AnimeGardenSearchProfileWithStatus {
                 bangumi_subject_id: subject_id,
                 title: cached.title,
                 title_cn: cached.title_cn,
                 release_status: cached.release_status,
+                season_hint,
             };
         }
         Ok(None) => {}
@@ -999,6 +1005,10 @@ async fn resolve_subject_search_profile(
                 title_cn: subject.name_cn.clone(),
                 release_status: season_catalog::derive_release_status(&subject, &episodes)
                     .to_owned(),
+                season_hint: infer_season_hint_from_texts([
+                    subject.name.as_str(),
+                    subject.name_cn.as_str(),
+                ]),
             }
         }
         Err(error) => {
@@ -1012,6 +1022,7 @@ async fn resolve_subject_search_profile(
                 title: String::new(),
                 title_cn: String::new(),
                 release_status: "completed".to_owned(),
+                season_hint: None,
             }
         }
     }
@@ -1101,11 +1112,7 @@ async fn apply_airing_download_plan(
 
         state
             .downloads
-            .materialize_selected_candidate(
-                &state.pool,
-                &state.config.storage.media_root,
-                job.id,
-            )
+            .materialize_selected_candidate(&state.pool, &state.config.storage.media_root, job.id)
             .await?;
     } else if db::current_selected_candidate_for_job(&state.pool, job.id)
         .await?
@@ -1113,11 +1120,7 @@ async fn apply_airing_download_plan(
     {
         state
             .downloads
-            .materialize_selected_candidate(
-                &state.pool,
-                &state.config.storage.media_root,
-                job.id,
-            )
+            .materialize_selected_candidate(&state.pool, &state.config.storage.media_root, job.id)
             .await?;
     }
 
@@ -1145,8 +1148,8 @@ async fn build_airing_download_plan(
 
     let availability = db::list_subject_episode_availability(pool, job.bangumi_subject_id).await?;
     let current_selected = db::current_selected_candidate_for_job(pool, job.id).await?;
-    let previous_selected = db::latest_selected_candidate_for_subject(pool, job.bangumi_subject_id)
-        .await?;
+    let previous_selected =
+        db::latest_selected_candidate_for_subject(pool, job.bangumi_subject_id).await?;
 
     let mut candidates_by_episode = BTreeMap::<i64, Vec<&ResourceCandidateDto>>::new();
     for candidate in eligible {
@@ -1188,16 +1191,19 @@ async fn build_airing_download_plan(
         let already_covered = availability
             .iter()
             .any(|item| availability_covers_episode(item, episode_number));
-        let has_active_execution =
-            db::find_active_execution_for_job_slot(pool, job.id, slot_key).await?.is_some();
+        let has_active_execution = db::find_active_execution_for_job_slot(pool, job.id, slot_key)
+            .await?
+            .is_some();
 
         if already_covered || has_active_execution {
             continue;
         }
 
-        let Some(chosen) =
-            pick_slot_candidate(slot_candidates, &job.release_status, preferred_fansub.as_deref())
-        else {
+        let Some(chosen) = pick_slot_candidate(
+            slot_candidates,
+            &job.release_status,
+            preferred_fansub.as_deref(),
+        ) else {
             continue;
         };
 
@@ -1574,6 +1580,7 @@ struct AnimeGardenSearchProfileWithStatus {
     title: String,
     title_cn: String,
     release_status: String,
+    season_hint: Option<i64>,
 }
 
 impl AnimeGardenSearchProfileWithStatus {
@@ -1582,6 +1589,7 @@ impl AnimeGardenSearchProfileWithStatus {
             bangumi_subject_id: self.bangumi_subject_id,
             title: self.title.clone(),
             title_cn: self.title_cn.clone(),
+            season_hint: self.season_hint,
         }
     }
 }
