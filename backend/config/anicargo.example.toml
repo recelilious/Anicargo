@@ -6,6 +6,10 @@ port = 4000
 database_path = "runtime/anicargo.db"
 media_root = "runtime/media"
 
+[torrent]
+engine = "rqbit"
+sync_interval_secs = 2
+
 [bangumi]
 base_url = "https://api.bgm.tv"
 user_agent = "Anicargo/0.1 (+https://github.com/recelilious/Anicargo)"

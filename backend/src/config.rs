@@ -8,6 +8,7 @@ use serde::Deserialize;
 pub struct AppConfig {
     pub server: ServerConfig,
     pub storage: StorageConfig,
+    pub torrent: TorrentConfig,
     pub bangumi: BangumiConfig,
     pub yuc: YucConfig,
     pub animegarden: AnimeGardenConfig,
@@ -25,6 +26,12 @@ pub struct ServerConfig {
 pub struct StorageConfig {
     pub database_path: PathBuf,
     pub media_root: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct TorrentConfig {
+    pub engine: String,
+    pub sync_interval_secs: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +89,7 @@ pub struct CliArgs {
 struct PartialConfig {
     server: Option<PartialServerConfig>,
     storage: Option<PartialStorageConfig>,
+    torrent: Option<PartialTorrentConfig>,
     bangumi: Option<PartialBangumiConfig>,
     yuc: Option<PartialYucConfig>,
     animegarden: Option<PartialAnimeGardenConfig>,
@@ -99,6 +107,12 @@ struct PartialServerConfig {
 struct PartialStorageConfig {
     database_path: Option<PathBuf>,
     media_root: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PartialTorrentConfig {
+    engine: Option<String>,
+    sync_interval_secs: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -147,6 +161,10 @@ impl Default for AppConfig {
             storage: StorageConfig {
                 database_path: PathBuf::from("runtime/anicargo.db"),
                 media_root: PathBuf::from("runtime/media"),
+            },
+            torrent: TorrentConfig {
+                engine: "rqbit".to_owned(),
+                sync_interval_secs: 2,
             },
             bangumi: BangumiConfig {
                 base_url: "https://api.bgm.tv".to_owned(),
@@ -238,6 +256,15 @@ impl AppConfig {
             }
             if let Some(media_root) = storage.media_root {
                 self.storage.media_root = media_root;
+            }
+        }
+
+        if let Some(torrent) = partial.torrent {
+            if let Some(engine) = torrent.engine {
+                self.torrent.engine = engine;
+            }
+            if let Some(sync_interval_secs) = torrent.sync_interval_secs {
+                self.torrent.sync_interval_secs = sync_interval_secs.max(1);
             }
         }
 

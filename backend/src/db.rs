@@ -1591,7 +1591,19 @@ pub async fn update_download_execution_metrics(
              upload_rate_bytes = ?6,
              peer_count = ?7,
              notes = COALESCE(?8, notes),
-             updated_at = ?9
+             updated_at = ?9,
+             started_at = CASE
+                WHEN ?2 IN ('starting', 'downloading', 'seeding') AND started_at IS NULL THEN ?9
+                ELSE started_at
+             END,
+             completed_at = CASE
+                WHEN ?2 IN ('completed', 'seeding') THEN COALESCE(completed_at, ?9)
+                ELSE completed_at
+             END,
+             failed_at = CASE
+                WHEN ?2 = 'failed' THEN COALESCE(failed_at, ?9)
+                ELSE failed_at
+             END
          WHERE id = ?1",
     )
     .bind(execution_id)
@@ -1608,6 +1620,54 @@ pub async fn update_download_execution_metrics(
     .map_err(|_| AppError::internal("failed to update download execution"))?;
 
     Ok(())
+}
+
+pub async fn list_active_download_executions(
+    pool: &SqlitePool,
+    engine_name: &str,
+    limit: usize,
+) -> Result<Vec<DownloadExecutionDto>, AppError> {
+    let limit = limit.clamp(1, 512) as i64;
+    let rows = sqlx::query_as::<_, DownloadExecutionRow>(
+        "SELECT
+            id,
+            download_job_id,
+            resource_candidate_id,
+            bangumi_subject_id,
+            engine_name,
+            engine_execution_ref,
+            execution_role,
+            state,
+            target_path,
+            source_title,
+            source_magnet,
+            source_size_bytes,
+            source_fansub_name,
+            downloaded_bytes,
+            uploaded_bytes,
+            download_rate_bytes,
+            upload_rate_bytes,
+            peer_count,
+            notes,
+            created_at,
+            updated_at,
+            started_at,
+            completed_at,
+            replaced_at,
+            failed_at
+         FROM download_executions
+         WHERE engine_name = ?1
+           AND state IN ('staged', 'starting', 'downloading', 'seeding')
+         ORDER BY updated_at DESC, created_at DESC
+         LIMIT ?2",
+    )
+    .bind(engine_name)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to list active download executions"))?;
+
+    Ok(rows.into_iter().map(map_download_execution).collect())
 }
 
 pub async fn mark_download_execution_replaced(

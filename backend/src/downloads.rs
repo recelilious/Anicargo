@@ -1,7 +1,12 @@
 use std::{fs, path::Path, sync::Arc};
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use async_trait::async_trait;
+use librqbit::api::TorrentIdOrHash;
+use librqbit::{
+    AddTorrent, AddTorrentOptions, Session, SessionOptions, SessionPersistenceConfig, TorrentStats,
+    TorrentStatsState,
+};
 use sqlx::SqlitePool;
 use tracing::{info, warn};
 
@@ -69,6 +74,17 @@ pub struct EngineActivateAccepted {
     pub peer_count: i64,
 }
 
+#[derive(Debug, Clone)]
+pub struct EngineSyncAccepted {
+    pub state: String,
+    pub notes: Option<String>,
+    pub downloaded_bytes: i64,
+    pub uploaded_bytes: i64,
+    pub download_rate_bytes: i64,
+    pub upload_rate_bytes: i64,
+    pub peer_count: i64,
+}
+
 #[async_trait]
 pub trait DownloadEngine: Send + Sync {
     fn name(&self) -> &'static str;
@@ -77,6 +93,15 @@ pub trait DownloadEngine: Send + Sync {
         &self,
         request: EngineActivateRequest,
     ) -> anyhow::Result<EngineActivateAccepted>;
+    async fn sync_execution(
+        &self,
+        execution: &DownloadExecutionDto,
+    ) -> anyhow::Result<EngineSyncAccepted>;
+    async fn deactivate(
+        &self,
+        execution: &DownloadExecutionDto,
+        delete_files: bool,
+    ) -> anyhow::Result<()>;
 }
 
 #[derive(Debug, Default)]
@@ -141,6 +166,211 @@ impl DownloadEngine for PlanningDownloadEngine {
             upload_rate_bytes: 0,
             peer_count: 0,
         })
+    }
+
+    async fn sync_execution(
+        &self,
+        execution: &DownloadExecutionDto,
+    ) -> anyhow::Result<EngineSyncAccepted> {
+        Ok(EngineSyncAccepted {
+            state: execution.state.clone(),
+            notes: execution.notes.clone(),
+            downloaded_bytes: execution.downloaded_bytes,
+            uploaded_bytes: execution.uploaded_bytes,
+            download_rate_bytes: execution.download_rate_bytes,
+            upload_rate_bytes: execution.upload_rate_bytes,
+            peer_count: execution.peer_count,
+        })
+    }
+
+    async fn deactivate(
+        &self,
+        execution: &DownloadExecutionDto,
+        _delete_files: bool,
+    ) -> anyhow::Result<()> {
+        info!(
+            execution_id = execution.id,
+            state = %execution.state,
+            "Planning engine received deactivate request"
+        );
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct RqbitDownloadEngine {
+    session: Arc<Session>,
+}
+
+impl RqbitDownloadEngine {
+    pub async fn new(media_root: &Path) -> anyhow::Result<Self> {
+        let rqbit_root = media_root.join("_rqbit");
+        let default_output_root = rqbit_root.join("downloads");
+        let persistence_root = rqbit_root.join("session");
+
+        fs::create_dir_all(&default_output_root).with_context(|| {
+            format!(
+                "failed to create rqbit download root {}",
+                default_output_root.display()
+            )
+        })?;
+        fs::create_dir_all(&persistence_root).with_context(|| {
+            format!(
+                "failed to create rqbit persistence root {}",
+                persistence_root.display()
+            )
+        })?;
+
+        let session = Session::new_with_opts(
+            default_output_root,
+            SessionOptions {
+                fastresume: true,
+                persistence: Some(SessionPersistenceConfig::Json {
+                    folder: Some(persistence_root),
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+        .context("failed to initialize rqbit session")?;
+
+        Ok(Self { session })
+    }
+
+    fn parse_execution_ref(execution_ref: &str) -> anyhow::Result<TorrentIdOrHash> {
+        TorrentIdOrHash::parse(execution_ref)
+            .with_context(|| format!("invalid rqbit execution ref '{execution_ref}'"))
+    }
+}
+
+#[async_trait]
+impl DownloadEngine for RqbitDownloadEngine {
+    fn name(&self) -> &'static str {
+        "rqbit"
+    }
+
+    async fn queue(&self, request: EngineQueueRequest) -> anyhow::Result<EngineQueueAccepted> {
+        info!(
+            subject_id = request.bangumi_subject_id,
+            release_status = %request.release_status,
+            season_mode = %request.season_mode,
+            trigger_kind = %request.trigger_kind,
+            requested_by = %request.requested_by,
+            subscription_count = request.subscription_count,
+            threshold = request.threshold_snapshot,
+            "Download request accepted by rqbit engine"
+        );
+
+        Ok(EngineQueueAccepted {
+            lifecycle: "queued".to_owned(),
+            engine_job_ref: None,
+            notes: Some("Queued for embedded rqbit execution".to_owned()),
+        })
+    }
+
+    async fn activate(
+        &self,
+        request: EngineActivateRequest,
+    ) -> anyhow::Result<EngineActivateAccepted> {
+        let response = self
+            .session
+            .add_torrent(
+                AddTorrent::from_url(request.magnet.clone()),
+                Some(AddTorrentOptions {
+                    overwrite: true,
+                    output_folder: Some(request.target_path.clone()),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to add torrent for subject {} candidate {}",
+                    request.bangumi_subject_id, request.resource_candidate_id
+                )
+            })?;
+
+        let handle = response.into_handle().ok_or_else(|| {
+            anyhow!(
+                "rqbit did not return a torrent handle for candidate {}",
+                request.resource_candidate_id
+            )
+        })?;
+        let stats = handle.stats();
+        let state = map_rqbit_state(&stats);
+        let notes = rqbit_notes(&stats);
+        let engine_execution_ref = Some(handle.info_hash().as_string());
+
+        info!(
+            job_id = request.download_job_id,
+            subject_id = request.bangumi_subject_id,
+            candidate_id = request.resource_candidate_id,
+            state = %state,
+            execution_ref = ?engine_execution_ref,
+            "Selected resource activated on rqbit engine"
+        );
+
+        Ok(EngineActivateAccepted {
+            state,
+            engine_execution_ref,
+            notes,
+            downloaded_bytes: saturating_u64_to_i64(stats.progress_bytes),
+            uploaded_bytes: saturating_u64_to_i64(stats.uploaded_bytes),
+            download_rate_bytes: rqbit_download_rate_bytes(&stats),
+            upload_rate_bytes: rqbit_upload_rate_bytes(&stats),
+            peer_count: rqbit_peer_count(&stats),
+        })
+    }
+
+    async fn sync_execution(
+        &self,
+        execution: &DownloadExecutionDto,
+    ) -> anyhow::Result<EngineSyncAccepted> {
+        let execution_ref = execution
+            .engine_execution_ref
+            .as_deref()
+            .ok_or_else(|| anyhow!("execution {} is missing rqbit execution ref", execution.id))?;
+        let parsed_ref = Self::parse_execution_ref(execution_ref)?;
+        let handle = self.session.get(parsed_ref).ok_or_else(|| {
+            anyhow!(
+                "rqbit execution {} is not managed by the current session",
+                execution_ref
+            )
+        })?;
+        let stats = handle.stats();
+
+        Ok(EngineSyncAccepted {
+            state: map_rqbit_state(&stats),
+            notes: rqbit_notes(&stats),
+            downloaded_bytes: saturating_u64_to_i64(stats.progress_bytes),
+            uploaded_bytes: saturating_u64_to_i64(stats.uploaded_bytes),
+            download_rate_bytes: rqbit_download_rate_bytes(&stats),
+            upload_rate_bytes: rqbit_upload_rate_bytes(&stats),
+            peer_count: rqbit_peer_count(&stats),
+        })
+    }
+
+    async fn deactivate(
+        &self,
+        execution: &DownloadExecutionDto,
+        delete_files: bool,
+    ) -> anyhow::Result<()> {
+        let Some(execution_ref) = execution.engine_execution_ref.as_deref() else {
+            return Ok(());
+        };
+        let parsed_ref = Self::parse_execution_ref(execution_ref)?;
+
+        self.session
+            .delete(parsed_ref, delete_files)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to delete rqbit execution {} for download execution {}",
+                    execution_ref, execution.id
+                )
+            })?;
+
+        Ok(())
     }
 }
 
@@ -342,6 +572,19 @@ impl DownloadCoordinator {
             })?;
 
         if let Some(previous) = replaced_execution.as_ref() {
+            if previous.engine_name == self.engine.name()
+                && previous.engine_execution_ref != accepted.engine_execution_ref
+            {
+                if let Err(error) = self.engine.deactivate(previous, true).await {
+                    warn!(
+                        execution_id = previous.id,
+                        engine = %previous.engine_name,
+                        error = %error,
+                        "Failed to deactivate superseded execution on download engine"
+                    );
+                }
+            }
+
             db::mark_download_execution_replaced(
                 pool,
                 previous.id,
@@ -400,7 +643,7 @@ impl DownloadCoordinator {
                 level: "info".to_owned(),
                 event_kind: "activated".to_owned(),
                 message: format!(
-                    "Execution staged from candidate {} ({})",
+                    "Execution activated from candidate {} ({})",
                     candidate.id, candidate.provider
                 ),
                 downloaded_bytes: Some(execution.downloaded_bytes),
@@ -432,6 +675,104 @@ impl DownloadCoordinator {
         job_id: i64,
     ) -> Result<Vec<DownloadExecutionDto>, AppError> {
         db::list_download_executions(pool, job_id).await
+    }
+
+    pub async fn sync_active_executions(&self, pool: &SqlitePool) -> Result<(), AppError> {
+        let executions = db::list_active_download_executions(pool, self.engine.name(), 256).await?;
+
+        for execution in executions {
+            match self.engine.sync_execution(&execution).await {
+                Ok(snapshot) => {
+                    db::update_download_execution_metrics(
+                        pool,
+                        execution.id,
+                        &snapshot.state,
+                        snapshot.downloaded_bytes,
+                        snapshot.uploaded_bytes,
+                        snapshot.download_rate_bytes,
+                        snapshot.upload_rate_bytes,
+                        snapshot.peer_count,
+                        snapshot.notes.as_deref(),
+                    )
+                    .await?;
+
+                    if execution.state != snapshot.state {
+                        db::create_download_execution_event(
+                            pool,
+                            db::NewDownloadExecutionEvent {
+                                download_execution_id: execution.id,
+                                level: event_level_for_state(&snapshot.state).to_owned(),
+                                event_kind: event_kind_for_state(&snapshot.state).to_owned(),
+                                message: format!(
+                                    "Execution state changed from {} to {}",
+                                    execution.state, snapshot.state
+                                ),
+                                downloaded_bytes: Some(snapshot.downloaded_bytes),
+                                uploaded_bytes: Some(snapshot.uploaded_bytes),
+                                download_rate_bytes: Some(snapshot.download_rate_bytes),
+                                upload_rate_bytes: Some(snapshot.upload_rate_bytes),
+                                peer_count: Some(snapshot.peer_count),
+                            },
+                        )
+                        .await?;
+
+                        db::update_download_job_lifecycle(
+                            pool,
+                            execution.download_job_id,
+                            &snapshot.state,
+                            snapshot.notes.as_deref(),
+                        )
+                        .await?;
+                    }
+                }
+                Err(error) => {
+                    let error_message = format!("Execution sync failed: {error:#}");
+                    warn!(
+                        execution_id = execution.id,
+                        engine = self.engine.name(),
+                        error = %error,
+                        "Download execution sync failed"
+                    );
+
+                    db::update_download_execution_metrics(
+                        pool,
+                        execution.id,
+                        "failed",
+                        execution.downloaded_bytes,
+                        execution.uploaded_bytes,
+                        0,
+                        0,
+                        0,
+                        Some(&error_message),
+                    )
+                    .await?;
+                    db::create_download_execution_event(
+                        pool,
+                        db::NewDownloadExecutionEvent {
+                            download_execution_id: execution.id,
+                            level: "error".to_owned(),
+                            event_kind: "sync_failed".to_owned(),
+                            message: error_message.clone(),
+                            downloaded_bytes: Some(execution.downloaded_bytes),
+                            uploaded_bytes: Some(execution.uploaded_bytes),
+                            download_rate_bytes: Some(0),
+                            upload_rate_bytes: Some(0),
+                            peer_count: Some(0),
+                        },
+                    )
+                    .await?;
+                    db::update_download_job_lifecycle(
+                        pool,
+                        execution.download_job_id,
+                        "failed",
+                        Some(&error_message),
+                    )
+                    .await?;
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -469,4 +810,94 @@ fn ensure_execution_target_path(target_path: &str) -> Result<(), AppError> {
 
 fn is_active_execution_state(state: &str) -> bool {
     matches!(state, "staged" | "starting" | "downloading" | "seeding")
+}
+
+fn map_rqbit_state(stats: &TorrentStats) -> String {
+    match stats.state {
+        TorrentStatsState::Initializing => "starting".to_owned(),
+        TorrentStatsState::Live => {
+            if stats.finished {
+                "seeding".to_owned()
+            } else {
+                "downloading".to_owned()
+            }
+        }
+        TorrentStatsState::Paused => {
+            if stats.finished {
+                "completed".to_owned()
+            } else if stats.progress_bytes > 0 {
+                "downloading".to_owned()
+            } else {
+                "staged".to_owned()
+            }
+        }
+        TorrentStatsState::Error => "failed".to_owned(),
+    }
+}
+
+fn rqbit_notes(stats: &TorrentStats) -> Option<String> {
+    stats.error.clone().or_else(|| match stats.state {
+        TorrentStatsState::Initializing => Some("Torrent metadata is initializing".to_owned()),
+        TorrentStatsState::Paused if stats.finished => {
+            Some("Torrent transfer is complete and currently paused".to_owned())
+        }
+        TorrentStatsState::Paused => Some("Torrent is paused in rqbit".to_owned()),
+        _ => None,
+    })
+}
+
+fn rqbit_download_rate_bytes(stats: &TorrentStats) -> i64 {
+    stats
+        .live
+        .as_ref()
+        .map(|live| mib_per_sec_to_bytes_per_sec(live.download_speed.mbps))
+        .unwrap_or(0)
+}
+
+fn rqbit_upload_rate_bytes(stats: &TorrentStats) -> i64 {
+    stats
+        .live
+        .as_ref()
+        .map(|live| mib_per_sec_to_bytes_per_sec(live.upload_speed.mbps))
+        .unwrap_or(0)
+}
+
+fn rqbit_peer_count(stats: &TorrentStats) -> i64 {
+    stats
+        .live
+        .as_ref()
+        .map(|live| live.snapshot.peer_stats.live as i64)
+        .unwrap_or(0)
+}
+
+fn mib_per_sec_to_bytes_per_sec(value: f64) -> i64 {
+    if !value.is_finite() || value <= 0.0 {
+        return 0;
+    }
+
+    let bytes = value * 1024.0 * 1024.0;
+    if bytes >= i64::MAX as f64 {
+        i64::MAX
+    } else {
+        bytes.round() as i64
+    }
+}
+
+fn saturating_u64_to_i64(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
+fn event_kind_for_state(state: &str) -> &'static str {
+    match state {
+        "starting" => "engine_started",
+        "downloading" => "downloading",
+        "seeding" => "seeding",
+        "completed" => "completed",
+        "failed" => "failed",
+        _ => "state_changed",
+    }
+}
+
+fn event_level_for_state(state: &str) -> &'static str {
+    if state == "failed" { "error" } else { "info" }
 }

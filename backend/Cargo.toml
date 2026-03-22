@@ -18,10 +18,16 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sqlx = { version = "0.8", default-features = false, features = ["chrono", "macros", "migrate", "runtime-tokio-rustls", "sqlite"] }
 thiserror = "2.0"
-tokio = { version = "1.48", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "time"] }
 toml = "0.9"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1.18", features = ["serde", "v4"] }
+
+[target.'cfg(windows)'.dependencies]
+librqbit = { version = "8.1.1", default-features = false, features = ["default-tls"] }
+
+[target.'cfg(not(windows))'.dependencies]
+librqbit = { version = "8.1.1", default-features = false, features = ["rust-tls"] }
