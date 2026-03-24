@@ -402,6 +402,7 @@ impl SubjectRaw {
             tags,
             total_episodes: self.total_episodes,
             rating_score: self.rating.as_ref().and_then(|rating| rating.score),
+            catalog_label: None,
         }
     }
 

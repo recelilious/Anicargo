@@ -42,6 +42,7 @@ export type SubjectCard = {
   tags: string[];
   totalEpisodes: number | null;
   ratingScore: number | null;
+  catalogLabel: string | null;
 };
 
 export type CalendarDay = {
@@ -51,6 +52,23 @@ export type CalendarDay = {
 
 export type CalendarResponse = {
   days: CalendarDay[];
+};
+
+export type CatalogManifestResponse = {
+  previewAvailable: boolean;
+  specialAvailable: boolean;
+};
+
+export type CatalogSection = {
+  key: string;
+  title: string;
+  items: SubjectCard[];
+};
+
+export type CatalogPageResponse = {
+  kind: string;
+  title: string;
+  sections: CatalogSection[];
 };
 
 export type SearchResponse = {

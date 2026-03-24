@@ -131,6 +131,15 @@ pub struct CalendarResponse {
     pub days: Vec<CalendarDayDto>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduleDisplayQuery {
+    #[serde(default)]
+    pub timezone: Option<String>,
+    #[serde(default)]
+    pub deep_night_mode: Option<bool>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CalendarDayDto {
@@ -163,6 +172,30 @@ pub struct SubjectCardDto {
     pub tags: Vec<String>,
     pub total_episodes: Option<i64>,
     pub rating_score: Option<f64>,
+    pub catalog_label: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogManifestResponse {
+    pub preview_available: bool,
+    pub special_available: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogSectionDto {
+    pub key: String,
+    pub title: String,
+    pub items: Vec<SubjectCardDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogPageResponse {
+    pub kind: String,
+    pub title: String,
+    pub sections: Vec<CatalogSectionDto>,
 }
 
 #[derive(Debug, Deserialize)]

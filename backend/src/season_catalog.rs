@@ -4,7 +4,8 @@ use std::{
     sync::OnceLock,
 };
 
-use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, TimeZone, Timelike, Utc};
+use chrono_tz::Tz;
 use futures::stream::{self, StreamExt};
 use regex::Regex;
 use sqlx::{FromRow, SqlitePool};
@@ -20,6 +21,12 @@ const CATALOG_REFRESH_TTL_HOURS: i64 = 12;
 const MATCH_CONCURRENCY: usize = 6;
 const STATUS_REFRESH_CONCURRENCY: usize = 6;
 const INITIAL_STATUS_REFRESH_AT: &str = "1970-01-01T00:00:00Z";
+
+#[derive(Debug, Clone)]
+pub struct ScheduleDisplayOptions {
+    pub timezone: Tz,
+    pub deep_night_mode: bool,
+}
 
 #[derive(Debug, Clone)]
 struct YucCatalog {
@@ -106,8 +113,10 @@ struct BangumiMatchResolution {
 }
 
 impl CalendarEntryRow {
-    fn to_card(&self) -> Option<SubjectCardDto> {
+    fn to_card(&self, display: &ScheduleDisplayOptions) -> Option<SubjectCardDto> {
         let bangumi_subject_id = self.bangumi_subject_id?;
+        let (broadcast_time, air_weekday) =
+            resolve_schedule_display(self.weekday_id, self.broadcast_time.as_deref(), display);
         Some(SubjectCardDto {
             bangumi_subject_id,
             title: self
@@ -126,10 +135,9 @@ impl CalendarEntryRow {
                 .clone()
                 .unwrap_or_else(|| "completed".to_owned()),
             air_date: self.air_date.clone(),
-            broadcast_time: self.broadcast_time.clone(),
-            air_weekday: self
-                .air_weekday
-                .and_then(|value| u8::try_from(value).ok())
+            broadcast_time,
+            air_weekday: air_weekday
+                .or_else(|| self.air_weekday.and_then(|value| u8::try_from(value).ok()))
                 .or_else(|| u8::try_from(self.weekday_id).ok()),
             image_portrait: self
                 .image_portrait
@@ -146,6 +154,7 @@ impl CalendarEntryRow {
                 .unwrap_or_default(),
             total_episodes: self.total_episodes,
             rating_score: self.rating_score,
+            catalog_label: None,
         })
     }
 }
@@ -154,6 +163,7 @@ pub async fn load_current_season_calendar(
     yuc: &YucClient,
     pool: &SqlitePool,
     bangumi: &BangumiClient,
+    display: &ScheduleDisplayOptions,
 ) -> Result<Vec<CalendarDayDto>, AppError> {
     let catalog_key = yuc.current_season_key();
     let sync_result = sync_current_season_catalog(yuc, pool, bangumi, &catalog_key).await;
@@ -177,11 +187,11 @@ pub async fn load_current_season_calendar(
     let mut groups = HashMap::<u8, Vec<SubjectCardDto>>::new();
     let mut skipped = 0usize;
     for row in rows {
-        let weekday_id = u8::try_from(row.weekday_id).unwrap_or(0);
-        let Some(card) = row.to_card() else {
+        let Some(card) = row.to_card(display) else {
             skipped += 1;
             continue;
         };
+        let weekday_id = card.air_weekday.unwrap_or_else(|| u8::try_from(row.weekday_id).unwrap_or(0));
 
         groups.entry(weekday_id).or_default().push(card);
     }
@@ -1135,6 +1145,57 @@ fn parse_broadcast_time(value: Option<&str>) -> Option<u16> {
     Some(hour * 60 + minute)
 }
 
+fn resolve_schedule_display(
+    weekday_id: i64,
+    broadcast_time: Option<&str>,
+    display: &ScheduleDisplayOptions,
+) -> (Option<String>, Option<u8>) {
+    let source_weekday = u8::try_from(weekday_id).ok().filter(|value| (1..=7).contains(value));
+    let Some(source_weekday) = source_weekday else {
+        return (broadcast_time.map(str::to_owned), None);
+    };
+
+    let Some((source_hour, minute)) = parse_time_parts(broadcast_time) else {
+        return (broadcast_time.map(str::to_owned), Some(source_weekday));
+    };
+
+    let carry_days = i64::from(source_hour / 24);
+    let normalized_hour = source_hour % 24;
+    let source_now = beijing_now();
+    let source_week_start = source_now.date_naive()
+        - chrono::Duration::days(i64::from(source_now.weekday().number_from_monday()) - 1);
+    let cultural_date =
+        source_week_start + chrono::Duration::days(i64::from(source_weekday.saturating_sub(1)));
+    let actual_date = cultural_date + chrono::Duration::days(carry_days);
+    let Some(actual_time) = actual_date.and_hms_opt(u32::from(normalized_hour), u32::from(minute), 0)
+    else {
+        return (broadcast_time.map(str::to_owned), Some(source_weekday));
+    };
+    let Some(source_date_time) = beijing_offset().from_local_datetime(&actual_time).single() else {
+        return (broadcast_time.map(str::to_owned), Some(source_weekday));
+    };
+
+    let local_time = source_date_time.with_timezone(&display.timezone);
+    let mut display_date = local_time.date_naive();
+    let mut display_hour = local_time.hour();
+    if display.deep_night_mode && display_hour < 6 {
+        display_date -= chrono::Duration::days(1);
+        display_hour += 24;
+    }
+
+    let display_weekday = u8::try_from(display_date.weekday().number_from_monday()).ok();
+    (
+        Some(format!("{display_hour:02}:{:02}", local_time.minute())),
+        display_weekday,
+    )
+}
+
+fn parse_time_parts(value: Option<&str>) -> Option<(u16, u16)> {
+    let value = value?.trim();
+    let (hour, minute) = value.split_once(':')?;
+    Some((hour.parse::<u16>().ok()?, minute.parse::<u16>().ok()?))
+}
+
 pub(crate) fn derive_release_status(subject: &SubjectRaw, episodes: &[EpisodeRaw]) -> &'static str {
     let today = tokyo_today();
 
@@ -1216,12 +1277,20 @@ fn tokyo_now() -> DateTime<FixedOffset> {
     Utc::now().with_timezone(&tokyo_offset())
 }
 
+fn beijing_now() -> DateTime<FixedOffset> {
+    Utc::now().with_timezone(&beijing_offset())
+}
+
 fn tokyo_today() -> NaiveDate {
     tokyo_now().date_naive()
 }
 
 fn tokyo_offset() -> FixedOffset {
     FixedOffset::east_opt(9 * 3600).expect("valid tokyo utc offset")
+}
+
+fn beijing_offset() -> FixedOffset {
+    FixedOffset::east_opt(8 * 3600).expect("valid beijing utc offset")
 }
 
 fn status_refresh_due(value: Option<&str>) -> bool {
@@ -1321,4 +1390,34 @@ fn variant_regex() -> &'static Regex {
         )
         .expect("valid title variant regex")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ScheduleDisplayOptions, resolve_schedule_display};
+    use chrono_tz::Australia::Brisbane;
+
+    #[test]
+    fn converts_source_time_into_local_deep_night_display() {
+        let options = ScheduleDisplayOptions {
+            timezone: Brisbane,
+            deep_night_mode: true,
+        };
+
+        let (time, weekday) = resolve_schedule_display(3, Some("26:00"), &options);
+        assert_eq!(time.as_deref(), Some("28:00"));
+        assert_eq!(weekday, Some(3));
+    }
+
+    #[test]
+    fn converts_source_time_into_standard_local_day_when_deep_night_disabled() {
+        let options = ScheduleDisplayOptions {
+            timezone: Brisbane,
+            deep_night_mode: false,
+        };
+
+        let (time, weekday) = resolve_schedule_display(3, Some("26:00"), &options);
+        assert_eq!(time.as_deref(), Some("04:00"));
+        assert_eq!(weekday, Some(4));
+    }
 }

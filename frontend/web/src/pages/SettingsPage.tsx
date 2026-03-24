@@ -1,5 +1,15 @@
 import { type FormEvent, useState } from "react";
-import { Button, Card, Field, Input, Radio, RadioGroup, Text, makeStyles } from "@fluentui/react-components";
+import {
+  Button,
+  Card,
+  Field,
+  Input,
+  Radio,
+  RadioGroup,
+  Switch,
+  Text,
+  makeStyles
+} from "@fluentui/react-components";
 
 import { useAppearance } from "../appearance";
 import { useSession } from "../session";
@@ -32,7 +42,17 @@ const useStyles = makeStyles({
 
 export function SettingsPage() {
   const styles = useStyles();
-  const { bootstrap, displayName, isGuestViewer, registerAccount, loginAccount, logoutAccount } = useSession();
+  const {
+    bootstrap,
+    deepNightMode,
+    displayName,
+    isGuestViewer,
+    loginAccount,
+    logoutAccount,
+    registerAccount,
+    setDeepNightMode,
+    systemTimeZone
+  } = useSession();
   const { themePreference, resolvedAppearance, setThemePreference } = useAppearance();
   const [registerForm, setRegisterForm] = useState({ username: "", password: "" });
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
@@ -92,6 +112,21 @@ export function SettingsPage() {
             当前生效：{resolvedAppearance === "dark" ? "深色" : "浅色"}
           </Text>
         </Card>
+
+        <Card className={styles.card}>
+          <Text weight="semibold">时间显示</Text>
+          <Switch
+            checked={deepNightMode}
+            label={deepNightMode ? "深夜模式已开启" : "深夜模式已关闭"}
+            onChange={(_, data) => setDeepNightMode(Boolean(data.checked))}
+          />
+          <Text size={300} className={styles.muted}>
+            当前时区：{systemTimeZone}
+          </Text>
+          <Text size={300} className={styles.muted}>
+            开启后，凌晨 06:00 之前会按前一日显示为 24+ 小时制。
+          </Text>
+        </Card>
       </div>
 
       {isGuestViewer ? (
@@ -102,14 +137,18 @@ export function SettingsPage() {
               <Field label="用户名">
                 <Input
                   value={registerForm.username}
-                  onChange={(_, data) => setRegisterForm((current) => ({ ...current, username: data.value }))}
+                  onChange={(_, data) =>
+                    setRegisterForm((current) => ({ ...current, username: data.value }))
+                  }
                 />
               </Field>
               <Field label="密码">
                 <Input
                   type="password"
                   value={registerForm.password}
-                  onChange={(_, data) => setRegisterForm((current) => ({ ...current, password: data.value }))}
+                  onChange={(_, data) =>
+                    setRegisterForm((current) => ({ ...current, password: data.value }))
+                  }
                 />
               </Field>
               <Button type="submit" appearance="primary">
@@ -124,14 +163,18 @@ export function SettingsPage() {
               <Field label="用户名">
                 <Input
                   value={loginForm.username}
-                  onChange={(_, data) => setLoginForm((current) => ({ ...current, username: data.value }))}
+                  onChange={(_, data) =>
+                    setLoginForm((current) => ({ ...current, username: data.value }))
+                  }
                 />
               </Field>
               <Field label="密码">
                 <Input
                   type="password"
                   value={loginForm.password}
-                  onChange={(_, data) => setLoginForm((current) => ({ ...current, password: data.value }))}
+                  onChange={(_, data) =>
+                    setLoginForm((current) => ({ ...current, password: data.value }))
+                  }
                 />
               </Field>
               <Button type="submit" appearance="primary">

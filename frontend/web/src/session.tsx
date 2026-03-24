@@ -6,6 +6,7 @@ import type { BootstrapResponse, ViewerSummary } from "./types";
 const DEVICE_KEY = "anicargo.device_id";
 const GUEST_NAME_KEY = "anicargo.guest_name";
 const USER_TOKEN_KEY = "anicargo.user_token";
+const DEEP_NIGHT_MODE_KEY = "anicargo.deep_night_mode";
 const GUEST_PREFIXES = ["晨星", "雾海", "白塔", "晴岚", "落樱", "月砂", "霜原", "潮音"];
 const GUEST_SUFFIXES = ["旅人", "观测者", "追番者", "记录员", "领航员", "收藏家", "放映员", "信使"];
 
@@ -14,12 +15,15 @@ type SessionContextValue = {
   deviceId: string;
   guestName: string;
   userToken: string | null;
+  systemTimeZone: string;
+  deepNightMode: boolean;
   displayName: string;
   viewerModeLabel: string;
   viewerSubline: string;
   isGuestViewer: boolean;
   isReady: boolean;
   refresh: () => Promise<void>;
+  setDeepNightMode: (next: boolean) => void;
   registerAccount: (username: string, password: string) => Promise<void>;
   loginAccount: (username: string, password: string) => Promise<void>;
   logoutAccount: () => Promise<void>;
@@ -69,10 +73,26 @@ function ensureGuestName(deviceId: string) {
   return next;
 }
 
+function detectSystemTimeZone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+function ensureDeepNightMode() {
+  const stored = window.localStorage.getItem(DEEP_NIGHT_MODE_KEY);
+  if (stored == null) {
+    window.localStorage.setItem(DEEP_NIGHT_MODE_KEY, "true");
+    return true;
+  }
+
+  return stored !== "false";
+}
+
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [deviceId] = useState(() => ensureDeviceId());
   const [guestName] = useState(() => ensureGuestName(deviceId));
   const [userToken, setUserToken] = useState<string | null>(() => window.localStorage.getItem(USER_TOKEN_KEY));
+  const [systemTimeZone] = useState(() => detectSystemTimeZone());
+  const [deepNightMode, setDeepNightModeState] = useState(() => ensureDeepNightMode());
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [isReady, setIsReady] = useState(false);
 
@@ -123,6 +143,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     await refresh();
   }
 
+  function setDeepNightMode(next: boolean) {
+    window.localStorage.setItem(DEEP_NIGHT_MODE_KEY, String(next));
+    setDeepNightModeState(next);
+  }
+
   function setViewerFromAuth(viewer: ViewerSummary, token: string) {
     window.localStorage.setItem(USER_TOKEN_KEY, token);
     setUserToken(token);
@@ -146,12 +171,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     deviceId,
     guestName,
     userToken,
+    systemTimeZone,
+    deepNightMode,
     displayName,
     viewerModeLabel,
     viewerSubline,
     isGuestViewer,
     isReady,
     refresh,
+    setDeepNightMode,
     registerAccount,
     loginAccount,
     logoutAccount,

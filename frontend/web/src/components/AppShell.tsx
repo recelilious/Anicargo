@@ -1,15 +1,16 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   BookmarkRegular,
   BoxRegular,
   CalendarLtrRegular,
   HistoryRegular,
   SearchRegular,
-  SettingsRegular,
+  SettingsRegular
 } from "@fluentui/react-icons";
 import { Badge, Button, Text, makeStyles, tokens } from "@fluentui/react-components";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
+import { fetchCatalogManifest } from "../api";
 import type { RouteState } from "../navigation";
 import { useSession } from "../session";
 
@@ -19,7 +20,7 @@ const useStyles = makeStyles({
     display: "grid",
     gridTemplateColumns: "220px 1fr",
     backgroundColor: "var(--app-bg)",
-    overflow: "hidden",
+    overflow: "hidden"
   },
   rail: {
     display: "flex",
@@ -29,13 +30,13 @@ const useStyles = makeStyles({
     padding: "22px 14px",
     borderRight: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: "var(--app-rail)",
-    overflow: "hidden",
+    overflow: "hidden"
   },
   brand: {
     display: "flex",
     flexDirection: "column",
     gap: "2px",
-    padding: "2px 6px 0",
+    padding: "2px 6px 0"
   },
   profileCard: {
     display: "flex",
@@ -45,66 +46,87 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusXLarge,
     backgroundColor: "var(--app-panel)",
     border: "1px solid var(--app-border)",
-    boxShadow: "var(--app-card-shadow)",
+    boxShadow: "var(--app-card-shadow)"
   },
   profileMeta: {
     display: "flex",
     flexDirection: "column",
     gap: "2px",
-    minWidth: 0,
+    minWidth: 0
   },
   profileSubtitle: {
-    color: "var(--app-muted)",
+    color: "var(--app-muted)"
   },
   nav: {
     display: "flex",
     flexDirection: "column",
-    gap: "8px",
+    gap: "8px"
   },
   navLink: {
-    textDecorationLine: "none",
+    textDecorationLine: "none"
   },
   navButton: {
     width: "100%",
     justifyContent: "flex-start",
-    borderRadius: tokens.borderRadiusLarge,
+    borderRadius: tokens.borderRadiusLarge
   },
   active: {
     backgroundColor: "var(--app-selected-bg)",
-    color: "var(--app-selected-fg)",
+    color: "var(--app-selected-fg)"
   },
   footer: {
     marginTop: "auto",
     display: "flex",
     flexDirection: "column",
     gap: "8px",
-    padding: "0 6px",
+    padding: "0 6px"
   },
   adminHint: {
-    color: "var(--app-muted)",
+    color: "var(--app-muted)"
   },
   content: {
     minWidth: 0,
     height: "100vh",
     padding: "24px 28px 40px",
     overflowY: "auto",
-    overflowX: "hidden",
-  },
+    overflowX: "hidden"
+  }
 });
 
-const navItems = [
-  { to: "/search", label: "搜索", icon: SearchRegular },
-  { to: "/", label: "新番时间表", icon: CalendarLtrRegular },
-  { to: "/subscriptions", label: "订阅", icon: BookmarkRegular },
-  { to: "/resources", label: "资源", icon: BoxRegular },
-  { to: "/history", label: "历史记录", icon: HistoryRegular },
-  { to: "/settings", label: "设置", icon: SettingsRegular },
-] as const;
+type NavItem = {
+  to: string;
+  label: string;
+  icon: typeof SearchRegular;
+};
 
 export function AppShell() {
   const styles = useStyles();
   const location = useLocation();
-  const { displayName, viewerModeLabel, viewerSubline } = useSession();
+  const { deviceId, displayName, userToken, viewerModeLabel, viewerSubline } = useSession();
+  const [catalogManifest, setCatalogManifest] = useState({
+    previewAvailable: false,
+    specialAvailable: false
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void fetchCatalogManifest(deviceId, userToken)
+      .then((response) => {
+        if (!cancelled) {
+          setCatalogManifest(response);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCatalogManifest({ previewAvailable: false, specialAvailable: false });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [deviceId, userToken]);
 
   useEffect(() => {
     const scrollRoot = document.getElementById("app-scroll-root");
@@ -115,9 +137,33 @@ export function AppShell() {
     const restoreScrollTop = (location.state as RouteState | null)?.restoreScrollTop;
     scrollRoot.scrollTo({
       top: typeof restoreScrollTop === "number" ? restoreScrollTop : 0,
-      behavior: "auto",
+      behavior: "auto"
     });
   }, [location.key, location.state]);
+
+  const navItems = useMemo<NavItem[]>(() => {
+    const items: NavItem[] = [
+      { to: "/search", label: "搜索", icon: SearchRegular },
+      { to: "/", label: "新番时间表", icon: CalendarLtrRegular }
+    ];
+
+    if (catalogManifest.previewAvailable) {
+      items.push({ to: "/preview", label: "新季度前瞻", icon: CalendarLtrRegular });
+    }
+
+    if (catalogManifest.specialAvailable) {
+      items.push({ to: "/special", label: "特别放送", icon: BoxRegular });
+    }
+
+    items.push(
+      { to: "/subscriptions", label: "订阅", icon: BookmarkRegular },
+      { to: "/resources", label: "资源", icon: BoxRegular },
+      { to: "/history", label: "历史记录", icon: HistoryRegular },
+      { to: "/settings", label: "设置", icon: SettingsRegular }
+    );
+
+    return items;
+  }, [catalogManifest.previewAvailable, catalogManifest.specialAvailable]);
 
   return (
     <div className={styles.layout}>
@@ -144,7 +190,7 @@ export function AppShell() {
               {({ isActive }) => (
                 <Button
                   appearance={isActive ? "secondary" : "subtle"}
-                  className={`${styles.navButton} ${isActive ? styles.active : ""}`}
+                  className={`${styles.navButton} ${isActive ? styles.active : ""}`.trim()}
                   icon={<item.icon />}
                 >
                   {item.label}
@@ -156,7 +202,7 @@ export function AppShell() {
 
         <div className={styles.footer}>
           <Text size={200} className={styles.adminHint}>
-            管理入口：`/admin`
+            管理入口：/admin
           </Text>
         </div>
       </aside>

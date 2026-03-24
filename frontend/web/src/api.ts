@@ -6,6 +6,8 @@ import type {
   AuthResponse,
   BootstrapResponse,
   CalendarResponse,
+  CatalogManifestResponse,
+  CatalogPageResponse,
   DownloadExecution,
   DownloadExecutionEvent,
   DownloadJob,
@@ -67,8 +69,44 @@ export function fetchBootstrap(deviceId: string, userToken: string | null) {
   return request<BootstrapResponse>("/api/public/bootstrap", {}, deviceId, userToken ?? undefined);
 }
 
-export function fetchCalendar(deviceId: string, userToken: string | null) {
-  return request<CalendarResponse>("/api/public/calendar", {}, deviceId, userToken ?? undefined);
+export function fetchCalendar(
+  deviceId: string,
+  userToken: string | null,
+  options?: { timezone?: string; deepNightMode?: boolean }
+) {
+  const params = new URLSearchParams();
+  if (options?.timezone) {
+    params.set("timezone", options.timezone);
+  }
+  if (typeof options?.deepNightMode === "boolean") {
+    params.set("deepNightMode", String(options.deepNightMode));
+  }
+
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
+  return request<CalendarResponse>(
+    `/api/public/calendar${suffix}`,
+    {},
+    deviceId,
+    userToken ?? undefined
+  );
+}
+
+export function fetchCatalogManifest(deviceId: string, userToken: string | null) {
+  return request<CatalogManifestResponse>(
+    "/api/public/catalogs/manifest",
+    {},
+    deviceId,
+    userToken ?? undefined
+  );
+}
+
+export function fetchCatalogPage(kind: "preview" | "special", deviceId: string, userToken: string | null) {
+  return request<CatalogPageResponse>(
+    `/api/public/catalogs/${kind}`,
+    {},
+    deviceId,
+    userToken ?? undefined
+  );
 }
 
 export function searchSubjects(params: URLSearchParams, deviceId: string, userToken: string | null) {

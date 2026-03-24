@@ -168,7 +168,7 @@ function resolveMetaValue(subject: SubjectCardModel, variant: SubjectCardMetaVar
     return value ? value : null;
   }
 
-  return extractCatalogYear(subject.airDate);
+  return subject.catalogLabel?.trim() || extractCatalogYear(subject.airDate);
 }
 
 export function SubjectCard({
@@ -194,8 +194,13 @@ export function SubjectCard({
   const displayedTagsKey = displayedTags.join("|");
   const metaValue = resolveMetaValue(subject, metaVariant);
   const fromPath = buildRoutePath(location);
+  const isLinkedCard = subject.bangumiSubjectId > 0;
 
   useEffect(() => {
+    if (!isLinkedCard) {
+      return;
+    }
+
     const nextTags = subject.tags.slice(0, 8);
     setTags(nextTags);
 
@@ -240,7 +245,7 @@ export function SubjectCard({
     return () => {
       cancelled = true;
     };
-  }, [deviceId, subject.bangumiSubjectId, subject.tags, userToken]);
+  }, [deviceId, isLinkedCard, subject.bangumiSubjectId, subject.tags, userToken]);
 
   useEffect(() => {
     return () => {
@@ -362,6 +367,61 @@ export function SubjectCard({
     "--tag-transition-duration": prefersReducedMotion() ? "0ms" : "220ms",
   } as CSSProperties;
 
+  const cardContent = (
+    <Card className={styles.card} appearance="filled-alternative">
+      <div className={styles.posterWrap}>
+        <div
+          className={styles.poster}
+          style={{
+            backgroundImage: subject.imagePortrait ? `url(${subject.imagePortrait})` : undefined,
+          }}
+        />
+
+        <div className={styles.status}>
+          <Badge appearance="filled">{formatStatus(subject.releaseStatus)}</Badge>
+        </div>
+
+        {displayedTags.length > 0 ? (
+          <div className={styles.tagRail} style={tagRailStyle}>
+            {displayedTags.map((tag) => (
+              <Badge key={tag} appearance="outline" className={styles.tag}>
+                {tag}
+              </Badge>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <div className={styles.body}>
+        <div className={styles.titleGroup}>
+          <Text weight="semibold" className={styles.title}>
+            {primaryTitle}
+          </Text>
+          {secondaryTitle ? (
+            <Text block size={300} className={styles.subtitle}>
+              {secondaryTitle}
+            </Text>
+          ) : null}
+        </div>
+
+        <div className={`${styles.meta} ${metaValue ? "" : styles.metaRatingOnly}`.trim()}>
+          {metaValue ? (
+            <Text size={300} className={styles.metaValue}>
+              {metaValue}
+            </Text>
+          ) : null}
+          <Text weight="semibold" className={styles.rating}>
+            {formatRating(subject.ratingScore)}
+          </Text>
+        </div>
+      </div>
+    </Card>
+  );
+
+  if (!isLinkedCard) {
+    return <div className={styles.link}>{cardContent}</div>;
+  }
+
   return (
     <Link
       ref={linkRef}
@@ -374,54 +434,7 @@ export function SubjectCard({
       onMouseLeave={resetHoverMotion}
       onBlur={resetHoverMotion}
     >
-      <Card className={styles.card} appearance="filled-alternative">
-        <div className={styles.posterWrap}>
-          <div
-            className={styles.poster}
-            style={{
-              backgroundImage: subject.imagePortrait ? `url(${subject.imagePortrait})` : undefined,
-            }}
-          />
-
-          <div className={styles.status}>
-            <Badge appearance="filled">{formatStatus(subject.releaseStatus)}</Badge>
-          </div>
-
-          {displayedTags.length > 0 ? (
-            <div className={styles.tagRail} style={tagRailStyle}>
-              {displayedTags.map((tag) => (
-                <Badge key={tag} appearance="outline" className={styles.tag}>
-                  {tag}
-                </Badge>
-              ))}
-            </div>
-          ) : null}
-        </div>
-
-        <div className={styles.body}>
-          <div className={styles.titleGroup}>
-            <Text weight="semibold" className={styles.title}>
-              {primaryTitle}
-            </Text>
-            {secondaryTitle ? (
-              <Text block size={300} className={styles.subtitle}>
-                {secondaryTitle}
-              </Text>
-            ) : null}
-          </div>
-
-          <div className={`${styles.meta} ${metaValue ? "" : styles.metaRatingOnly}`.trim()}>
-            {metaValue ? (
-              <Text size={300} className={styles.metaValue}>
-                {metaValue}
-              </Text>
-            ) : null}
-            <Text weight="semibold" className={styles.rating}>
-              {formatRating(subject.ratingScore)}
-            </Text>
-          </div>
-        </div>
-      </Card>
+      {cardContent}
     </Link>
   );
 }

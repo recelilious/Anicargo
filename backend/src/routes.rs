@@ -7,6 +7,7 @@ use axum::{
     routing::{get, post, put},
 };
 use chrono::{FixedOffset, NaiveDate, Utc};
+use chrono_tz::Tz;
 use futures::stream::{self, StreamExt};
 use sqlx::SqlitePool;
 use std::{
@@ -37,11 +38,12 @@ use crate::{
         AdminDashboardResponse, AdminDownloadCandidatesResponse,
         AdminDownloadExecutionEventsResponse, AdminDownloadExecutionsResponse,
         AdminDownloadQueueResponse, AdminRuntimeResponse, ApiEnvelope, AppError, AuthResponse,
-        BootstrapResponse, CalendarResponse, CredentialsRequest, EpisodePlaybackMediaDto,
-        EpisodePlaybackResponse, FansubRuleDto, ForceDownloadResponse, HealthResponse,
-        PlaybackHistoryItemDto, PlaybackHistoryRecordRequest, PlaybackHistoryResponse,
-        ResourceCandidateDto, ResourceLibraryRequest, ResourceLibraryResponse, RuntimeHttpStatsDto,
-        RuntimeOverviewDto, SearchRequest, SearchResponse, SubjectCardDto,
+        BootstrapResponse, CalendarResponse, CatalogManifestResponse, CatalogPageResponse,
+        CredentialsRequest, EpisodePlaybackMediaDto, EpisodePlaybackResponse, FansubRuleDto,
+        ForceDownloadResponse, HealthResponse, PlaybackHistoryItemDto,
+        PlaybackHistoryRecordRequest, PlaybackHistoryResponse, ResourceCandidateDto,
+        ResourceLibraryRequest, ResourceLibraryResponse, RuntimeHttpStatsDto, RuntimeOverviewDto,
+        ScheduleDisplayQuery, SearchRequest, SearchResponse, SubjectCardDto,
         SubjectCollectionRequest, SubjectCollectionResponse, SubjectDetailDto,
         SubjectDetailResponse, SubscriptionStateDto, ToggleSubscriptionResponse,
         UpdatePolicyRequest, UpsertFansubRuleRequest, ViewerSummary,
@@ -67,6 +69,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/health", get(health))
         .route("/api/public/bootstrap", get(bootstrap))
         .route("/api/public/calendar", get(calendar))
+        .route("/api/public/catalogs/manifest", get(catalog_manifest))
+        .route("/api/public/catalogs/{kind}", get(catalog_page))
         .route("/api/public/search", get(search))
         .route("/api/public/subscriptions", get(subscriptions))
         .route("/api/public/history", get(playback_history))
@@ -160,12 +164,48 @@ async fn bootstrap(
 
 async fn calendar(
     State(state): State<AppState>,
+    Query(display_query): Query<ScheduleDisplayQuery>,
 ) -> Result<Json<ApiEnvelope<CalendarResponse>>, AppError> {
-    let days =
-        season_catalog::load_current_season_calendar(&state.yuc, &state.pool, &state.bangumi)
-            .await?;
+    let display = schedule_display_options(&display_query);
+    let days = season_catalog::load_current_season_calendar(
+        &state.yuc,
+        &state.pool,
+        &state.bangumi,
+        &display,
+    )
+    .await?;
 
     Ok(Json(ApiEnvelope::new(CalendarResponse { days })))
+}
+
+async fn catalog_manifest(
+    State(state): State<AppState>,
+) -> Result<Json<ApiEnvelope<CatalogManifestResponse>>, AppError> {
+    let preview_available = state.yuc.has_preview_catalog().await?;
+    let (_, special_sections) = state.yuc.fetch_special_catalog().await?;
+
+    Ok(Json(ApiEnvelope::new(CatalogManifestResponse {
+        preview_available,
+        special_available: special_sections.iter().any(|section| !section.items.is_empty()),
+    })))
+}
+
+async fn catalog_page(
+    State(state): State<AppState>,
+    Path(kind): Path<String>,
+) -> Result<Json<ApiEnvelope<CatalogPageResponse>>, AppError> {
+    let normalized = kind.trim().to_ascii_lowercase();
+    let (title, sections) = match normalized.as_str() {
+        "preview" => state.yuc.fetch_preview_catalog().await?,
+        "special" => state.yuc.fetch_special_catalog().await?,
+        _ => return Err(AppError::not_found("unknown Yuc catalog page")),
+    };
+
+    Ok(Json(ApiEnvelope::new(CatalogPageResponse {
+        kind: normalized,
+        title,
+        sections,
+    })))
 }
 
 async fn search(
@@ -958,6 +998,21 @@ fn validate_credentials(username: &str, password: &str) -> Result<(), AppError> 
     }
 
     Ok(())
+}
+
+fn schedule_display_options(query: &ScheduleDisplayQuery) -> season_catalog::ScheduleDisplayOptions {
+    season_catalog::ScheduleDisplayOptions {
+        timezone: query
+            .timezone
+            .as_deref()
+            .and_then(parse_client_timezone)
+            .unwrap_or(Tz::UTC),
+        deep_night_mode: query.deep_night_mode.unwrap_or(true),
+    }
+}
+
+fn parse_client_timezone(value: &str) -> Option<Tz> {
+    value.trim().parse::<Tz>().ok()
 }
 
 async fn enrich_cards(yuc: &YucClient, cards: Vec<SubjectCardDto>) -> Vec<SubjectCardDto> {
