@@ -13,8 +13,24 @@ type AppearanceContextValue = {
 
 const AppearanceContext = createContext<AppearanceContextValue | null>(null);
 
+function safeLocalStorageGet(key: string) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeLocalStorageSet(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // ignore storage write failures on restricted browsers
+  }
+}
+
 function readStoredPreference(): ThemePreference {
-  const stored = window.localStorage.getItem(APPEARANCE_KEY);
+  const stored = safeLocalStorageGet(APPEARANCE_KEY);
   if (stored === "light" || stored === "dark" || stored === "system") {
     return stored;
   }
@@ -23,6 +39,10 @@ function readStoredPreference(): ThemePreference {
 }
 
 function readSystemDarkMode() {
+  if (typeof window.matchMedia !== "function") {
+    return false;
+  }
+
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
 
@@ -31,6 +51,11 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   const [systemPrefersDark, setSystemPrefersDark] = useState(() => readSystemDarkMode());
 
   useEffect(() => {
+    if (typeof window.matchMedia !== "function") {
+      setSystemPrefersDark(false);
+      return undefined;
+    }
+
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
 
     function handleChange(event: MediaQueryListEvent) {
@@ -38,15 +63,23 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     }
 
     setSystemPrefersDark(mediaQuery.matches);
-    mediaQuery.addEventListener("change", handleChange);
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleChange);
+    } else if (typeof mediaQuery.addListener === "function") {
+      mediaQuery.addListener(handleChange);
+    }
 
     return () => {
-      mediaQuery.removeEventListener("change", handleChange);
+      if (typeof mediaQuery.removeEventListener === "function") {
+        mediaQuery.removeEventListener("change", handleChange);
+      } else if (typeof mediaQuery.removeListener === "function") {
+        mediaQuery.removeListener(handleChange);
+      }
     };
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem(APPEARANCE_KEY, themePreference);
+    safeLocalStorageSet(APPEARANCE_KEY, themePreference);
   }, [themePreference]);
 
   const resolvedAppearance: ResolvedAppearance =

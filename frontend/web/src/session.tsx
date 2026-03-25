@@ -32,14 +32,57 @@ type SessionContextValue = {
 
 const SessionContext = createContext<SessionContextValue | null>(null);
 
+function safeLocalStorageGet(key: string) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeLocalStorageSet(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // ignore storage write failures on restricted browsers
+  }
+}
+
+function safeLocalStorageRemove(key: string) {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // ignore storage write failures on restricted browsers
+  }
+}
+
+function fallbackDeviceId() {
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).slice(2, 10);
+  const extra = Math.random().toString(36).slice(2, 10);
+  return `device-${timestamp}-${random}${extra}`;
+}
+
 function ensureDeviceId() {
-  const existing = window.localStorage.getItem(DEVICE_KEY);
+  const existing = safeLocalStorageGet(DEVICE_KEY);
   if (existing) {
     return existing;
   }
 
-  const next = crypto.randomUUID();
-  window.localStorage.setItem(DEVICE_KEY, next);
+  const next =
+    globalThis.crypto?.randomUUID?.() ??
+    (() => {
+      const buffer = globalThis.crypto?.getRandomValues?.(new Uint32Array(4));
+      if (!buffer) {
+        return fallbackDeviceId();
+      }
+
+      return `device-${Array.from(buffer)
+        .map((value) => value.toString(16).padStart(8, "0"))
+        .join("")}`;
+    })();
+
+  safeLocalStorageSet(DEVICE_KEY, next);
   return next;
 }
 
@@ -63,13 +106,13 @@ function createGuestName(deviceId: string) {
 }
 
 function ensureGuestName(deviceId: string) {
-  const existing = window.localStorage.getItem(GUEST_NAME_KEY);
+  const existing = safeLocalStorageGet(GUEST_NAME_KEY);
   if (existing) {
     return existing;
   }
 
   const next = createGuestName(deviceId);
-  window.localStorage.setItem(GUEST_NAME_KEY, next);
+  safeLocalStorageSet(GUEST_NAME_KEY, next);
   return next;
 }
 
@@ -78,9 +121,9 @@ function detectSystemTimeZone() {
 }
 
 function ensureDeepNightMode() {
-  const stored = window.localStorage.getItem(DEEP_NIGHT_MODE_KEY);
+  const stored = safeLocalStorageGet(DEEP_NIGHT_MODE_KEY);
   if (stored == null) {
-    window.localStorage.setItem(DEEP_NIGHT_MODE_KEY, "true");
+    safeLocalStorageSet(DEEP_NIGHT_MODE_KEY, "true");
     return true;
   }
 
@@ -90,7 +133,7 @@ function ensureDeepNightMode() {
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [deviceId] = useState(() => ensureDeviceId());
   const [guestName] = useState(() => ensureGuestName(deviceId));
-  const [userToken, setUserToken] = useState<string | null>(() => window.localStorage.getItem(USER_TOKEN_KEY));
+  const [userToken, setUserToken] = useState<string | null>(() => safeLocalStorageGet(USER_TOKEN_KEY));
   const [systemTimeZone] = useState(() => detectSystemTimeZone());
   const [deepNightMode, setDeepNightModeState] = useState(() => ensureDeepNightMode());
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
@@ -107,7 +150,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   async function registerAccount(username: string, password: string) {
     const response = await register(username, password);
-    window.localStorage.setItem(USER_TOKEN_KEY, response.token);
+    safeLocalStorageSet(USER_TOKEN_KEY, response.token);
     setUserToken(response.token);
     setBootstrap((current) =>
       current
@@ -121,7 +164,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   async function loginAccount(username: string, password: string) {
     const response = await login(username, password);
-    window.localStorage.setItem(USER_TOKEN_KEY, response.token);
+    safeLocalStorageSet(USER_TOKEN_KEY, response.token);
     setUserToken(response.token);
     setBootstrap((current) =>
       current
@@ -138,18 +181,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       await logout(userToken);
     }
 
-    window.localStorage.removeItem(USER_TOKEN_KEY);
+    safeLocalStorageRemove(USER_TOKEN_KEY);
     setUserToken(null);
     await refresh();
   }
 
   function setDeepNightMode(next: boolean) {
-    window.localStorage.setItem(DEEP_NIGHT_MODE_KEY, String(next));
+    safeLocalStorageSet(DEEP_NIGHT_MODE_KEY, String(next));
     setDeepNightModeState(next);
   }
 
   function setViewerFromAuth(viewer: ViewerSummary, token: string) {
-    window.localStorage.setItem(USER_TOKEN_KEY, token);
+    safeLocalStorageSet(USER_TOKEN_KEY, token);
     setUserToken(token);
     setBootstrap((current) =>
       current
