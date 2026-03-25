@@ -191,7 +191,9 @@ pub async fn load_current_season_calendar(
             skipped += 1;
             continue;
         };
-        let weekday_id = card.air_weekday.unwrap_or_else(|| u8::try_from(row.weekday_id).unwrap_or(0));
+        let weekday_id = card
+            .air_weekday
+            .unwrap_or_else(|| u8::try_from(row.weekday_id).unwrap_or(0));
 
         groups.entry(weekday_id).or_default().push(card);
     }
@@ -1150,7 +1152,9 @@ fn resolve_schedule_display(
     broadcast_time: Option<&str>,
     display: &ScheduleDisplayOptions,
 ) -> (Option<String>, Option<u8>) {
-    let source_weekday = u8::try_from(weekday_id).ok().filter(|value| (1..=7).contains(value));
+    let source_weekday = u8::try_from(weekday_id)
+        .ok()
+        .filter(|value| (1..=7).contains(value));
     let Some(source_weekday) = source_weekday else {
         return (broadcast_time.map(str::to_owned), None);
     };
@@ -1167,7 +1171,8 @@ fn resolve_schedule_display(
     let cultural_date =
         source_week_start + chrono::Duration::days(i64::from(source_weekday.saturating_sub(1)));
     let actual_date = cultural_date + chrono::Duration::days(carry_days);
-    let Some(actual_time) = actual_date.and_hms_opt(u32::from(normalized_hour), u32::from(minute), 0)
+    let Some(actual_time) =
+        actual_date.and_hms_opt(u32::from(normalized_hour), u32::from(minute), 0)
     else {
         return (broadcast_time.map(str::to_owned), Some(source_weekday));
     };

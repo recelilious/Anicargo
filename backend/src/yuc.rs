@@ -11,7 +11,7 @@ use reqwest::Client;
 
 use crate::{
     config::YucConfig,
-    types::{CatalogSectionDto, AppError, SubjectCardDto, SubjectDetailDto},
+    types::{AppError, CatalogSectionDto, SubjectCardDto, SubjectDetailDto},
 };
 
 const CATALOG_PAGE_CACHE_TTL_HOURS: i64 = 12;
@@ -103,19 +103,28 @@ impl YucClient {
         self.fetch_html(&url, "Yuc season page").await
     }
 
-    pub async fn fetch_preview_catalog(&self) -> Result<(String, Vec<CatalogSectionDto>), AppError> {
-        self.fetch_cached_catalog_page("preview", "新季度前瞻", &self.preview_url(), parse_preview_sections)
-            .await
+    pub async fn fetch_preview_catalog(
+        &self,
+    ) -> Result<(String, Vec<CatalogSectionDto>), AppError> {
+        self.fetch_cached_catalog_page(
+            "preview",
+            "新季度前瞻",
+            &self.preview_url(),
+            parse_preview_sections,
+        )
+        .await
     }
 
-    pub async fn fetch_special_catalog(&self) -> Result<(String, Vec<CatalogSectionDto>), AppError> {
-        self.fetch_cached_catalog_page("special", "特别放送", &self.special_url(), parse_special_sections)
-            .await
-    }
-
-    pub async fn has_preview_catalog(&self) -> Result<bool, AppError> {
-        let (_, sections) = self.fetch_preview_catalog().await?;
-        Ok(sections.iter().any(|section| !section.items.is_empty()))
+    pub async fn fetch_special_catalog(
+        &self,
+    ) -> Result<(String, Vec<CatalogSectionDto>), AppError> {
+        self.fetch_cached_catalog_page(
+            "special",
+            "特别放送",
+            &self.special_url(),
+            parse_special_sections,
+        )
+        .await
     }
 
     async fn fetch_cached_catalog_page(
@@ -130,7 +139,10 @@ impl YucClient {
             .lock()
             .ok()
             .and_then(|cache| cache.get(cache_key).cloned())
-            .filter(|cached| Utc::now() - cached.fetched_at < chrono::Duration::hours(CATALOG_PAGE_CACHE_TTL_HOURS))
+            .filter(|cached| {
+                Utc::now() - cached.fetched_at
+                    < chrono::Duration::hours(CATALOG_PAGE_CACHE_TTL_HOURS)
+            })
         {
             return Ok((cached.title, cached.sections));
         }
@@ -157,13 +169,9 @@ impl YucClient {
             .get(url)
             .send()
             .await
-            .map_err(|error| {
-                AppError::upstream(format!("failed to reach {label}: {error}"))
-            })?
+            .map_err(|error| AppError::upstream(format!("failed to reach {label}: {error}")))?
             .error_for_status()
-            .map_err(|error| {
-                AppError::upstream(format!("{label} returned an error: {error}"))
-            })?
+            .map_err(|error| AppError::upstream(format!("{label} returned an error: {error}")))?
             .text()
             .await
             .map_err(|error| AppError::upstream(format!("failed to read {label}: {error}")))
@@ -530,12 +538,14 @@ fn parse_preview_sections(html: &str) -> Vec<CatalogSectionDto> {
                     .name("date")
                     .map(|value| sanitize_title(value.as_str()))
                     .filter(|value| !value.is_empty());
-                let catalog_label = join_catalog_label(media_type.as_deref(), date_label.as_deref());
+                let catalog_label =
+                    join_catalog_label(media_type.as_deref(), date_label.as_deref());
 
                 Some(build_catalog_card(
                     stable_catalog_subject_id("preview", &title),
                     &title,
-                    card.name("image").map(|value| value.as_str().trim().to_owned()),
+                    card.name("image")
+                        .map(|value| value.as_str().trim().to_owned()),
                     catalog_label,
                     "upcoming",
                 ))
@@ -596,7 +606,8 @@ fn parse_special_sections(html: &str) -> Vec<CatalogSectionDto> {
                 Some(build_catalog_card(
                     stable_catalog_subject_id("special", &title),
                     &title,
-                    card.name("image").map(|value| value.as_str().trim().to_owned()),
+                    card.name("image")
+                        .map(|value| value.as_str().trim().to_owned()),
                     catalog_label,
                     release_status,
                 ))
@@ -642,8 +653,8 @@ fn build_catalog_card(
         air_date: None,
         broadcast_time: None,
         air_weekday: None,
-        image_banner: image_portrait.clone(),
-        image_portrait,
+        image_banner: normalize_catalog_image_url(image_portrait.as_deref()),
+        image_portrait: normalize_catalog_image_url(image_portrait.as_deref()),
         tags: Vec::new(),
         total_episodes: None,
         rating_score: None,
@@ -652,14 +663,26 @@ fn build_catalog_card(
 }
 
 fn stable_catalog_subject_id(prefix: &str, title: &str) -> i64 {
-    let mut normalized = String::with_capacity(prefix.len() + title.len() + 1);
-    normalized.push_str(prefix);
-    normalized.push(':');
-    normalized.push_str(title);
-    let hash = normalize_title(&normalized)
-        .chars()
-        .fold(0i64, |acc, character| acc.wrapping_mul(131).wrapping_add(character as i64));
-    -hash.abs().max(1)
+    let mut hash = 17i64;
+    for character in normalize_title(&format!("{prefix}:{title}")).chars() {
+        hash = hash.wrapping_mul(31).wrapping_add(character as i64);
+    }
+
+    let bounded = (hash.unsigned_abs() % 2_000_000_000) as i64;
+    -(bounded.max(1))
+}
+
+fn normalize_catalog_image_url(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    if let Some(rest) = value.strip_prefix("http://") {
+        return Some(format!("https://{rest}"));
+    }
+
+    Some(value.to_owned())
 }
 
 fn special_release_status(release: Option<&str>) -> &'static str {
@@ -893,7 +916,10 @@ mod tests {
         assert_eq!(sections[0].title, "预计着陆 [夏季档] (2099年7月±)");
         assert_eq!(sections[0].items.len(), 1);
         assert_eq!(sections[0].items[0].title_cn, "测试前瞻作品");
-        assert_eq!(sections[0].items[0].catalog_label.as_deref(), Some("原创 2099夏"));
+        assert_eq!(
+            sections[0].items[0].catalog_label.as_deref(),
+            Some("原创 2099夏")
+        );
         assert_eq!(sections[0].items[0].release_status, "upcoming");
     }
 
@@ -912,7 +938,10 @@ mod tests {
         assert_eq!(sections[0].title, "-----2099年3月-----");
         assert_eq!(sections[0].items.len(), 1);
         assert_eq!(sections[0].items[0].title_cn, "测试剧场版");
-        assert_eq!(sections[0].items[0].catalog_label.as_deref(), Some("Movie 2099/3/6上映"));
+        assert_eq!(
+            sections[0].items[0].catalog_label.as_deref(),
+            Some("Movie 2099/3/6上映")
+        );
         assert_eq!(sections[0].items[0].release_status, "upcoming");
     }
 }

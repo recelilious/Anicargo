@@ -24,6 +24,7 @@ use crate::{
         AdminIdentity, ViewerIdentity, extract_admin_token, extract_device_id, extract_user_token,
     },
     bangumi::{BangumiClient, BangumiSearchQuery, EpisodeRaw, SearchFacets},
+    catalog_cache,
     config::AppConfig,
     db,
     discovery::{
@@ -181,31 +182,18 @@ async fn calendar(
 async fn catalog_manifest(
     State(state): State<AppState>,
 ) -> Result<Json<ApiEnvelope<CatalogManifestResponse>>, AppError> {
-    let preview_available = state.yuc.has_preview_catalog().await?;
-    let (_, special_sections) = state.yuc.fetch_special_catalog().await?;
-
-    Ok(Json(ApiEnvelope::new(CatalogManifestResponse {
-        preview_available,
-        special_available: special_sections.iter().any(|section| !section.items.is_empty()),
-    })))
+    let manifest =
+        catalog_cache::load_catalog_manifest(&state.yuc, &state.pool, &state.bangumi).await?;
+    Ok(Json(ApiEnvelope::new(manifest)))
 }
 
 async fn catalog_page(
     State(state): State<AppState>,
     Path(kind): Path<String>,
 ) -> Result<Json<ApiEnvelope<CatalogPageResponse>>, AppError> {
-    let normalized = kind.trim().to_ascii_lowercase();
-    let (title, sections) = match normalized.as_str() {
-        "preview" => state.yuc.fetch_preview_catalog().await?,
-        "special" => state.yuc.fetch_special_catalog().await?,
-        _ => return Err(AppError::not_found("unknown Yuc catalog page")),
-    };
-
-    Ok(Json(ApiEnvelope::new(CatalogPageResponse {
-        kind: normalized,
-        title,
-        sections,
-    })))
+    let page =
+        catalog_cache::load_catalog_page(&state.yuc, &state.pool, &state.bangumi, &kind).await?;
+    Ok(Json(ApiEnvelope::new(page)))
 }
 
 async fn search(
@@ -1000,7 +988,9 @@ fn validate_credentials(username: &str, password: &str) -> Result<(), AppError> 
     Ok(())
 }
 
-fn schedule_display_options(query: &ScheduleDisplayQuery) -> season_catalog::ScheduleDisplayOptions {
+fn schedule_display_options(
+    query: &ScheduleDisplayQuery,
+) -> season_catalog::ScheduleDisplayOptions {
     season_catalog::ScheduleDisplayOptions {
         timezone: query
             .timezone

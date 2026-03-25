@@ -22,7 +22,7 @@ import type {
   SubjectDetailResponse
 } from "./types";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/+$/, "");
 
 type Envelope<T> = {
   data: T;
@@ -62,6 +62,10 @@ async function request<T>(path: string, options: RequestInit = {}, deviceId?: st
 }
 
 export function buildApiUrl(path: string) {
+  if (/^https?:\/\//.test(path)) {
+    return path;
+  }
+
   return `${API_BASE}${path}`;
 }
 

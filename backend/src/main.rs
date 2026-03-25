@@ -1,6 +1,7 @@
 mod animegarden;
 mod auth;
 mod bangumi;
+mod catalog_cache;
 mod config;
 mod db;
 mod discovery;
