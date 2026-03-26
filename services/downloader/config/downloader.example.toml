@@ -1,0 +1,10 @@
+listen = "0.0.0.0:4010"
+runtime_root = "runtime/downloader"
+max_concurrent_downloads = 5
+max_concurrent_seeds = 8
+global_download_limit_mb = 0
+global_upload_limit_mb = 5
+priority_decay = 0.8
+stall_timeout_secs = 600
+total_timeout_secs = 14400
+scheduler_interval_secs = 2

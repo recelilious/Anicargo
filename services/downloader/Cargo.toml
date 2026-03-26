@@ -1,0 +1,29 @@
+[package]
+name = "anicargo-downloader"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "anicargo_downloader"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1.0"
+axum = { version = "0.8", features = ["json", "macros"] }
+chrono = { version = "0.4", features = ["clock", "serde"] }
+clap = { version = "4.5", features = ["derive"] }
+parking_lot = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "signal", "time"] }
+toml = "0.9"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1.18", features = ["serde", "v4"] }
+
+[target.'cfg(windows)'.dependencies]
+librqbit = { version = "8.1.1", default-features = false, features = ["default-tls"] }
+
+[target.'cfg(not(windows))'.dependencies]
+librqbit = { version = "8.1.1", default-features = false, features = ["rust-tls"] }
