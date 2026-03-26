@@ -3,9 +3,11 @@ param(
     [int]$SubjectId = 517057,
     [int]$TargetLastEpisode = 13,
     [int]$GlobalDownloadLimitMb = 5,
+    [int]$AlternateDownloadLimitMb = 3,
     [int]$MaxConcurrentDownloads = 3,
     [int]$MaxConcurrentSeeds = 2,
     [int]$CheckIntervalSeconds = 10,
+    [int]$ThrottleChangeIntervalSeconds = 60,
     [int]$MaxRuntimeMinutes = 20,
     [int]$MaxChecks = 0,
     [string]$OutputRoot = "services/downloader/runtime/longrun-test",
@@ -123,8 +125,35 @@ function Format-TaskSummary {
         if ($null -eq $episode) {
             $episode = "??"
         }
-        "E{0:D2}(p{1},{2})" -f [int]$episode, $_.priority, $_.state
+        $speedText = ""
+        if ($_.state -in @("starting", "downloading")) {
+            $speedText = ",{0:N2}MB/s" -f ($_.download_rate_bytes / 1MB)
+        }
+        $manualText = ""
+        if ($null -ne $_.manual_download_limit_mb) {
+            $manualText = ",m{0}" -f $_.manual_download_limit_mb
+        }
+        "E{0:D2}(p{1},{2}{3}{4})" -f [int]$episode, $_.priority, $_.state, $speedText, $manualText
     }) -join ", ")
+}
+
+function Update-TaskManualDownloadLimit {
+    param(
+        [string]$TaskId,
+        [Nullable[uint64]]$LimitMb,
+        [switch]$Clear
+    )
+
+    $body = @{}
+    if ($Clear) {
+        $body.clear_manual_download_limit = $true
+    } elseif ($null -ne $LimitMb) {
+        $body.manual_download_limit_mb = [uint64]$LimitMb
+    } else {
+        return
+    }
+
+    Invoke-AnicargoApi -Method PATCH -Path "/api/v1/tasks/$TaskId" -Body $body | Out-Null
 }
 
 function Add-HardFailure {
@@ -269,6 +298,10 @@ $startTime = Get-Date
 $checkCount = 0
 $seenActivity = $false
 $peerlessSince = @{}
+$currentGlobalDownloadLimitMb = $GlobalDownloadLimitMb
+$lastThrottleChangedAt = Get-Date
+$currentManualLimitedTaskId = $null
+$limitGraceUntil = $null
 
 while ($true) {
     $checkCount++
@@ -285,6 +318,60 @@ while ($true) {
         } |
         Sort-Object queue_position)
 
+    $now = Get-Date
+    if ((($now - $lastThrottleChangedAt).TotalSeconds) -ge $ThrottleChangeIntervalSeconds) {
+        $nextGlobalLimitMb = if ($currentGlobalDownloadLimitMb -eq $GlobalDownloadLimitMb) {
+            $AlternateDownloadLimitMb
+        } else {
+            $GlobalDownloadLimitMb
+        }
+
+        Invoke-AnicargoApi -Method PATCH -Path "/api/v1/settings" -Body @{
+            global_download_limit_mb = $nextGlobalLimitMb
+        } | Out-Null
+
+        if ($null -ne $currentManualLimitedTaskId) {
+            try {
+                Update-TaskManualDownloadLimit -TaskId $currentManualLimitedTaskId -Clear
+            } catch {
+                Add-WarningMessage ("Failed to clear manual limit for task {0}: {1}" -f $currentManualLimitedTaskId, $_.Exception.Message)
+            }
+            $currentManualLimitedTaskId = $null
+        }
+
+        $activeIds = @($active | ForEach-Object { $_.id })
+        if ($activeIds.Count -gt 0) {
+            $selectedTaskId = Get-Random -InputObject $activeIds
+            try {
+                Update-TaskManualDownloadLimit -TaskId $selectedTaskId -LimitMb 1
+                $currentManualLimitedTaskId = $selectedTaskId
+                $selectedEpisode = $taskEpisodeIndex[$selectedTaskId]
+                Write-Marker "INFO" ("Throttle scenario updated: global={0}MB/s, manual task=E{1:D2}@1MB/s" -f $nextGlobalLimitMb, [int]$selectedEpisode)
+            } catch {
+                Add-WarningMessage ("Failed to apply manual limit to task {0}: {1}" -f $selectedTaskId, $_.Exception.Message)
+            }
+        } else {
+            Write-Marker "INFO" ("Throttle scenario updated: global={0}MB/s, manual task=-" -f $nextGlobalLimitMb)
+        }
+
+        $currentGlobalDownloadLimitMb = $nextGlobalLimitMb
+        $lastThrottleChangedAt = $now
+        $limitGraceUntil = $now.AddSeconds([Math]::Max($CheckIntervalSeconds + 5, 15))
+
+        $downloads = Invoke-AnicargoApi -Method GET -Path "/api/v1/downloads"
+        $runtime = Invoke-AnicargoApi -Method GET -Path "/api/v1/runtime"
+        $items = @($downloads.data.items)
+        $tracked = @($items | Where-Object { $createdTasks.Values.TaskId -contains $_.id })
+        $active = @($tracked | Where-Object { $_.state -in @("starting", "downloading") })
+        $queuedItems = @($tracked | Where-Object { $_.state -eq "queued" } | Sort-Object priority, created_at, id)
+        $queueOrdered = @($tracked |
+            Where-Object {
+                $_.state -in @("queued", "starting", "downloading") -and
+                $null -ne $_.queue_position
+            } |
+            Sort-Object queue_position)
+    }
+
     if ($active.Count -gt $MaxConcurrentDownloads) {
         Add-HardFailure "Active download count $($active.Count) exceeded max concurrent download count $MaxConcurrentDownloads"
     } else {
@@ -292,10 +379,13 @@ while ($true) {
     }
 
     $totalRate = [int64]$runtime.data.total_download_rate_bytes
-    $limitBytes = [int64]$GlobalDownloadLimitMb * 1024 * 1024
+    $limitBytes = [int64]$currentGlobalDownloadLimitMb * 1024 * 1024
     $allowedBytes = [int64]([math]::Round($limitBytes * 1.15)) + 262144
-    if ($limitBytes -gt 0 -and $totalRate -gt $allowedBytes) {
+    $withinGraceWindow = ($null -ne $limitGraceUntil) -and ((Get-Date) -lt $limitGraceUntil)
+    if ($limitBytes -gt 0 -and $totalRate -gt $allowedBytes -and -not $withinGraceWindow) {
         Add-HardFailure "Total download rate $totalRate B/s exceeded configured limit window $allowedBytes B/s"
+    } elseif ($limitBytes -gt 0 -and $totalRate -gt $allowedBytes -and $withinGraceWindow) {
+        Add-WarningMessage "Total download rate is temporarily above the limit window during throttle rebalance"
     } else {
         Add-PassMessage "Total download rate within expected limit: $totalRate B/s"
     }
@@ -345,7 +435,7 @@ while ($true) {
     }
 
     $queuedCount = $queuedItems.Count
-    Write-Marker "INFO" ("Check #{0}: tracked={1}, active={2}, queued={3}, total_rate={4} B/s" -f $checkCount, $tracked.Count, $active.Count, $queuedCount, $totalRate)
+    Write-Marker "INFO" ("Check #{0}: tracked={1}, active={2}, queued={3}, total_rate={4} B/s, global_limit={5}MB/s" -f $checkCount, $tracked.Count, $active.Count, $queuedCount, $totalRate, $currentGlobalDownloadLimitMb)
     Write-Marker "INFO" ("  downloading: {0}" -f (Format-TaskSummary -Items $active -TaskEpisodeIndex $taskEpisodeIndex))
     Write-Marker "INFO" ("  queued: {0}" -f (Format-TaskSummary -Items $queuedItems -TaskEpisodeIndex $taskEpisodeIndex))
 
