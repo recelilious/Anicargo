@@ -691,25 +691,8 @@ impl DownloaderService {
         {
             let tasks = self.tasks.read().await;
             for task in tasks.values() {
-                if !task.enabled
-                    || !matches!(task.state, TaskState::Starting | TaskState::Downloading)
-                {
-                    continue;
-                }
-
-                if let Some(started_at) = task.started_at {
-                    let total_elapsed = (now - started_at).num_seconds().max(0) as u64;
-                    if total_elapsed >= task.total_timeout_secs {
-                        timeouts.push((task.id, "total timeout reached".to_owned()));
-                        continue;
-                    }
-                }
-
-                if let Some(last_progress_at) = task.last_progress_at {
-                    let stall_elapsed = (now - last_progress_at).num_seconds().max(0) as u64;
-                    if stall_elapsed >= task.stall_timeout_secs {
-                        timeouts.push((task.id, "stalled without download progress".to_owned()));
-                    }
+                if let Some(reason) = timeout_reason(task, now) {
+                    timeouts.push((task.id, reason.to_owned()));
                 }
             }
         }
@@ -1517,6 +1500,26 @@ fn speed_mib_to_bytes(value: f64) -> u64 {
     }
 }
 
+fn timeout_reason(task: &TaskRecord, now: DateTime<Utc>) -> Option<&'static str> {
+    if !task.enabled || !matches!(task.state, TaskState::Starting | TaskState::Downloading) {
+        return None;
+    }
+
+    let started_at = task.started_at?;
+    let total_elapsed = (now - started_at).num_seconds().max(0) as u64;
+    if total_elapsed >= task.total_timeout_secs {
+        return Some("total timeout reached");
+    }
+
+    let stall_reference = task.last_progress_at.unwrap_or(started_at);
+    let stall_elapsed = (now - stall_reference).num_seconds().max(0) as u64;
+    if stall_elapsed >= task.stall_timeout_secs {
+        return Some("stalled without download progress");
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1671,5 +1674,39 @@ mod tests {
         assert_eq!(plan.queue_positions.get(&first_id), Some(&1));
         assert_eq!(plan.queue_positions.get(&second_id), Some(&2));
         assert_eq!(plan.queue_positions.get(&third_id), Some(&3));
+    }
+
+    #[test]
+    fn timeout_reason_uses_started_at_when_no_progress_exists() {
+        let now = Utc
+            .with_ymd_and_hms(2026, 3, 27, 2, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        let mut task = sample_task(0, now - chrono::Duration::seconds(120), None);
+        task.state = TaskState::Downloading;
+        task.started_at = Some(now - chrono::Duration::seconds(120));
+        task.stall_timeout_secs = 60;
+        task.total_timeout_secs = 600;
+
+        assert_eq!(
+            timeout_reason(&task, now),
+            Some("stalled without download progress")
+        );
+    }
+
+    #[test]
+    fn timeout_reason_prefers_last_progress_timestamp_when_available() {
+        let now = Utc
+            .with_ymd_and_hms(2026, 3, 27, 3, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        let mut task = sample_task(0, now - chrono::Duration::seconds(300), None);
+        task.state = TaskState::Downloading;
+        task.started_at = Some(now - chrono::Duration::seconds(300));
+        task.last_progress_at = Some(now - chrono::Duration::seconds(30));
+        task.stall_timeout_secs = 60;
+        task.total_timeout_secs = 600;
+
+        assert_eq!(timeout_reason(&task, now), None);
     }
 }
