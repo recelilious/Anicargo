@@ -104,10 +104,27 @@ function Get-DmhyTorrentUrl {
 function Get-PriorityForEpisode {
     param([int]$Episode)
 
-    if ($Episode -le 3) { return 0 }
-    if ($Episode -le 6) { return 1 }
-    if ($Episode -le 9) { return 2 }
-    return 3
+    $priorityPattern = @(0, 2, 1, 3)
+    return $priorityPattern[($Episode - 1) % $priorityPattern.Count]
+}
+
+function Format-TaskSummary {
+    param(
+        [object[]]$Items,
+        [hashtable]$TaskEpisodeIndex
+    )
+
+    if ($null -eq $Items -or $Items.Count -eq 0) {
+        return "-"
+    }
+
+    return (($Items | ForEach-Object {
+        $episode = $TaskEpisodeIndex[$_.id]
+        if ($null -eq $episode) {
+            $episode = "??"
+        }
+        "E{0:D2}(p{1},{2})" -f [int]$episode, $_.priority, $_.state
+    }) -join ", ")
 }
 
 function Add-HardFailure {
@@ -243,6 +260,11 @@ if ($createdTasks.ContainsKey(1)) {
     }
 }
 
+$taskEpisodeIndex = @{}
+foreach ($taskInfo in $createdTasks.Values) {
+    $taskEpisodeIndex[$taskInfo.TaskId] = $taskInfo.Episode
+}
+
 $startTime = Get-Date
 $checkCount = 0
 $seenActivity = $false
@@ -255,6 +277,7 @@ while ($true) {
     $items = @($downloads.data.items)
     $tracked = @($items | Where-Object { $createdTasks.Values.TaskId -contains $_.id })
     $active = @($tracked | Where-Object { $_.state -in @("starting", "downloading") })
+    $queuedItems = @($tracked | Where-Object { $_.state -eq "queued" } | Sort-Object priority, created_at, id)
     $queueOrdered = @($tracked |
         Where-Object {
             $_.state -in @("queued", "starting", "downloading") -and
@@ -321,8 +344,10 @@ while ($true) {
         Add-HardFailure "Tracked task count changed unexpectedly: expected $($createdTasks.Count), got $trackedCount"
     }
 
-    $queuedCount = @($tracked | Where-Object { $_.state -eq 'queued' }).Count
+    $queuedCount = $queuedItems.Count
     Write-Marker "INFO" ("Check #{0}: tracked={1}, active={2}, queued={3}, total_rate={4} B/s" -f $checkCount, $tracked.Count, $active.Count, $queuedCount, $totalRate)
+    Write-Marker "INFO" ("  downloading: {0}" -f (Format-TaskSummary -Items $active -TaskEpisodeIndex $taskEpisodeIndex))
+    Write-Marker "INFO" ("  queued: {0}" -f (Format-TaskSummary -Items $queuedItems -TaskEpisodeIndex $taskEpisodeIndex))
 
     $elapsedMinutes = ((Get-Date) - $startTime).TotalMinutes
     $allTerminal = ($tracked.Count -gt 0) -and (@($tracked | Where-Object { $_.state -notin @('completed', 'failed', 'paused', 'deleted', 'seeding') }).Count -eq 0)
