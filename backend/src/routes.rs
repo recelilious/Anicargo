@@ -1467,7 +1467,7 @@ async fn materialize_candidate_chain_with_peer_fallback(
     let mut last_error = None;
 
     for candidate_id in candidate_chain {
-        match state
+        let probed_peer_count = match state
             .downloads
             .probe_candidate_with_priority(
                 &state.pool,
@@ -1499,6 +1499,7 @@ async fn materialize_candidate_chain_with_peer_fallback(
                     notes = ?probe.notes,
                     "Candidate source inspection passed"
                 );
+                probe.peer_count
             }
             Err(error) => {
                 tracing::warn!(
@@ -1512,7 +1513,7 @@ async fn materialize_candidate_chain_with_peer_fallback(
                 last_error = Some(error);
                 continue;
             }
-        }
+        };
 
         match state
             .downloads
@@ -1525,7 +1526,28 @@ async fn materialize_candidate_chain_with_peer_fallback(
             )
             .await
         {
-            Ok(_) => return Ok(()),
+            Ok(decision) => {
+                if let (Some(execution), Some(probe_peer_count)) =
+                    (decision.execution.as_ref(), probed_peer_count)
+                {
+                    if execution.peer_count == 0 && probe_peer_count > 0 {
+                        db::update_download_execution_metrics(
+                            &state.pool,
+                            execution.id,
+                            &execution.state,
+                            execution.downloaded_bytes,
+                            execution.source_size_bytes.max(execution.downloaded_bytes),
+                            execution.uploaded_bytes,
+                            execution.download_rate_bytes,
+                            execution.upload_rate_bytes,
+                            probe_peer_count,
+                            Some("Initialized queued execution with preflight peer count"),
+                        )
+                        .await?;
+                    }
+                }
+                return Ok(());
+            }
             Err(error) => {
                 tracing::warn!(
                     job_id = job.id,
