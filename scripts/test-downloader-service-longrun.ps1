@@ -41,18 +41,47 @@ function Invoke-AnicargoApi {
     return Invoke-RestMethod -Method $Method -Uri $uri -ContentType "application/json" -Body $json
 }
 
-function Get-AnimeGardenEpisodeResource {
-    param([int]$Episode)
+function Invoke-RestJsonWithRetry {
+    param(
+        [string]$Uri,
+        [int]$MaxAttempts = 5,
+        [int]$InitialDelaySeconds = 3
+    )
 
-    $episodeFragment = "{0:D2}" -f $Episode
-    $query = "https://api.animes.garden/resources?subject=$SubjectId&pageSize=20&metadata=true&keyword=LoliHouse&keyword=S3&keyword=$episodeFragment"
-    $response = Invoke-RestMethod -Method GET -Uri $query
+    $delaySeconds = $InitialDelaySeconds
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            return Invoke-RestMethod -Method GET -Uri $Uri
+        } catch {
+            $message = $_.Exception.Message
+            $isRateLimited = $message -match '1015|429|Too Many Requests'
+            if (-not $isRateLimited -or $attempt -ge $MaxAttempts) {
+                throw
+            }
+
+            Write-Marker "WARN" ("AnimeGarden rate limited attempt {0}/{1}, retrying after {2}s" -f $attempt, $MaxAttempts, $delaySeconds)
+            Start-Sleep -Seconds $delaySeconds
+            $delaySeconds = [Math]::Min($delaySeconds * 2, 30)
+        }
+    }
+}
+
+function Get-AnimeGardenResourceCatalog {
+    $query = "https://api.animes.garden/resources?subject=$SubjectId&pageSize=100&metadata=true&keyword=LoliHouse&keyword=S3"
+    $response = Invoke-RestJsonWithRetry -Uri $query
+
     $items = @($response.resources) | Where-Object {
         $_.metadata.anipar.season.number -eq 3 -and
-        $_.metadata.anipar.episode.number -eq $Episode -and
-        $_.metadata.anipar.fansub.name -eq "LoliHouse"
+        $_.metadata.anipar.fansub.name -eq "LoliHouse" -and
+        $null -ne $_.metadata.anipar.episode.number
     }
-    return $items | Select-Object -First 1
+
+    return $items | Sort-Object {
+        $_.metadata.anipar.episode.number
+    }, @{
+        Expression = { $_.updatedAt }
+        Descending = $true
+    }
 }
 
 function Get-DmhyTorrentUrl {
@@ -119,9 +148,12 @@ $settings = Invoke-AnicargoApi -Method PATCH -Path "/api/v1/settings" -Body @{
 $settings | Out-Null
 Add-PassMessage "Runtime settings updated"
 
+$resourceCatalog = @(Get-AnimeGardenResourceCatalog)
 $taskPlans = @()
 for ($episode = 1; $episode -le $TargetLastEpisode; $episode++) {
-    $resource = Get-AnimeGardenEpisodeResource -Episode $episode
+    $resource = @($resourceCatalog | Where-Object {
+        $_.metadata.anipar.episode.number -eq $episode
+    }) | Select-Object -First 1
     if ($null -eq $resource) {
         Add-WarningMessage "Episode $episode resource not found on AnimeGarden for LoliHouse S3; skipping"
         continue

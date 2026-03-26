@@ -1432,7 +1432,6 @@ async fn build_session(
     Session::new_with_opts(
         output_dir.to_path_buf(),
         SessionOptions {
-            disable_dht: cfg!(windows),
             disable_dht_persistence: true,
             persistence: Some(SessionPersistenceConfig::Json {
                 folder: Some(session_dir),
