@@ -513,7 +513,42 @@ impl DownloadCoordinator {
             });
         }
 
-        if let Some(job) = db::find_open_download_job(pool, input.bangumi_subject_id).await? {
+        let season_mode = season_mode_for_release_status(&input.release_status).to_owned();
+
+        if let Some(mut job) = db::find_open_download_job(pool, input.bangumi_subject_id).await? {
+            if job.release_status != input.release_status
+                || job.season_mode != season_mode
+                || job.subscription_count != input.subscription_count
+                || job.threshold_snapshot != input.threshold
+            {
+                db::update_download_job_release_context(
+                    pool,
+                    job.id,
+                    &input.release_status,
+                    &season_mode,
+                    input.subscription_count,
+                    input.threshold,
+                )
+                .await?;
+
+                info!(
+                    job_id = job.id,
+                    subject_id = input.bangumi_subject_id,
+                    old_release_status = %job.release_status,
+                    new_release_status = %input.release_status,
+                    old_season_mode = %job.season_mode,
+                    new_season_mode = %season_mode,
+                    subscription_count = input.subscription_count,
+                    threshold = input.threshold,
+                    "Updated existing download job release context before reuse"
+                );
+
+                job.release_status = input.release_status.clone();
+                job.season_mode = season_mode.clone();
+                job.subscription_count = input.subscription_count;
+                job.threshold_snapshot = input.threshold;
+            }
+
             return Ok(DownloadDecisionDto {
                 demand_state: demand_state.to_owned(),
                 reason: if input.force {
@@ -524,13 +559,6 @@ impl DownloadCoordinator {
                 job: Some(job),
             });
         }
-
-        let season_mode = match input.release_status.as_str() {
-            "airing" => "ongoing_monitor",
-            "upcoming" => "upcoming_watch",
-            _ => "season_pack",
-        }
-        .to_owned();
 
         let accepted = self
             .engine
@@ -1119,6 +1147,14 @@ fn determine_demand_state(subscription_count: i64, threshold: i64, force: bool) 
         "threshold_met"
     } else {
         "idle"
+    }
+}
+
+fn season_mode_for_release_status(release_status: &str) -> &'static str {
+    match release_status {
+        "airing" => "ongoing_monitor",
+        "upcoming" => "upcoming_watch",
+        _ => "season_pack",
     }
 }
 

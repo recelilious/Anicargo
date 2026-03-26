@@ -1176,6 +1176,38 @@ pub async fn create_download_job(
     })
 }
 
+pub async fn update_download_job_release_context(
+    pool: &SqlitePool,
+    job_id: i64,
+    release_status: &str,
+    season_mode: &str,
+    subscription_count: i64,
+    threshold_snapshot: i64,
+) -> Result<(), AppError> {
+    let now = now_string();
+
+    sqlx::query(
+        "UPDATE download_jobs
+         SET release_status = ?2,
+             season_mode = ?3,
+             subscription_count = ?4,
+             threshold_snapshot = ?5,
+             updated_at = ?6
+         WHERE id = ?1",
+    )
+    .bind(job_id)
+    .bind(release_status)
+    .bind(season_mode)
+    .bind(subscription_count)
+    .bind(threshold_snapshot)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to update download job release context"))?;
+
+    Ok(())
+}
+
 pub async fn mark_download_subject_queued(
     pool: &SqlitePool,
     bangumi_subject_id: i64,

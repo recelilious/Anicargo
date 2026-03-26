@@ -1024,27 +1024,17 @@ async fn resolve_subject_search_profile(
     bangumi: &BangumiClient,
     subject_id: i64,
 ) -> AnimeGardenSearchProfileWithStatus {
-    match db::cached_bangumi_subject_summary(pool, subject_id).await {
-        Ok(Some(cached)) => {
-            let season_hint =
-                infer_season_hint_from_texts([cached.title.as_str(), cached.title_cn.as_str()]);
-            return AnimeGardenSearchProfileWithStatus {
-                bangumi_subject_id: subject_id,
-                title: cached.title,
-                title_cn: cached.title_cn,
-                release_status: cached.release_status,
-                season_hint,
-            };
-        }
-        Ok(None) => {}
+    let cached = match db::cached_bangumi_subject_summary(pool, subject_id).await {
+        Ok(value) => value,
         Err(error) => {
             tracing::warn!(
                 subject_id,
                 error = %error,
                 "Failed to read cached Bangumi subject summary for resource discovery"
             );
+            None
         }
-    }
+    };
 
     match bangumi.fetch_subject(subject_id).await {
         Ok(subject) => {
@@ -1060,12 +1050,21 @@ async fn resolve_subject_search_profile(
                 }
             };
 
+            let release_status =
+                season_catalog::derive_release_status(&subject, &episodes).to_owned();
+            tracing::info!(
+                subject_id,
+                release_status = %release_status,
+                cached_release_status = ?cached.as_ref().map(|item| item.release_status.clone()),
+                episode_count = episodes.len(),
+                "Resolved live Bangumi subject profile for resource discovery"
+            );
+
             AnimeGardenSearchProfileWithStatus {
                 bangumi_subject_id: subject_id,
                 title: subject.name.clone(),
                 title_cn: subject.name_cn.clone(),
-                release_status: season_catalog::derive_release_status(&subject, &episodes)
-                    .to_owned(),
+                release_status,
                 season_hint: infer_season_hint_from_texts([
                     subject.name.as_str(),
                     subject.name_cn.as_str(),
@@ -1076,8 +1075,27 @@ async fn resolve_subject_search_profile(
             tracing::warn!(
                 subject_id,
                 error = %error,
-                "Failed to resolve subject metadata for resource discovery; falling back to subject id only"
+                cached_release_status = ?cached.as_ref().map(|item| item.release_status.clone()),
+                "Failed to resolve live Bangumi subject metadata for resource discovery; falling back to cache"
             );
+
+            if let Some(cached) = cached {
+                let season_hint =
+                    infer_season_hint_from_texts([cached.title.as_str(), cached.title_cn.as_str()]);
+                tracing::info!(
+                    subject_id,
+                    release_status = %cached.release_status,
+                    "Using cached Bangumi subject profile for resource discovery fallback"
+                );
+                return AnimeGardenSearchProfileWithStatus {
+                    bangumi_subject_id: subject_id,
+                    title: cached.title,
+                    title_cn: cached.title_cn,
+                    release_status: cached.release_status,
+                    season_hint,
+                };
+            }
+
             AnimeGardenSearchProfileWithStatus {
                 bangumi_subject_id: subject_id,
                 title: String::new(),
