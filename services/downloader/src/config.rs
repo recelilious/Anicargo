@@ -17,6 +17,8 @@ pub struct DownloaderCli {
     #[arg(long)]
     pub runtime_root: Option<PathBuf>,
     #[arg(long)]
+    pub default_output_dir: Option<PathBuf>,
+    #[arg(long)]
     pub max_concurrent_downloads: Option<usize>,
     #[arg(long)]
     pub max_concurrent_seeds: Option<usize>,
@@ -38,6 +40,7 @@ pub struct DownloaderCli {
 pub struct DownloaderConfig {
     pub listen: String,
     pub runtime_root: PathBuf,
+    pub default_output_dir: PathBuf,
     pub max_concurrent_downloads: usize,
     pub max_concurrent_seeds: usize,
     pub global_download_limit_mb: u64,
@@ -52,6 +55,7 @@ pub struct DownloaderConfig {
 struct FileConfig {
     listen: Option<String>,
     runtime_root: Option<PathBuf>,
+    default_output_dir: Option<PathBuf>,
     max_concurrent_downloads: Option<usize>,
     max_concurrent_seeds: Option<usize>,
     global_download_limit_mb: Option<u64>,
@@ -67,6 +71,7 @@ impl Default for DownloaderConfig {
         Self {
             listen: "0.0.0.0:4010".to_owned(),
             runtime_root: PathBuf::from("runtime/downloader"),
+            default_output_dir: PathBuf::from("runtime/downloader/downloads"),
             max_concurrent_downloads: 5,
             max_concurrent_seeds: 8,
             global_download_limit_mb: 0,
@@ -103,6 +108,9 @@ impl DownloaderConfig {
         if let Some(value) = file.runtime_root {
             self.runtime_root = value;
         }
+        if let Some(value) = file.default_output_dir {
+            self.default_output_dir = value;
+        }
         if let Some(value) = file.max_concurrent_downloads {
             self.max_concurrent_downloads = value;
         }
@@ -136,6 +144,9 @@ impl DownloaderConfig {
         if let Some(value) = cli.runtime_root.as_ref() {
             self.runtime_root = value.clone();
         }
+        if let Some(value) = cli.default_output_dir.as_ref() {
+            self.default_output_dir = value.clone();
+        }
         if let Some(value) = cli.max_concurrent_downloads {
             self.max_concurrent_downloads = value;
         }
@@ -163,6 +174,9 @@ impl DownloaderConfig {
     }
 
     fn sanitize(&mut self) {
+        if self.default_output_dir.as_os_str().is_empty() {
+            self.default_output_dir = self.runtime_root.join("downloads");
+        }
         self.max_concurrent_downloads = self.max_concurrent_downloads.max(1);
         self.max_concurrent_seeds = self.max_concurrent_seeds.max(1);
         self.priority_decay = self.priority_decay.clamp(0.01, 1.0);

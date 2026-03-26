@@ -1,5 +1,6 @@
 listen = "0.0.0.0:4010"
 runtime_root = "runtime/downloader"
+default_output_dir = "runtime/downloader/downloads"
 max_concurrent_downloads = 5
 max_concurrent_seeds = 8
 global_download_limit_mb = 0

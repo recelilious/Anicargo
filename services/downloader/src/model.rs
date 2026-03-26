@@ -59,7 +59,7 @@ pub struct TorrentMetadataSummary {
 pub struct CreateTaskRequest {
     pub kind: TaskKind,
     pub source: TaskSource,
-    pub output_dir: String,
+    pub output_dir: Option<String>,
     pub priority: Option<u32>,
     pub start_enabled: Option<bool>,
     pub seed_after_download: Option<bool>,
@@ -90,6 +90,7 @@ pub struct UpdateTaskRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateSettingsRequest {
+    pub default_output_dir: Option<String>,
     pub max_concurrent_downloads: Option<usize>,
     pub max_concurrent_seeds: Option<usize>,
     pub global_download_limit_mb: Option<u64>,
@@ -102,6 +103,7 @@ pub struct UpdateSettingsRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeSettingsDto {
+    pub default_output_dir: String,
     pub max_concurrent_downloads: usize,
     pub max_concurrent_seeds: usize,
     pub global_download_limit_mb: u64,
@@ -145,6 +147,12 @@ pub struct DownloaderTaskDto {
     pub last_error: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateTaskResponse {
+    pub task: DownloaderTaskDto,
+    pub created: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

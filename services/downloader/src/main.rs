@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anicargo_downloader::{DownloaderCli, DownloaderConfig, DownloaderService, build_router};
+use anicargo_downloader::{DownloaderCli, DownloaderConfig, build_router, start_embedded};
 use anyhow::Context;
 use clap::Parser;
 use tokio::net::TcpListener;
@@ -27,8 +27,8 @@ async fn main() -> anyhow::Result<()> {
         .with(fmt::layer())
         .init();
 
-    let service = Arc::new(DownloaderService::new(config.clone())?);
-    service.clone().spawn_scheduler();
+    let runtime = start_embedded(config.clone())?;
+    let service: Arc<_> = runtime.service();
 
     let listener = TcpListener::bind(&config.listen)
         .await

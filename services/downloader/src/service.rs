@@ -34,9 +34,10 @@ use uuid::Uuid;
 use crate::{
     config::DownloaderConfig,
     model::{
-        CreateTaskRequest, DownloaderTaskDto, InspectTaskRequest, RuntimeOverviewResponse,
-        RuntimeSettingsDto, TaskKind, TaskListResponse, TaskSource, TaskSourceKind, TaskState,
-        TorrentFileEntry, TorrentMetadataSummary, UpdateSettingsRequest, UpdateTaskRequest,
+        CreateTaskRequest, CreateTaskResponse, DownloaderTaskDto, InspectTaskRequest,
+        RuntimeOverviewResponse, RuntimeSettingsDto, TaskKind, TaskListResponse, TaskSource,
+        TaskSourceKind, TaskState, TorrentFileEntry, TorrentMetadataSummary, UpdateSettingsRequest,
+        UpdateTaskRequest,
     },
 };
 
@@ -46,6 +47,27 @@ pub struct DownloaderService {
     tasks: Arc<RwLock<HashMap<Uuid, TaskRecord>>>,
     sessions: Arc<Mutex<HashMap<Uuid, TaskSession>>>,
     started_at: DateTime<Utc>,
+}
+
+pub struct DownloaderRuntime {
+    service: Arc<DownloaderService>,
+    scheduler: JoinHandle<()>,
+}
+
+impl DownloaderRuntime {
+    pub fn service(&self) -> Arc<DownloaderService> {
+        self.service.clone()
+    }
+
+    pub fn abort(self) {
+        self.scheduler.abort();
+    }
+}
+
+pub fn start_embedded(config: DownloaderConfig) -> anyhow::Result<DownloaderRuntime> {
+    let service = Arc::new(DownloaderService::new(config)?);
+    let scheduler = service.clone().spawn_scheduler();
+    Ok(DownloaderRuntime { service, scheduler })
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +118,10 @@ impl TaskRecord {
         } else {
             TaskState::Paused
         };
+        let output_dir = request
+            .output_dir
+            .clone()
+            .unwrap_or_else(|| defaults.default_output_dir.to_string_lossy().into_owned());
 
         Self {
             id: Uuid::new_v4(),
@@ -105,7 +131,7 @@ impl TaskRecord {
             priority: request.priority.unwrap_or(0),
             seed_after_download: request.seed_after_download.unwrap_or(true),
             source: request.source,
-            output_dir: request.output_dir,
+            output_dir,
             display_name: metadata.name.clone(),
             info_hash: Some(metadata.info_hash.clone()),
             metadata: Some(metadata),
@@ -311,33 +337,58 @@ impl DownloaderService {
         })
     }
 
-    async fn create_task(&self, request: CreateTaskRequest) -> anyhow::Result<DownloaderTaskDto> {
+    pub async fn create_task(
+        &self,
+        mut request: CreateTaskRequest,
+    ) -> anyhow::Result<CreateTaskResponse> {
         let defaults = self.config.read().await.clone();
+        if request.output_dir.is_none() {
+            request.output_dir = Some(defaults.default_output_dir.to_string_lossy().into_owned());
+        }
         let metadata = self
             .inspect_source(InspectTaskRequest {
                 source: request.source.clone(),
-                output_dir: Some(request.output_dir.clone()),
+                output_dir: request.output_dir.clone(),
             })
             .await?;
+
+        {
+            let tasks = self.tasks.read().await;
+            if let Some(existing) = tasks.values().find(|task| {
+                !matches!(task.state, TaskState::Deleted)
+                    && task.info_hash.as_deref() == Some(metadata.info_hash.as_str())
+            }) {
+                let existing_id = existing.id;
+                drop(tasks);
+                return Ok(CreateTaskResponse {
+                    task: self.get_task(existing_id).await?,
+                    created: false,
+                });
+            }
+        }
 
         let record = TaskRecord::new(request, metadata, &defaults);
         let dto = record.to_dto(None);
         self.tasks.write().await.insert(record.id, record);
-        Ok(dto)
+        Ok(CreateTaskResponse {
+            task: dto,
+            created: true,
+        })
     }
 
-    async fn inspect_source(
+    pub async fn inspect_source(
         &self,
         request: InspectTaskRequest,
     ) -> anyhow::Result<TorrentMetadataSummary> {
-        let runtime_root = self.config.read().await.runtime_root.clone();
+        let config = self.config.read().await.clone();
+        let runtime_root = config.runtime_root.clone();
         let inspect_root = runtime_root
             .join("_inspect")
             .join(Uuid::new_v4().to_string());
         let output_dir = request
             .output_dir
             .map(PathBuf::from)
-            .unwrap_or_else(|| inspect_root.join("output"));
+            .unwrap_or_else(|| config.default_output_dir.clone());
 
         let session = build_session(&inspect_root, &output_dir, None, None).await?;
         let api = RqbitApi::new(session.clone(), None);
@@ -358,7 +409,20 @@ impl DownloaderService {
         Ok(metadata_from_add_response(response))
     }
 
-    async fn list_tasks(&self, filter: Option<QueueCategory>) -> TaskListResponse {
+    pub async fn list_all_tasks(&self) -> TaskListResponse {
+        self.list_tasks_internal(None).await
+    }
+
+    pub async fn list_downloads(&self) -> TaskListResponse {
+        self.list_tasks_internal(Some(QueueCategory::Download))
+            .await
+    }
+
+    pub async fn list_seeds(&self) -> TaskListResponse {
+        self.list_tasks_internal(Some(QueueCategory::Seed)).await
+    }
+
+    async fn list_tasks_internal(&self, filter: Option<QueueCategory>) -> TaskListResponse {
         let config = self.config.read().await.clone();
         let tasks = self.tasks.read().await;
         let plan = compute_queue_plan(&tasks, &config);
@@ -372,7 +436,7 @@ impl DownloaderService {
         TaskListResponse { items }
     }
 
-    async fn get_task(&self, task_id: Uuid) -> anyhow::Result<DownloaderTaskDto> {
+    pub async fn get_task(&self, task_id: Uuid) -> anyhow::Result<DownloaderTaskDto> {
         let config = self.config.read().await.clone();
         let tasks = self.tasks.read().await;
         let plan = compute_queue_plan(&tasks, &config);
@@ -383,7 +447,7 @@ impl DownloaderService {
         Ok(task.to_dto(plan.queue_positions.get(&task.id).copied()))
     }
 
-    async fn pause_task(&self, task_id: Uuid) -> anyhow::Result<DownloaderTaskDto> {
+    pub async fn pause_task(&self, task_id: Uuid) -> anyhow::Result<DownloaderTaskDto> {
         {
             let mut tasks = self.tasks.write().await;
             let task = tasks
@@ -401,7 +465,7 @@ impl DownloaderService {
         self.get_task(task_id).await
     }
 
-    async fn resume_task(&self, task_id: Uuid) -> anyhow::Result<DownloaderTaskDto> {
+    pub async fn resume_task(&self, task_id: Uuid) -> anyhow::Result<DownloaderTaskDto> {
         {
             let mut tasks = self.tasks.write().await;
             let task = tasks
@@ -416,7 +480,7 @@ impl DownloaderService {
         self.get_task(task_id).await
     }
 
-    async fn delete_task(
+    pub async fn delete_task(
         &self,
         task_id: Uuid,
         delete_files: bool,
@@ -431,7 +495,7 @@ impl DownloaderService {
         Ok(removed.map(|task| task.to_dto(None)))
     }
 
-    async fn update_task(
+    pub async fn update_task(
         &self,
         task_id: Uuid,
         request: UpdateTaskRequest,
@@ -476,11 +540,14 @@ impl DownloaderService {
         Ok(task.to_dto(None))
     }
 
-    async fn update_settings(
+    pub async fn update_settings(
         &self,
         request: UpdateSettingsRequest,
     ) -> anyhow::Result<RuntimeOverviewResponse> {
         let mut config = self.config.write().await;
+        if let Some(value) = request.default_output_dir {
+            config.default_output_dir = PathBuf::from(value);
+        }
         if let Some(value) = request.max_concurrent_downloads {
             config.max_concurrent_downloads = value.max(1);
         }
@@ -510,7 +577,7 @@ impl DownloaderService {
         self.runtime_overview().await
     }
 
-    async fn runtime_overview(&self) -> anyhow::Result<RuntimeOverviewResponse> {
+    pub async fn runtime_overview(&self) -> anyhow::Result<RuntimeOverviewResponse> {
         let config = self.config.read().await.clone();
         let tasks = self.tasks.read().await;
         let plan = compute_queue_plan(&tasks, &config);
@@ -519,6 +586,7 @@ impl DownloaderService {
         Ok(RuntimeOverviewResponse {
             started_at: self.started_at,
             settings: RuntimeSettingsDto {
+                default_output_dir: config.default_output_dir.to_string_lossy().into_owned(),
                 max_concurrent_downloads: config.max_concurrent_downloads,
                 max_concurrent_seeds: config.max_concurrent_seeds,
                 global_download_limit_mb: config.global_download_limit_mb,
@@ -933,7 +1001,7 @@ async fn inspect(
 async fn create_task(
     State(service): State<Arc<DownloaderService>>,
     Json(payload): Json<CreateTaskRequest>,
-) -> Result<Json<ApiEnvelope<DownloaderTaskDto>>, (StatusCode, Json<ErrorPayload>)> {
+) -> Result<Json<ApiEnvelope<CreateTaskResponse>>, (StatusCode, Json<ErrorPayload>)> {
     let task = service.create_task(payload).await.map_err(invalid_error)?;
     Ok(Json(ApiEnvelope { data: task }))
 }
@@ -941,21 +1009,21 @@ async fn create_task(
 async fn list_tasks(
     State(service): State<Arc<DownloaderService>>,
 ) -> Result<Json<ApiEnvelope<TaskListResponse>>, (StatusCode, Json<ErrorPayload>)> {
-    let list = service.list_tasks(None).await;
+    let list = service.list_all_tasks().await;
     Ok(Json(ApiEnvelope { data: list }))
 }
 
 async fn list_downloads(
     State(service): State<Arc<DownloaderService>>,
 ) -> Result<Json<ApiEnvelope<TaskListResponse>>, (StatusCode, Json<ErrorPayload>)> {
-    let list = service.list_tasks(Some(QueueCategory::Download)).await;
+    let list = service.list_downloads().await;
     Ok(Json(ApiEnvelope { data: list }))
 }
 
 async fn list_seeds(
     State(service): State<Arc<DownloaderService>>,
 ) -> Result<Json<ApiEnvelope<TaskListResponse>>, (StatusCode, Json<ErrorPayload>)> {
-    let list = service.list_tasks(Some(QueueCategory::Seed)).await;
+    let list = service.list_seeds().await;
     Ok(Json(ApiEnvelope { data: list }))
 }
 

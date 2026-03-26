@@ -66,7 +66,7 @@ $taskA = Invoke-AnicargoApi -Method POST -Path "/api/v1/tasks" -Body @{
     manual_upload_limit_mb   = $null
 }
 $taskA | ConvertTo-Json -Depth 10
-$taskAId = $taskA.data.id
+$taskAId = $taskA.data.task.id
 
 Write-Host "`n== Create Task B =="
 $taskBOutput = Join-Path $OutputDir "task-b"
@@ -84,23 +84,23 @@ $taskB = Invoke-AnicargoApi -Method POST -Path "/api/v1/tasks" -Body @{
     manual_upload_limit_mb   = $null
 }
 $taskB | ConvertTo-Json -Depth 10
-$taskBId = $taskB.data.id
+$taskBId = $taskB.data.task.id
+
+Write-Host "`n== Verify Duplicate Prevention =="
+if ($taskB.data.created -or $taskBId -ne $taskAId) {
+    throw "Duplicate prevention failed: second create should reuse task A"
+}
+"Duplicate prevention OK"
 
 Start-Sleep -Seconds 3
 
-Write-Host "`n== Downloads List (priority + queue) =="
+Write-Host "`n== Downloads List =="
 $downloads = Invoke-AnicargoApi -Method GET -Path "/api/v1/downloads"
 $downloads | ConvertTo-Json -Depth 10
 
 Write-Host "`n== Pause Task A =="
 $pausedA = Invoke-AnicargoApi -Method POST -Path "/api/v1/tasks/${taskAId}/pause"
 $pausedA | ConvertTo-Json -Depth 10
-
-Start-Sleep -Seconds 3
-
-Write-Host "`n== Task B Detail After Queue Promotion =="
-$taskBDetail = Invoke-AnicargoApi -Method GET -Path "/api/v1/tasks/${taskBId}"
-$taskBDetail | ConvertTo-Json -Depth 10
 
 Write-Host "`n== Resume Task A =="
 $resumedA = Invoke-AnicargoApi -Method POST -Path "/api/v1/tasks/${taskAId}/resume"
@@ -111,7 +111,11 @@ $deletedA = Invoke-AnicargoApi -Method DELETE -Path "/api/v1/tasks/${taskAId}?de
 $deletedA | ConvertTo-Json -Depth 10
 
 Write-Host "`n== Delete Task B =="
-$deletedB = Invoke-AnicargoApi -Method DELETE -Path "/api/v1/tasks/${taskBId}?delete_files=true"
-$deletedB | ConvertTo-Json -Depth 10
+if ($taskBId -ne $taskAId) {
+    $deletedB = Invoke-AnicargoApi -Method DELETE -Path "/api/v1/tasks/${taskBId}?delete_files=true"
+    $deletedB | ConvertTo-Json -Depth 10
+} else {
+    "Task B reused task A; no extra delete needed."
+}
 
 Write-Host "`nDownloader API smoke test completed."
