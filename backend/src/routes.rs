@@ -1392,8 +1392,8 @@ async fn run_download_pipeline(
 
 #[derive(Debug, Default)]
 struct AiringDownloadPlan {
-    backlog_candidate_ids: Vec<i64>,
-    latest_candidate_id: Option<i64>,
+    backlog_candidate_chains: Vec<Vec<i64>>,
+    latest_candidate_chain: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1427,59 +1427,122 @@ async fn apply_airing_download_plan(
     tracing::info!(
         job_id = job.id,
         subject_id = job.bangumi_subject_id,
-        backlog_candidate_ids = ?plan.backlog_candidate_ids,
-        latest_candidate_id = ?plan.latest_candidate_id,
+        backlog_candidate_chains = ?plan.backlog_candidate_chains,
+        latest_candidate_chain = ?plan.latest_candidate_chain,
         "Built airing download plan"
     );
 
     let mut next_priority = 0u32;
 
-    for candidate_id in plan.backlog_candidate_ids {
-        state
+    for candidate_chain in plan.backlog_candidate_chains {
+        materialize_candidate_chain_with_peer_fallback(
+            state,
+            job,
+            next_priority,
+            &candidate_chain,
+        )
+        .await?;
+        next_priority = next_priority.saturating_add(1);
+    }
+
+    if !plan.latest_candidate_chain.is_empty() {
+        materialize_candidate_chain_with_peer_fallback(
+            state,
+            job,
+            next_priority,
+            &plan.latest_candidate_chain,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn materialize_candidate_chain_with_peer_fallback(
+    state: &AppState,
+    job: &crate::types::DownloadJobDto,
+    priority: u32,
+    candidate_chain: &[i64],
+) -> Result<(), AppError> {
+    let mut last_error = None;
+
+    for candidate_id in candidate_chain {
+        match state
+            .downloads
+            .probe_candidate_with_priority(
+                &state.pool,
+                &state.config.storage.media_root,
+                job.id,
+                *candidate_id,
+                priority,
+            )
+            .await
+        {
+            Ok(probe) if probe.peer_count == Some(0) => {
+                tracing::info!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    candidate_id,
+                    priority,
+                    notes = ?probe.notes,
+                    "Skipping candidate because source inspection found zero peers"
+                );
+                continue;
+            }
+            Ok(probe) => {
+                tracing::info!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    candidate_id,
+                    priority,
+                    peer_count = ?probe.peer_count,
+                    notes = ?probe.notes,
+                    "Candidate source inspection passed"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    candidate_id,
+                    priority,
+                    error = %error,
+                    "Candidate source inspection failed; trying next scored candidate"
+                );
+                last_error = Some(error);
+                continue;
+            }
+        }
+
+        match state
             .downloads
             .materialize_candidate_with_priority(
                 &state.pool,
                 &state.config.storage.media_root,
                 job.id,
-                candidate_id,
-                next_priority,
+                *candidate_id,
+                priority,
             )
-            .await?;
-        next_priority = next_priority.saturating_add(1);
-    }
-
-    if let Some(latest_candidate_id) = plan.latest_candidate_id {
-        let current_selected = db::current_selected_candidate_for_job(&state.pool, job.id).await?;
-        if current_selected.as_ref().map(|candidate| candidate.id) != Some(latest_candidate_id) {
-            db::assign_download_job_candidate(&state.pool, job.id, Some(latest_candidate_id))
-                .await?;
+            .await
+        {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                tracing::warn!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    candidate_id,
+                    priority,
+                    error = %error,
+                    "Candidate activation failed; trying next scored candidate"
+                );
+                last_error = Some(error);
+            }
         }
-
-        state
-            .downloads
-            .materialize_selected_candidate_with_priority(
-                &state.pool,
-                &state.config.storage.media_root,
-                job.id,
-                next_priority,
-            )
-            .await?;
-    } else if db::current_selected_candidate_for_job(&state.pool, job.id)
-        .await?
-        .is_some()
-    {
-        state
-            .downloads
-            .materialize_selected_candidate_with_priority(
-                &state.pool,
-                &state.config.storage.media_root,
-                job.id,
-                next_priority,
-            )
-            .await?;
     }
 
-    Ok(())
+    Err(last_error.unwrap_or_else(|| {
+        AppError::bad_request("no scored candidate with reachable peers was available")
+    }))
 }
 
 async fn build_airing_download_plan(
@@ -1573,11 +1636,12 @@ async fn build_airing_download_plan(
             continue;
         }
 
-        let Some(chosen) = pick_slot_candidate(
+        let ordered_candidates = ordered_slot_candidates(
             slot_candidates.as_slice(),
             &job.release_status,
             preferred_fansub.as_deref(),
-        ) else {
+        );
+        let Some(chosen) = ordered_candidates.first().copied() else {
             tracing::info!(
                 job_id = job.id,
                 subject_id = job.bangumi_subject_id,
@@ -1601,14 +1665,14 @@ async fn build_airing_download_plan(
         if let Some(fansub_name) = chosen.fansub_name.clone() {
             preferred_fansub = Some(fansub_name);
         }
-        backlog_candidate_ids.push(chosen.id);
+        backlog_candidate_ids.push(ordered_candidates.iter().map(|candidate| candidate.id).collect());
     }
 
-    let latest_candidate = latest_episode_key
+    let latest_candidates = latest_episode_key
         .and_then(|latest_episode_key| candidates_by_episode.get(&latest_episode_key))
         .and_then(|latest_candidates| {
             if job.release_status == "airing" {
-                choose_latest_airing_candidate(
+                choose_latest_airing_candidates(
                     job,
                     policy,
                     current_selected.as_ref(),
@@ -1616,15 +1680,15 @@ async fn build_airing_download_plan(
                     preferred_fansub.as_deref(),
                 )
             } else {
-                pick_slot_candidate(
+                Some(ordered_slot_candidates(
                     latest_candidates.as_slice(),
                     &job.release_status,
                     preferred_fansub.as_deref(),
-                )
+                ))
             }
         });
 
-    if let Some(candidate) = latest_candidate {
+    if let Some(candidate) = latest_candidates.as_ref().and_then(|candidates| candidates.first().copied()) {
         tracing::info!(
             job_id = job.id,
             subject_id = job.bangumi_subject_id,
@@ -1645,54 +1709,61 @@ async fn build_airing_download_plan(
     }
 
     Ok(AiringDownloadPlan {
-        backlog_candidate_ids,
-        latest_candidate_id: latest_candidate.map(|candidate| candidate.id),
+        backlog_candidate_chains: backlog_candidate_ids,
+        latest_candidate_chain: latest_candidates
+            .unwrap_or_default()
+            .into_iter()
+            .map(|candidate| candidate.id)
+            .collect(),
     })
 }
 
-fn choose_latest_airing_candidate<'a>(
+fn choose_latest_airing_candidates<'a>(
     job: &crate::types::DownloadJobDto,
     policy: &crate::types::PolicyDto,
     current_selected: Option<&'a ResourceCandidateDto>,
     latest_candidates: &[&'a ResourceCandidateDto],
     preferred_fansub: Option<&str>,
-) -> Option<&'a ResourceCandidateDto> {
-    let best = pick_slot_candidate(latest_candidates, &job.release_status, preferred_fansub)?;
+) -> Option<Vec<&'a ResourceCandidateDto>> {
+    let ordered = ordered_slot_candidates(latest_candidates, &job.release_status, preferred_fansub);
+    let best = ordered.first().copied()?;
 
     let Some(current) = current_selected else {
-        return Some(best);
+        return Some(ordered);
     };
 
     if current.slot_key != best.slot_key {
-        return Some(best);
+        return Some(ordered);
     }
 
     if !within_replacement_window(
         job.selection_updated_at.as_deref(),
         policy.replacement_window_hours,
     ) {
-        return Some(current);
+        return Some(vec![current]);
     }
 
     if slot_candidate_priority_key(best, &job.release_status, preferred_fansub)
         > slot_candidate_priority_key(current, &job.release_status, preferred_fansub)
     {
-        Some(best)
+        Some(ordered)
     } else {
-        Some(current)
+        Some(vec![current])
     }
 }
 
-fn pick_slot_candidate<'a>(
+fn ordered_slot_candidates<'a>(
     candidates: &[&'a ResourceCandidateDto],
     release_status: &str,
     preferred_fansub: Option<&str>,
-) -> Option<&'a ResourceCandidateDto> {
-    candidates.iter().copied().max_by(|left, right| {
-        slot_candidate_priority_key(left, release_status, preferred_fansub).cmp(
-            &slot_candidate_priority_key(right, release_status, preferred_fansub),
+) -> Vec<&'a ResourceCandidateDto> {
+    let mut ordered = candidates.to_vec();
+    ordered.sort_by(|left, right| {
+        slot_candidate_priority_key(right, release_status, preferred_fansub).cmp(
+            &slot_candidate_priority_key(left, release_status, preferred_fansub),
         )
-    })
+    });
+    ordered
 }
 
 fn slot_candidate_priority_key(

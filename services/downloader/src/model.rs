@@ -73,6 +73,7 @@ pub struct CreateTaskRequest {
 pub struct InspectTaskRequest {
     pub source: TaskSource,
     pub output_dir: Option<String>,
+    pub force_network_probe: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

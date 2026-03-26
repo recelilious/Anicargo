@@ -351,6 +351,7 @@ impl DownloaderService {
             .inspect_source(InspectTaskRequest {
                 source: request.source.clone(),
                 output_dir: request.output_dir.clone(),
+                force_network_probe: None,
             })
             .await?;
 
@@ -392,8 +393,10 @@ impl DownloaderService {
             .map(PathBuf::from)
             .unwrap_or_else(|| config.default_output_dir.clone());
 
-        if let Some(metadata) = fast_metadata_from_source(&request.source, &output_dir) {
-            return Ok(metadata);
+        if !request.force_network_probe.unwrap_or(false) {
+            if let Some(metadata) = fast_metadata_from_source(&request.source, &output_dir) {
+                return Ok(metadata);
+            }
         }
 
         let session = build_session(&inspect_root, &output_dir, None, None).await?;

@@ -9,6 +9,7 @@ use anicargo_downloader::{
     DownloaderService,
     model::{
         CreateTaskRequest as EmbeddedCreateTaskRequest, TaskKind as EmbeddedTaskKind,
+        InspectTaskRequest as EmbeddedInspectTaskRequest,
         TaskSource as EmbeddedTaskSource, TaskSourceKind as EmbeddedTaskSourceKind,
         TaskState as EmbeddedTaskState, UpdateSettingsRequest as EmbeddedUpdateSettingsRequest,
     },
@@ -104,6 +105,12 @@ pub struct EngineSyncAccepted {
     pub peer_count: i64,
 }
 
+#[derive(Debug, Clone)]
+pub struct EngineProbeAccepted {
+    pub peer_count: Option<i64>,
+    pub notes: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct DownloadRuntimeSettings {
     pub max_concurrent_downloads: usize,
@@ -131,6 +138,12 @@ pub trait DownloadEngine: Send + Sync {
     async fn apply_runtime_settings(&self, settings: DownloadRuntimeSettings)
     -> anyhow::Result<()>;
     async fn queue(&self, request: EngineQueueRequest) -> anyhow::Result<EngineQueueAccepted>;
+    async fn probe(&self, _request: &EngineActivateRequest) -> anyhow::Result<EngineProbeAccepted> {
+        Ok(EngineProbeAccepted {
+            peer_count: None,
+            notes: None,
+        })
+    }
     async fn activate(
         &self,
         request: EngineActivateRequest,
@@ -315,6 +328,38 @@ impl DownloadEngine for EmbeddedDownloaderEngine {
             lifecycle: "queued".to_owned(),
             engine_job_ref: None,
             notes: Some("Queued for embedded downloader task creation".to_owned()),
+        })
+    }
+
+    async fn probe(&self, request: &EngineActivateRequest) -> anyhow::Result<EngineProbeAccepted> {
+        let metadata = self
+            .service
+            .inspect_source(EmbeddedInspectTaskRequest {
+                source: EmbeddedTaskSource {
+                    kind: EmbeddedTaskSourceKind::Url,
+                    value: request.magnet.clone(),
+                },
+                output_dir: Some(request.target_path.clone()),
+                force_network_probe: Some(true),
+            })
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to inspect embedded downloader source for subject {} candidate {}",
+                    request.bangumi_subject_id, request.resource_candidate_id
+                )
+            })?;
+
+        Ok(EngineProbeAccepted {
+            peer_count: Some(metadata.seen_peers.len() as i64),
+            notes: if metadata.seen_peers.is_empty() {
+                Some("Source inspection found no reachable peers".to_owned())
+            } else {
+                Some(format!(
+                    "Source inspection found {} reachable peers",
+                    metadata.seen_peers.len()
+                ))
+            },
         })
     }
 
@@ -840,6 +885,31 @@ impl DownloadCoordinator {
             .await
     }
 
+    pub async fn probe_candidate_with_priority(
+        &self,
+        pool: &SqlitePool,
+        media_root: &Path,
+        job_id: i64,
+        resource_candidate_id: i64,
+        priority: u32,
+    ) -> Result<EngineProbeAccepted, AppError> {
+        let job = db::download_job_by_id(pool, job_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("download job not found"))?;
+        let candidate = db::resource_candidate_by_id(pool, resource_candidate_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("resource candidate not found"))?;
+
+        if candidate.download_job_id != job.id {
+            return Err(AppError::bad_request(
+                "resource candidate does not belong to download job",
+            ));
+        }
+
+        self.probe_candidate_for_job(pool, media_root, &job, &candidate, priority)
+            .await
+    }
+
     pub async fn materialize_candidate_with_priority(
         &self,
         pool: &SqlitePool,
@@ -863,6 +933,37 @@ impl DownloadCoordinator {
 
         self.materialize_candidate_for_job(pool, media_root, &job, &candidate, priority)
             .await
+    }
+
+    async fn probe_candidate_for_job(
+        &self,
+        _pool: &SqlitePool,
+        media_root: &Path,
+        job: &DownloadJobDto,
+        candidate: &ResourceCandidateDto,
+        priority: u32,
+    ) -> Result<EngineProbeAccepted, AppError> {
+        let target_path = build_execution_target_path(media_root, job, candidate.id);
+        ensure_execution_target_path(&target_path)?;
+        let request = build_engine_activate_request(
+            job,
+            candidate,
+            priority,
+            target_path,
+            "primary".to_owned(),
+        );
+
+        self.engine.probe(&request).await.map_err(|error| {
+            warn!(
+                job_id = job.id,
+                candidate_id = candidate.id,
+                slot_key = %candidate.slot_key,
+                engine = self.engine.name(),
+                error = %error,
+                "Download engine failed to probe selected candidate"
+            );
+            AppError::internal("failed to probe selected resource")
+        })
     }
 
     async fn materialize_candidate_for_job(
@@ -929,22 +1030,16 @@ impl DownloadCoordinator {
             );
         }
 
+        let activate_request = build_engine_activate_request(
+            job,
+            candidate,
+            priority,
+            target_path.clone(),
+            execution_role.clone(),
+        );
         let accepted = self
             .engine
-            .activate(EngineActivateRequest {
-                download_job_id: job.id,
-                bangumi_subject_id: job.bangumi_subject_id,
-                resource_candidate_id: candidate.id,
-                priority,
-                provider: candidate.provider.clone(),
-                provider_resource_id: candidate.provider_resource_id.clone(),
-                title: candidate.title.clone(),
-                magnet: candidate.magnet.clone(),
-                size_bytes: candidate.size_bytes,
-                fansub_name: candidate.fansub_name.clone(),
-                target_path: target_path.clone(),
-                execution_role: execution_role.clone(),
-            })
+            .activate(activate_request)
             .await
             .with_context(|| {
                 format!(
@@ -1225,6 +1320,29 @@ impl DownloadCoordinator {
         self.activate_queued_candidates(pool, media_root).await?;
 
         Ok(())
+    }
+}
+
+fn build_engine_activate_request(
+    job: &DownloadJobDto,
+    candidate: &ResourceCandidateDto,
+    priority: u32,
+    target_path: String,
+    execution_role: String,
+) -> EngineActivateRequest {
+    EngineActivateRequest {
+        download_job_id: job.id,
+        bangumi_subject_id: job.bangumi_subject_id,
+        resource_candidate_id: candidate.id,
+        priority,
+        provider: candidate.provider.clone(),
+        provider_resource_id: candidate.provider_resource_id.clone(),
+        title: candidate.title.clone(),
+        magnet: candidate.magnet.clone(),
+        size_bytes: candidate.size_bytes,
+        fansub_name: candidate.fansub_name.clone(),
+        target_path,
+        execution_role,
     }
 }
 
