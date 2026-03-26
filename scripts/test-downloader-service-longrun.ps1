@@ -221,11 +221,14 @@ while ($true) {
     $downloads = Invoke-AnicargoApi -Method GET -Path "/api/v1/downloads"
     $runtime = Invoke-AnicargoApi -Method GET -Path "/api/v1/runtime"
     $items = @($downloads.data.items)
-    $tracked = $items | Where-Object { $createdTasks.Values.TaskId -contains $_.id }
-    $active = $tracked | Where-Object { $_.state -in @("starting", "downloading") }
-    $queueOrdered = $tracked |
-        Where-Object { $null -ne $_.queue_position } |
-        Sort-Object queue_position
+    $tracked = @($items | Where-Object { $createdTasks.Values.TaskId -contains $_.id })
+    $active = @($tracked | Where-Object { $_.state -in @("starting", "downloading") })
+    $queueOrdered = @($tracked |
+        Where-Object {
+            $_.state -in @("queued", "starting", "downloading") -and
+            $null -ne $_.queue_position
+        } |
+        Sort-Object queue_position)
 
     if ($active.Count -gt $MaxConcurrentDownloads) {
         Add-HardFailure "Active download count $($active.Count) exceeded max concurrent download count $MaxConcurrentDownloads"
@@ -286,7 +289,8 @@ while ($true) {
         Add-HardFailure "Tracked task count changed unexpectedly: expected $($createdTasks.Count), got $trackedCount"
     }
 
-    Write-Marker "INFO" ("Check #{0}: tracked={1}, active={2}, queued={3}, total_rate={4} B/s" -f $checkCount, $tracked.Count, $active.Count, ($tracked | Where-Object { $_.state -eq 'queued' }).Count, $totalRate)
+    $queuedCount = @($tracked | Where-Object { $_.state -eq 'queued' }).Count
+    Write-Marker "INFO" ("Check #{0}: tracked={1}, active={2}, queued={3}, total_rate={4} B/s" -f $checkCount, $tracked.Count, $active.Count, $queuedCount, $totalRate)
 
     $elapsedMinutes = ((Get-Date) - $startTime).TotalMinutes
     $allTerminal = ($tracked.Count -gt 0) -and (@($tracked | Where-Object { $_.state -notin @('completed', 'failed', 'paused', 'deleted', 'seeding') }).Count -eq 0)
