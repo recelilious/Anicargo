@@ -1760,7 +1760,7 @@ pub async fn find_active_execution_for_job_slot(
          FROM download_executions
          WHERE download_job_id = ?1
            AND slot_key = ?2
-           AND state IN ('staged', 'starting', 'downloading', 'seeding')
+           AND state IN ('queued', 'staged', 'starting', 'downloading', 'seeding')
          ORDER BY created_at DESC
          LIMIT 1",
     )
@@ -2036,7 +2036,7 @@ pub async fn list_active_download_executions(
         "SELECT *
          FROM download_executions
          WHERE engine_name = ?1
-           AND state IN ('staged', 'starting', 'downloading', 'seeding', 'completed')
+           AND state IN ('queued', 'staged', 'starting', 'downloading', 'seeding', 'completed')
          ORDER BY updated_at DESC, created_at DESC
          LIMIT ?2",
     )
@@ -2047,22 +2047,6 @@ pub async fn list_active_download_executions(
     .map_err(|_| AppError::internal("failed to list active download executions"))?;
 
     Ok(rows.into_iter().map(map_download_execution).collect())
-}
-
-pub async fn count_running_download_executions(
-    pool: &SqlitePool,
-    engine_name: &str,
-) -> Result<i64, AppError> {
-    sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*)
-         FROM download_executions
-         WHERE engine_name = ?1
-           AND state IN ('starting', 'downloading')",
-    )
-    .bind(engine_name)
-    .fetch_one(pool)
-    .await
-    .map_err(|_| AppError::internal("failed to count running download executions"))
 }
 
 pub async fn list_jobs_ready_for_activation(

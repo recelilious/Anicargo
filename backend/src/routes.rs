@@ -1107,7 +1107,7 @@ async fn resolve_subject_search_profile(
     }
 }
 
-async fn resolve_airing_episode_targets(
+async fn resolve_download_episode_targets(
     state: &AppState,
     job: &crate::types::DownloadJobDto,
     policy: &crate::types::PolicyDto,
@@ -1119,18 +1119,22 @@ async fn resolve_airing_episode_targets(
         db::current_selected_candidate_for_job(&state.pool, job.id)
     )?;
 
-    let mut aired_episodes = episodes
+    let mut tracked_episodes = episodes
         .into_iter()
         .filter_map(|episode| {
             let episode_number = episode.preferred_episode_number()?;
-            episode_has_aired(&episode).then_some(episode_number)
+            match job.release_status.as_str() {
+                "upcoming" => None,
+                "airing" => episode_has_aired(&episode).then_some(episode_number),
+                _ => Some(episode_number),
+            }
         })
         .collect::<Vec<_>>();
-    aired_episodes.sort_by(|left, right| left.total_cmp(right));
-    aired_episodes.dedup_by(|left, right| (*left - *right).abs() < 0.001);
+    tracked_episodes.sort_by(|left, right| left.total_cmp(right));
+    tracked_episodes.dedup_by(|left, right| (*left - *right).abs() < 0.001);
 
-    let latest = aired_episodes.last().copied();
-    let backlog = aired_episodes
+    let latest = tracked_episodes.last().copied();
+    let backlog = tracked_episodes
         .iter()
         .copied()
         .filter(|episode_number| Some(*episode_number) != latest)
@@ -1143,13 +1147,14 @@ async fn resolve_airing_episode_targets(
             return true;
         }
 
-        current_selected.as_ref().is_some_and(|candidate| {
-            candidate_covers_episode(candidate, latest_episode)
-                && within_replacement_window(
-                    job.selection_updated_at.as_deref(),
-                    policy.replacement_window_hours,
-                )
-        })
+        job.release_status == "airing"
+            && current_selected.as_ref().is_some_and(|candidate| {
+                candidate_covers_episode(candidate, latest_episode)
+                    && within_replacement_window(
+                        job.selection_updated_at.as_deref(),
+                        policy.replacement_window_hours,
+                    )
+            })
     });
 
     let targets = AiringEpisodeTargets {
@@ -1160,9 +1165,10 @@ async fn resolve_airing_episode_targets(
     tracing::info!(
         job_id = job.id,
         subject_id = job.bangumi_subject_id,
+        release_status = %job.release_status,
         backlog = ?targets.backlog,
         latest = ?targets.latest,
-        "Resolved airing episode targets from Bangumi episode slots"
+        "Resolved Bangumi episode targets for sequential download planning"
     );
 
     Ok(targets)
@@ -1212,8 +1218,47 @@ async fn run_download_pipeline(
         reason,
         "Starting download pipeline"
     );
-    let airing_targets = if job.release_status == "airing" {
-        match resolve_airing_episode_targets(&state, &job, &policy).await {
+    if job.release_status == "upcoming" {
+        if let Err(error) = db::update_download_job_lifecycle(
+            &state.pool,
+            job.id,
+            "queued",
+            Some("Waiting for the first broadcast before starting resource discovery"),
+        )
+        .await
+        {
+            tracing::warn!(
+                job_id = job.id,
+                subject_id = job.bangumi_subject_id,
+                error = %error,
+                "Failed to persist waiting state for upcoming subject"
+            );
+        }
+        if let Err(error) = db::update_download_job_search_status(
+            &state.pool,
+            job.id,
+            "idle",
+            Some("Waiting for the first broadcast before starting resource discovery"),
+        )
+        .await
+        {
+            tracing::warn!(
+                job_id = job.id,
+                subject_id = job.bangumi_subject_id,
+                error = %error,
+                "Failed to persist idle search state for upcoming subject"
+            );
+        }
+        tracing::info!(
+            job_id = job.id,
+            subject_id = job.bangumi_subject_id,
+            reason,
+            "Skipping download pipeline because the subject is still upcoming"
+        );
+        return;
+    }
+
+    let episode_targets = match resolve_download_episode_targets(&state, &job, &policy).await {
             Ok(targets) => Some(targets),
             Err(error) => {
                 tracing::warn!(
@@ -1221,15 +1266,12 @@ async fn run_download_pipeline(
                     subject_id = job.bangumi_subject_id,
                     error = %error,
                     reason,
-                    "Failed to resolve airing episode targets; falling back to broad discovery"
+                    "Failed to resolve Bangumi episode targets; falling back to broad discovery"
                 );
                 None
             }
-        }
-    } else {
-        None
     };
-    let search_targets = airing_targets
+    let search_targets = episode_targets
         .as_ref()
         .map(AiringEpisodeTargets::search_targets);
 
@@ -1258,19 +1300,18 @@ async fn run_download_pipeline(
                     &job,
                     &policy,
                     &candidates,
-                    airing_targets.as_ref(),
+                    episode_targets.as_ref(),
                 )
                 .await
             } else {
-                state
-                    .downloads
-                    .materialize_selected_candidate(
-                        &state.pool,
-                        &state.config.storage.media_root,
-                        job.id,
-                    )
-                    .await
-                    .map(|_| ())
+                apply_airing_download_plan(
+                    &state,
+                    &job,
+                    &policy,
+                    &candidates,
+                    episode_targets.as_ref(),
+                )
+                .await
             };
 
             if let Err(error) = activation_result {
@@ -1391,16 +1432,20 @@ async fn apply_airing_download_plan(
         "Built airing download plan"
     );
 
+    let mut next_priority = 0u32;
+
     for candidate_id in plan.backlog_candidate_ids {
         state
             .downloads
-            .materialize_candidate(
+            .materialize_candidate_with_priority(
                 &state.pool,
                 &state.config.storage.media_root,
                 job.id,
                 candidate_id,
+                next_priority,
             )
             .await?;
+        next_priority = next_priority.saturating_add(1);
     }
 
     if let Some(latest_candidate_id) = plan.latest_candidate_id {
@@ -1412,7 +1457,12 @@ async fn apply_airing_download_plan(
 
         state
             .downloads
-            .materialize_selected_candidate(&state.pool, &state.config.storage.media_root, job.id)
+            .materialize_selected_candidate_with_priority(
+                &state.pool,
+                &state.config.storage.media_root,
+                job.id,
+                next_priority,
+            )
             .await?;
     } else if db::current_selected_candidate_for_job(&state.pool, job.id)
         .await?
@@ -1420,7 +1470,12 @@ async fn apply_airing_download_plan(
     {
         state
             .downloads
-            .materialize_selected_candidate(&state.pool, &state.config.storage.media_root, job.id)
+            .materialize_selected_candidate_with_priority(
+                &state.pool,
+                &state.config.storage.media_root,
+                job.id,
+                next_priority,
+            )
             .await?;
     }
 
@@ -1552,13 +1607,21 @@ async fn build_airing_download_plan(
     let latest_candidate = latest_episode_key
         .and_then(|latest_episode_key| candidates_by_episode.get(&latest_episode_key))
         .and_then(|latest_candidates| {
-            choose_latest_airing_candidate(
-                job,
-                policy,
-                current_selected.as_ref(),
-                latest_candidates.as_slice(),
-                preferred_fansub.as_deref(),
-            )
+            if job.release_status == "airing" {
+                choose_latest_airing_candidate(
+                    job,
+                    policy,
+                    current_selected.as_ref(),
+                    latest_candidates.as_slice(),
+                    preferred_fansub.as_deref(),
+                )
+            } else {
+                pick_slot_candidate(
+                    latest_candidates.as_slice(),
+                    &job.release_status,
+                    preferred_fansub.as_deref(),
+                )
+            }
         });
 
     if let Some(candidate) = latest_candidate {

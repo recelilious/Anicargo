@@ -15,6 +15,7 @@ use axum::{
     routing::{get, patch, post},
 };
 use chrono::{DateTime, Utc};
+use data_encoding::BASE32_NOPAD;
 use librqbit::{
     AddTorrent, AddTorrentOptions, Api as RqbitApi, Session, SessionOptions,
     SessionPersistenceConfig, TorrentStats, TorrentStatsState,
@@ -29,6 +30,7 @@ use tokio::{
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{info, warn};
+use urlencoding::decode;
 use uuid::Uuid;
 
 use crate::{
@@ -389,6 +391,10 @@ impl DownloaderService {
             .output_dir
             .map(PathBuf::from)
             .unwrap_or_else(|| config.default_output_dir.clone());
+
+        if let Some(metadata) = fast_metadata_from_source(&request.source, &output_dir) {
+            return Ok(metadata);
+        }
 
         let session = build_session(&inspect_root, &output_dir, None, None).await?;
         let api = RqbitApi::new(session.clone(), None);
@@ -1474,6 +1480,83 @@ fn metadata_from_add_response(response: ApiAddTorrentResponse) -> TorrentMetadat
     }
 }
 
+fn fast_metadata_from_source(source: &TaskSource, output_dir: &Path) -> Option<TorrentMetadataSummary> {
+    match source.kind {
+        TaskSourceKind::Url => fast_metadata_from_magnet(&source.value, output_dir),
+        TaskSourceKind::TorrentFile => None,
+    }
+}
+
+fn fast_metadata_from_magnet(
+    magnet: &str,
+    output_dir: &Path,
+) -> Option<TorrentMetadataSummary> {
+    let query = magnet.strip_prefix("magnet:?")?;
+    let mut info_hash = None;
+    let mut display_name = None;
+
+    for segment in query.split('&') {
+        let (key, raw_value) = segment.split_once('=')?;
+        let decoded = decode(raw_value).ok()?.into_owned();
+
+        match key {
+            "xt" => {
+                if let Some(btih) = decoded.strip_prefix("urn:btih:") {
+                    info_hash = normalize_btih(btih);
+                }
+            }
+            "dn" => {
+                let trimmed = decoded.trim();
+                if !trimmed.is_empty() {
+                    display_name = Some(trimmed.to_owned());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Some(TorrentMetadataSummary {
+        info_hash: info_hash?,
+        name: display_name,
+        output_folder: output_dir.display().to_string(),
+        total_bytes: 0,
+        file_count: 0,
+        files: Vec::<TorrentFileEntry>::new(),
+        seen_peers: Vec::new(),
+    })
+}
+
+fn normalize_btih(value: &str) -> Option<String> {
+    let normalized = value.trim();
+    if normalized.len() == 40 && normalized.chars().all(|character| character.is_ascii_hexdigit())
+    {
+        return Some(normalized.to_ascii_lowercase());
+    }
+
+    let base32_candidate = normalized.to_ascii_uppercase();
+    if base32_candidate.len() == 32
+        && base32_candidate
+            .chars()
+            .all(|character| matches!(character, 'A'..='Z' | '2'..='7'))
+    {
+        let decoded = BASE32_NOPAD.decode(base32_candidate.as_bytes()).ok()?;
+        if decoded.len() == 20 {
+            return Some(bytes_to_lower_hex(&decoded));
+        }
+    }
+
+    None
+}
+
+fn bytes_to_lower_hex(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut output, "{byte:02x}");
+    }
+    output
+}
+
 fn limit_to_non_zero(value: Option<u64>) -> Option<NonZeroU32> {
     let value = value?;
     let bounded = value.min(u32::MAX as u64) as u32;
@@ -1708,5 +1791,50 @@ mod tests {
         task.total_timeout_secs = 600;
 
         assert_eq!(timeout_reason(&task, now), None);
+    }
+
+    #[test]
+    fn fast_metadata_extracts_hex_info_hash_from_magnet() {
+        let metadata = fast_metadata_from_magnet(
+            "magnet:?xt=urn:btih:0123456789ABCDEF0123456789ABCDEF01234567&dn=Oshi%20no%20Ko%20S3%2001",
+            Path::new("E:/tmp/output"),
+        )
+        .expect("magnet metadata should parse");
+
+        assert_eq!(
+            metadata.info_hash,
+            "0123456789abcdef0123456789abcdef01234567"
+        );
+        assert_eq!(metadata.name.as_deref(), Some("Oshi no Ko S3 01"));
+        assert_eq!(metadata.output_folder, "E:/tmp/output");
+        assert_eq!(metadata.total_bytes, 0);
+        assert_eq!(metadata.file_count, 0);
+    }
+
+    #[test]
+    fn fast_metadata_rejects_non_hex_btih_values() {
+        let metadata = fast_metadata_from_magnet(
+            "magnet:?xt=urn:btih:ABCDEFGHIJKLMNOPQRSTUVWXYZ123456&dn=test",
+            Path::new("E:/tmp/output"),
+        );
+
+        assert!(metadata.is_none());
+    }
+
+    #[test]
+    fn fast_metadata_accepts_base32_btih_values() {
+        let metadata = fast_metadata_from_magnet(
+            "magnet:?xt=urn:btih:TIH6UT26GKERK5TYMHBNZFM6NCOB5SCB&dn=test",
+            Path::new("E:/tmp/output"),
+        )
+        .expect("base32 magnet metadata should parse");
+
+        assert_eq!(metadata.info_hash.len(), 40);
+        assert!(
+            metadata
+                .info_hash
+                .chars()
+                .all(|character| character.is_ascii_hexdigit())
+        );
     }
 }

@@ -5,6 +5,14 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use anicargo_downloader::{
+    DownloaderService,
+    model::{
+        CreateTaskRequest as EmbeddedCreateTaskRequest, TaskKind as EmbeddedTaskKind,
+        TaskSource as EmbeddedTaskSource, TaskSourceKind as EmbeddedTaskSourceKind,
+        TaskState as EmbeddedTaskState, UpdateSettingsRequest as EmbeddedUpdateSettingsRequest,
+    },
+};
 use anyhow::{Context, anyhow};
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
@@ -15,6 +23,7 @@ use librqbit::{
 };
 use sqlx::SqlitePool;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 use crate::{
     db,
@@ -59,6 +68,7 @@ pub struct EngineActivateRequest {
     pub download_job_id: i64,
     pub bangumi_subject_id: i64,
     pub resource_candidate_id: i64,
+    pub priority: u32,
     pub provider: String,
     pub provider_resource_id: String,
     pub title: String,
@@ -234,6 +244,187 @@ impl DownloadEngine for PlanningDownloadEngine {
             state = %execution.state,
             "Planning engine received deactivate request"
         );
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct EmbeddedDownloaderEngine {
+    service: Arc<DownloaderService>,
+}
+
+impl EmbeddedDownloaderEngine {
+    pub fn new(service: Arc<DownloaderService>) -> Self {
+        Self { service }
+    }
+
+    fn parse_execution_ref(execution_ref: &str) -> anyhow::Result<Uuid> {
+        Uuid::parse_str(execution_ref)
+            .with_context(|| format!("invalid downloader task ref '{execution_ref}'"))
+    }
+}
+
+#[async_trait]
+impl DownloadEngine for EmbeddedDownloaderEngine {
+    fn name(&self) -> &'static str {
+        "downloader"
+    }
+
+    async fn apply_runtime_settings(
+        &self,
+        settings: DownloadRuntimeSettings,
+    ) -> anyhow::Result<()> {
+        self.service
+            .update_settings(EmbeddedUpdateSettingsRequest {
+                default_output_dir: None,
+                max_concurrent_downloads: Some(settings.max_concurrent_downloads),
+                max_concurrent_seeds: None,
+                global_download_limit_mb: Some(settings.download_limit_mb),
+                global_upload_limit_mb: Some(settings.upload_limit_mb),
+                priority_decay: None,
+                stall_timeout_secs: None,
+                total_timeout_secs: None,
+                scheduler_interval_secs: None,
+            })
+            .await
+            .context("failed to apply embedded downloader settings")?;
+
+        info!(
+            max_concurrent_downloads = settings.max_concurrent_downloads,
+            upload_limit_mb = settings.upload_limit_mb,
+            download_limit_mb = settings.download_limit_mb,
+            "Applied runtime download settings to embedded downloader engine"
+        );
+
+        Ok(())
+    }
+
+    async fn queue(&self, request: EngineQueueRequest) -> anyhow::Result<EngineQueueAccepted> {
+        info!(
+            subject_id = request.bangumi_subject_id,
+            release_status = %request.release_status,
+            season_mode = %request.season_mode,
+            trigger_kind = %request.trigger_kind,
+            requested_by = %request.requested_by,
+            subscription_count = request.subscription_count,
+            threshold = request.threshold_snapshot,
+            "Download request accepted by embedded downloader engine"
+        );
+
+        Ok(EngineQueueAccepted {
+            lifecycle: "queued".to_owned(),
+            engine_job_ref: None,
+            notes: Some("Queued for embedded downloader task creation".to_owned()),
+        })
+    }
+
+    async fn activate(
+        &self,
+        request: EngineActivateRequest,
+    ) -> anyhow::Result<EngineActivateAccepted> {
+        let created = self
+            .service
+            .create_task(EmbeddedCreateTaskRequest {
+                kind: EmbeddedTaskKind::Download,
+                source: EmbeddedTaskSource {
+                    kind: EmbeddedTaskSourceKind::Url,
+                    value: request.magnet.clone(),
+                },
+                output_dir: Some(request.target_path.clone()),
+                priority: Some(request.priority),
+                start_enabled: Some(true),
+                seed_after_download: Some(true),
+                manual_download_limit_mb: None,
+                manual_upload_limit_mb: None,
+                stall_timeout_secs: None,
+                total_timeout_secs: None,
+            })
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to create embedded downloader task for subject {} candidate {}",
+                    request.bangumi_subject_id, request.resource_candidate_id
+                )
+            })?;
+
+        let task = created.task;
+        let state = map_embedded_task_state(&task.state);
+        let notes = Some(if created.created {
+            "Created embedded downloader task".to_owned()
+        } else {
+            "Reused existing embedded downloader task".to_owned()
+        });
+
+        info!(
+            job_id = request.download_job_id,
+            subject_id = request.bangumi_subject_id,
+            candidate_id = request.resource_candidate_id,
+            priority = request.priority,
+            state = %state,
+            task_id = %task.id,
+            created = created.created,
+            "Selected resource activated on embedded downloader engine"
+        );
+
+        Ok(EngineActivateAccepted {
+            state,
+            engine_execution_ref: Some(task.id.to_string()),
+            notes,
+            downloaded_bytes: saturating_u64_to_i64(task.downloaded_bytes),
+            total_bytes: saturating_u64_to_i64(task.total_bytes),
+            uploaded_bytes: saturating_u64_to_i64(task.uploaded_bytes),
+            download_rate_bytes: saturating_u64_to_i64(task.download_rate_bytes),
+            upload_rate_bytes: saturating_u64_to_i64(task.upload_rate_bytes),
+            peer_count: i64::from(task.peer_count),
+        })
+    }
+
+    async fn sync_execution(
+        &self,
+        execution: &DownloadExecutionDto,
+    ) -> anyhow::Result<EngineSyncAccepted> {
+        let execution_ref = execution
+            .engine_execution_ref
+            .as_deref()
+            .ok_or_else(|| anyhow!("execution {} is missing downloader task ref", execution.id))?;
+        let task_id = Self::parse_execution_ref(execution_ref)?;
+        let task = self.service.get_task(task_id).await.with_context(|| {
+            format!(
+                "failed to read embedded downloader task {} for execution {}",
+                execution_ref, execution.id
+            )
+        })?;
+
+        Ok(EngineSyncAccepted {
+            state: map_embedded_task_state(&task.state),
+            notes: task.last_error.clone(),
+            downloaded_bytes: saturating_u64_to_i64(task.downloaded_bytes),
+            total_bytes: saturating_u64_to_i64(task.total_bytes),
+            uploaded_bytes: saturating_u64_to_i64(task.uploaded_bytes),
+            download_rate_bytes: saturating_u64_to_i64(task.download_rate_bytes),
+            upload_rate_bytes: saturating_u64_to_i64(task.upload_rate_bytes),
+            peer_count: i64::from(task.peer_count),
+        })
+    }
+
+    async fn deactivate(
+        &self,
+        execution: &DownloadExecutionDto,
+        delete_files: bool,
+    ) -> anyhow::Result<()> {
+        let Some(execution_ref) = execution.engine_execution_ref.as_deref() else {
+            return Ok(());
+        };
+        let task_id = Self::parse_execution_ref(execution_ref)?;
+        self.service
+            .delete_task(task_id, delete_files)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to delete embedded downloader task {} for execution {}",
+                    execution_ref, execution.id
+                )
+            })?;
         Ok(())
     }
 }
@@ -456,13 +647,6 @@ impl DownloadCoordinator {
         self.engine.name()
     }
 
-    pub fn runtime_settings(&self) -> DownloadRuntimeSettings {
-        *self
-            .runtime_settings
-            .read()
-            .expect("download runtime settings lock poisoned")
-    }
-
     pub async fn apply_runtime_settings(
         &self,
         settings: DownloadRuntimeSettings,
@@ -634,6 +818,17 @@ impl DownloadCoordinator {
         media_root: &Path,
         job_id: i64,
     ) -> Result<DownloadExecutionDecisionDto, AppError> {
+        self.materialize_selected_candidate_with_priority(pool, media_root, job_id, 0)
+            .await
+    }
+
+    pub async fn materialize_selected_candidate_with_priority(
+        &self,
+        pool: &SqlitePool,
+        media_root: &Path,
+        job_id: i64,
+        priority: u32,
+    ) -> Result<DownloadExecutionDecisionDto, AppError> {
         let job = db::download_job_by_id(pool, job_id)
             .await?
             .ok_or_else(|| AppError::not_found("download job not found"))?;
@@ -641,16 +836,17 @@ impl DownloadCoordinator {
             .await?
             .ok_or_else(|| AppError::bad_request("download job has no selected candidate"))?;
 
-        self.materialize_candidate_for_job(pool, media_root, &job, &candidate)
+        self.materialize_candidate_for_job(pool, media_root, &job, &candidate, priority)
             .await
     }
 
-    pub async fn materialize_candidate(
+    pub async fn materialize_candidate_with_priority(
         &self,
         pool: &SqlitePool,
         media_root: &Path,
         job_id: i64,
         resource_candidate_id: i64,
+        priority: u32,
     ) -> Result<DownloadExecutionDecisionDto, AppError> {
         let job = db::download_job_by_id(pool, job_id)
             .await?
@@ -665,7 +861,7 @@ impl DownloadCoordinator {
             ));
         }
 
-        self.materialize_candidate_for_job(pool, media_root, &job, &candidate)
+        self.materialize_candidate_for_job(pool, media_root, &job, &candidate, priority)
             .await
     }
 
@@ -675,11 +871,13 @@ impl DownloadCoordinator {
         media_root: &Path,
         job: &DownloadJobDto,
         candidate: &ResourceCandidateDto,
+        priority: u32,
     ) -> Result<DownloadExecutionDecisionDto, AppError> {
         info!(
             job_id = job.id,
             subject_id = job.bangumi_subject_id,
             candidate_id = candidate.id,
+            priority,
             slot_key = %candidate.slot_key,
             episode_index = ?candidate.episode_index,
             episode_end_index = ?candidate.episode_end_index,
@@ -710,31 +908,6 @@ impl DownloadCoordinator {
 
         let replaced_execution =
             db::find_active_execution_for_job_slot(pool, job.id, &candidate.slot_key).await?;
-        if !self.has_download_capacity(pool).await? {
-            let settings = self.runtime_settings();
-            let reason = format!(
-                "Waiting for a download slot ({}/{})",
-                db::count_running_download_executions(pool, self.engine.name()).await?,
-                settings.max_concurrent_downloads
-            );
-
-            info!(
-                job_id = job.id,
-                subject_id = job.bangumi_subject_id,
-                candidate_id = candidate.id,
-                slot_key = %candidate.slot_key,
-                max_concurrent_downloads = settings.max_concurrent_downloads,
-                "Deferring candidate activation because the concurrent download limit was reached"
-            );
-
-            db::update_download_job_lifecycle(pool, job.id, "queued", Some(&reason)).await?;
-
-            return Ok(DownloadExecutionDecisionDto {
-                reason: "deferred_by_concurrency_limit".to_owned(),
-                execution: None,
-                replaced_execution_id: replaced_execution.map(|execution| execution.id),
-            });
-        }
 
         let execution_role = if replaced_execution.is_some() {
             "replacement"
@@ -762,6 +935,7 @@ impl DownloadCoordinator {
                 download_job_id: job.id,
                 bangumi_subject_id: job.bangumi_subject_id,
                 resource_candidate_id: candidate.id,
+                priority,
                 provider: candidate.provider.clone(),
                 provider_resource_id: candidate.provider_resource_id.clone(),
                 title: candidate.title.clone(),
@@ -907,49 +1081,18 @@ impl DownloadCoordinator {
         })
     }
 
-    async fn has_download_capacity(&self, pool: &SqlitePool) -> Result<bool, AppError> {
-        let running = db::count_running_download_executions(pool, self.engine.name()).await?;
-        Ok(running < self.runtime_settings().max_concurrent_downloads as i64)
-    }
-
     async fn activate_queued_candidates(
         &self,
         pool: &SqlitePool,
         media_root: &Path,
     ) -> Result<(), AppError> {
-        let settings = self.runtime_settings();
-        let running = db::count_running_download_executions(pool, self.engine.name()).await?;
-        let available_slots = settings
-            .max_concurrent_downloads
-            .saturating_sub(running.max(0) as usize);
-
-        if available_slots == 0 {
-            return Ok(());
-        }
-
-        let jobs =
-            db::list_jobs_ready_for_activation(pool, available_slots.saturating_mul(4).max(8))
-                .await?;
-        let mut activated = 0usize;
+        let jobs = db::list_jobs_ready_for_activation(pool, 32).await?;
 
         for job in jobs {
-            if activated >= available_slots {
-                break;
-            }
-
             let decision = self
                 .materialize_selected_candidate(pool, media_root, job.id)
                 .await?;
-
-            match decision.reason.as_str() {
-                "activated_primary_execution" | "activated_replacement_execution" => {
-                    activated += 1;
-                }
-                "deferred_by_concurrency_limit" => {
-                    break;
-                }
-                _ => {}
-            }
+            let _ = decision;
         }
 
         Ok(())
@@ -1177,7 +1320,7 @@ fn ensure_execution_target_path(target_path: &str) -> Result<(), AppError> {
 }
 
 fn is_active_execution_state(state: &str) -> bool {
-    matches!(state, "staged" | "starting" | "downloading" | "seeding")
+    matches!(state, "queued" | "staged" | "starting" | "downloading" | "seeding")
 }
 
 fn should_refresh_media_index(execution: &DownloadExecutionDto, state: &str) -> bool {
@@ -1204,6 +1347,20 @@ fn should_refresh_media_index(execution: &DownloadExecutionDto, state: &str) -> 
     };
 
     Utc::now() >= parsed.with_timezone(&Utc) + refresh_after
+}
+
+fn map_embedded_task_state(state: &EmbeddedTaskState) -> String {
+    match state {
+        EmbeddedTaskState::Queued => "queued",
+        EmbeddedTaskState::Starting => "starting",
+        EmbeddedTaskState::Downloading => "downloading",
+        EmbeddedTaskState::Seeding => "seeding",
+        EmbeddedTaskState::Paused => "paused",
+        EmbeddedTaskState::Completed => "completed",
+        EmbeddedTaskState::Failed => "failed",
+        EmbeddedTaskState::Deleted => "deleted",
+    }
+    .to_owned()
 }
 
 fn map_rqbit_state(stats: &TorrentStats) -> String {

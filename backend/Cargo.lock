@@ -33,9 +33,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "anicargo-downloader"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "clap",
+ "data-encoding",
+ "librqbit",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "urlencoding",
+ "uuid",
+]
+
+[[package]]
 name = "anicargo-server"
 version = "0.1.0"
 dependencies = [
+ "anicargo-downloader",
  "anyhow",
  "argon2",
  "async-trait",

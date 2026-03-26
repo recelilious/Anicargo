@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anicargo-downloader = { path = "../services/downloader" }
 anyhow = "1.0"
 argon2 = "0.5"
 async-trait = "0.1"

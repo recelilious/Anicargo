@@ -14,6 +14,10 @@ mod telemetry;
 mod types;
 mod yuc;
 
+use anicargo_downloader::{
+    DownloaderConfig as EmbeddedDownloaderConfig, DownloaderRuntime as EmbeddedDownloaderRuntime,
+    build_router as build_downloader_router, start_embedded as start_embedded_downloader,
+};
 use anyhow::Context;
 use chrono::{FixedOffset, Utc};
 use std::sync::Arc;
@@ -28,7 +32,8 @@ use crate::{
     db::connect_and_migrate,
     discovery::ResourceDiscoveryCoordinator,
     downloads::{
-        DownloadCoordinator, DownloadRuntimeSettings, PlanningDownloadEngine, RqbitDownloadEngine,
+        DownloadCoordinator, DownloadRuntimeSettings, EmbeddedDownloaderEngine,
+        PlanningDownloadEngine, RqbitDownloadEngine,
     },
     routes::AppState,
     telemetry::RuntimeMetrics,
@@ -65,7 +70,9 @@ async fn main() -> anyhow::Result<()> {
         config.torrent.upload_limit_mb,
         config.torrent.download_limit_mb,
     );
-    let download_engine = build_download_engine(&config)
+    let (downloader_runtime, downloader_service) = start_optional_embedded_downloader(&config)
+        .context("failed to initialize embedded downloader runtime")?;
+    let download_engine = build_download_engine(&config, downloader_service.clone())
         .await
         .context("failed to initialize download engine")?;
     let downloads = DownloadCoordinator::new(download_engine, download_runtime_settings);
@@ -96,6 +103,8 @@ async fn main() -> anyhow::Result<()> {
         config.torrent.sync_interval_secs,
     );
     spawn_current_season_refresh_loop(yuc_for_sync, bangumi_for_sync, pool.clone());
+    let _downloader_api_handle =
+        spawn_optional_downloader_api(&config, downloader_service.clone()).await?;
     telemetry::spawn_terminal_dashboard(
         &config.telemetry,
         metrics,
@@ -103,6 +112,7 @@ async fn main() -> anyhow::Result<()> {
         download_engine_name,
         config.telemetry.log_dir.clone(),
     );
+    let _downloader_runtime = downloader_runtime;
     let listener = tokio::net::TcpListener::bind(&address)
         .await
         .with_context(|| format!("failed to bind server on {}", address))?;
@@ -119,8 +129,14 @@ async fn main() -> anyhow::Result<()> {
 
 async fn build_download_engine(
     config: &AppConfig,
+    downloader_service: Option<Arc<anicargo_downloader::DownloaderService>>,
 ) -> anyhow::Result<Arc<dyn crate::downloads::DownloadEngine>> {
     match config.torrent.engine.trim().to_ascii_lowercase().as_str() {
+        "downloader" | "embedded-downloader" | "embedded" => {
+            let service = downloader_service
+                .ok_or_else(|| anyhow::anyhow!("embedded downloader runtime is not available"))?;
+            Ok(Arc::new(EmbeddedDownloaderEngine::new(service)))
+        }
         "rqbit" => Ok(Arc::new(
             RqbitDownloadEngine::new(&config.storage.media_root).await?,
         )),
@@ -133,6 +149,69 @@ async fn build_download_engine(
             Ok(Arc::new(PlanningDownloadEngine))
         }
     }
+}
+
+fn should_start_embedded_downloader(config: &AppConfig) -> bool {
+    matches!(
+        config.torrent.engine.trim().to_ascii_lowercase().as_str(),
+        "downloader" | "embedded-downloader" | "embedded"
+    ) || config.torrent.enable_service_port
+}
+
+fn build_embedded_downloader_config(config: &AppConfig) -> EmbeddedDownloaderConfig {
+    EmbeddedDownloaderConfig {
+        listen: format!("{}:{}", config.server.host, config.torrent.service_port),
+        runtime_root: config.storage.media_root.join("_downloader_runtime"),
+        default_output_dir: config.storage.media_root.join("_downloader_default"),
+        max_concurrent_downloads: config.torrent.max_concurrent_downloads,
+        max_concurrent_seeds: 8,
+        global_download_limit_mb: config.torrent.download_limit_mb,
+        global_upload_limit_mb: config.torrent.upload_limit_mb,
+        priority_decay: 0.8,
+        stall_timeout_secs: 600,
+        total_timeout_secs: 14_400,
+        scheduler_interval_secs: 2,
+    }
+}
+
+fn start_optional_embedded_downloader(
+    config: &AppConfig,
+) -> anyhow::Result<(
+    Option<EmbeddedDownloaderRuntime>,
+    Option<Arc<anicargo_downloader::DownloaderService>>,
+)> {
+    if !should_start_embedded_downloader(config) {
+        return Ok((None, None));
+    }
+
+    let runtime = start_embedded_downloader(build_embedded_downloader_config(config))
+        .context("failed to start embedded downloader scheduler")?;
+    let service = runtime.service();
+    Ok((Some(runtime), Some(service)))
+}
+
+async fn spawn_optional_downloader_api(
+    config: &AppConfig,
+    downloader_service: Option<Arc<anicargo_downloader::DownloaderService>>,
+) -> anyhow::Result<Option<tokio::task::JoinHandle<()>>> {
+    if !config.torrent.enable_service_port {
+        return Ok(None);
+    }
+
+    let service = downloader_service
+        .ok_or_else(|| anyhow::anyhow!("embedded downloader service is unavailable"))?;
+    let address = format!("{}:{}", config.server.host, config.torrent.service_port);
+    let listener = tokio::net::TcpListener::bind(&address)
+        .await
+        .with_context(|| format!("failed to bind embedded downloader api on {}", address))?;
+    let router = build_downloader_router(service);
+
+    tracing::info!("Embedded downloader API listening on http://{}", address);
+    Ok(Some(tokio::spawn(async move {
+        if let Err(error) = axum::serve(listener, router).await {
+            warn!(error = %error, "Embedded downloader API exited unexpectedly");
+        }
+    })))
 }
 
 fn spawn_download_sync_loop(

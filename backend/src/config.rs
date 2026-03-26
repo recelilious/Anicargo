@@ -35,6 +35,8 @@ pub struct TorrentConfig {
     pub max_concurrent_downloads: usize,
     pub upload_limit_mb: u64,
     pub download_limit_mb: u64,
+    pub enable_service_port: bool,
+    pub service_port: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +94,10 @@ pub struct CliArgs {
     pub upload_limit_mb: Option<u64>,
     #[arg(long = "download-limit-mb")]
     pub download_limit_mb: Option<u64>,
+    #[arg(long = "enable-downloader-service-port", default_value_t = false)]
+    pub enable_downloader_service_port: bool,
+    #[arg(long = "downloader-service-port")]
+    pub downloader_service_port: Option<u16>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -125,6 +131,8 @@ struct PartialTorrentConfig {
     max_concurrent_downloads: Option<usize>,
     upload_limit_mb: Option<u64>,
     download_limit_mb: Option<u64>,
+    enable_service_port: Option<bool>,
+    service_port: Option<u16>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -175,11 +183,13 @@ impl Default for AppConfig {
                 media_root: PathBuf::from("runtime/media"),
             },
             torrent: TorrentConfig {
-                engine: "rqbit".to_owned(),
+                engine: "downloader".to_owned(),
                 sync_interval_secs: 2,
                 max_concurrent_downloads: 5,
                 upload_limit_mb: 0,
                 download_limit_mb: 5,
+                enable_service_port: false,
+                service_port: 4010,
             },
             bangumi: BangumiConfig {
                 base_url: "https://api.bgm.tv".to_owned(),
@@ -264,6 +274,14 @@ impl AppConfig {
             config.torrent.download_limit_mb = download_limit_mb;
         }
 
+        if cli.enable_downloader_service_port {
+            config.torrent.enable_service_port = true;
+        }
+
+        if let Some(service_port) = cli.downloader_service_port {
+            config.torrent.service_port = service_port;
+        }
+
         Ok(config)
     }
 
@@ -301,6 +319,12 @@ impl AppConfig {
             }
             if let Some(download_limit_mb) = torrent.download_limit_mb {
                 self.torrent.download_limit_mb = download_limit_mb;
+            }
+            if let Some(enable_service_port) = torrent.enable_service_port {
+                self.torrent.enable_service_port = enable_service_port;
+            }
+            if let Some(service_port) = torrent.service_port {
+                self.torrent.service_port = service_port;
             }
         }
 

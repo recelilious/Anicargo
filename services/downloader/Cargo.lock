@@ -40,6 +40,7 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
+ "data-encoding",
  "librqbit",
  "parking_lot",
  "serde",
@@ -49,6 +50,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "urlencoding",
  "uuid",
 ]
 
