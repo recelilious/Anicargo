@@ -1,6 +1,5 @@
-# WinUI 3 Placeholder
+# Anicargo WinUI 3 Placeholder
 
-This folder is reserved for a future Windows native client.
+This directory is reserved for a future native Windows client.
 
-No implementation is created yet.
-
+No WinUI implementation is stored here yet.

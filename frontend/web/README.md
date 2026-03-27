@@ -1,18 +1,31 @@
-# Web Placeholder
+# Anicargo Web
 
-Planned stack:
+The web client is the primary user-facing surface for Anicargo.
 
-- React
-- TypeScript
-- Fluent 2 design language
+It currently provides:
 
-Planned first screens:
+- current-season browsing
+- preview and special catalog pages
+- Bangumi-backed search
+- subscription management
+- resource library and active download view
+- playback history
+- subject detail and playback
+- a dedicated admin route
 
-- Seasonal calendar
-- Upcoming anime list
-- Catalog / search
-- Subject detail
-- Subscription center
-- Playback page
-- Admin operations
+## Quick Start
 
+```powershell
+cd .\frontend\web
+npm.cmd install
+npm.cmd run dev
+```
+
+Default dev URL:
+
+- `http://127.0.0.1:5173`
+
+## Documentation
+
+- [Deployment guide](./docs/DEPLOY.md)
+- [Architecture guide](./docs/ARCHITECTURE.md)
