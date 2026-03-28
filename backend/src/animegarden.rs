@@ -1,12 +1,17 @@
 use std::{collections::HashSet, time::Duration};
 
+use anicargo_metadata_parser::{ParseResult, parse_release_name};
 use anyhow::Context;
 use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use tokio::time::sleep;
 use tracing::{info, warn};
 
-use crate::{config::AnimeGardenConfig, types::AppError};
+use crate::{
+    config::AnimeGardenConfig,
+    media::{ParsedReleaseSlot, infer_release_slot},
+    types::AppError,
+};
 
 #[derive(Clone)]
 pub struct AnimeGardenClient {
@@ -43,8 +48,7 @@ pub struct AnimeGardenResource {
     pub fetched_at: String,
     pub fansub_name: Option<String>,
     pub publisher_name: String,
-    pub parsed_episode_number: Option<f64>,
-    pub parsed_episode_end_number: Option<f64>,
+    pub merged_release_slot: ParsedReleaseSlot,
     pub parsed_season_number: Option<i64>,
     pub parsed_resolution: Option<String>,
     pub parsed_language: Option<String>,
@@ -579,9 +583,80 @@ struct AnimeGardenVideoRaw {
     resolution: Option<String>,
 }
 
+fn parse_result_slot(parsed: &ParseResult) -> Option<ParsedReleaseSlot> {
+    if let Some(range) = parsed.episode_range.as_ref() {
+        let primary = (range.primary_start.decimal(), range.primary_end.decimal());
+        let secondary = range
+            .secondary_start
+            .zip(range.secondary_end)
+            .map(|(start, end)| (start.decimal(), end.decimal()));
+        let (start, end) = secondary
+            .filter(|(start, end)| {
+                *start < primary.0
+                    || ((*start - primary.0).abs() < f64::EPSILON && *end < primary.1)
+            })
+            .unwrap_or(primary);
+        return Some(ParsedReleaseSlot {
+            slot_key: format!(
+                "batch:{}-{}",
+                format_episode_fragment(start),
+                format_episode_fragment(end)
+            ),
+            episode_index: Some(start),
+            episode_end_index: Some(end),
+            is_collection: true,
+        });
+    }
+
+    parsed.episode.as_ref().map(|episode| {
+        let primary = episode.primary.decimal();
+        let secondary = episode.secondary.map(|item| item.decimal());
+        let selected = secondary.map(|value| value.min(primary)).unwrap_or(primary);
+        ParsedReleaseSlot {
+            slot_key: format!("episode:{}", format_episode_fragment(selected)),
+            episode_index: Some(selected),
+            episode_end_index: Some(selected),
+            is_collection: false,
+        }
+    })
+}
+
+fn merge_release_slot(
+    title: &str,
+    release_type: &str,
+    provider_id: &str,
+    api_episode_number: Option<f64>,
+    api_episode_end_number: Option<f64>,
+    manual_parse: Option<&ParseResult>,
+) -> ParsedReleaseSlot {
+    if let Some(parsed) = manual_parse.and_then(parse_result_slot) {
+        return parsed;
+    }
+
+    if let Some(start) = api_episode_number {
+        let end = api_episode_end_number.unwrap_or(start);
+        return ParsedReleaseSlot {
+            slot_key: if end > start {
+                format!(
+                    "batch:{}-{}",
+                    format_episode_fragment(start),
+                    format_episode_fragment(end)
+                )
+            } else {
+                format!("episode:{}", format_episode_fragment(start))
+            },
+            episode_index: Some(start),
+            episode_end_index: Some(end),
+            is_collection: end > start,
+        };
+    }
+
+    infer_release_slot(title, release_type, provider_id, "airing")
+}
+
 impl From<ResourceRaw> for AnimeGardenResource {
     fn from(value: ResourceRaw) -> Self {
-        let parsed_episode_number = value
+        let api_episode_number = value
             .metadata
             .as_ref()
             .and_then(|metadata| metadata.anipar.as_ref())
@@ -593,34 +668,66 @@ impl From<ResourceRaw> for AnimeGardenResource {
                     .and_then(|metadata| metadata.anipar.as_ref())
                     .and_then(|parsed| parsed.episode_range.as_ref().map(|range| range.from))
             });
-        let parsed_episode_end_number = value
+        let api_episode_end_number = value
             .metadata
             .as_ref()
             .and_then(|metadata| metadata.anipar.as_ref())
             .and_then(|parsed| parsed.episode_range.as_ref().map(|range| range.to))
-            .or(parsed_episode_number);
+            .or(api_episode_number);
+        let manual_parse = Some(parse_release_name(&value.title));
+        let merged_release_slot = merge_release_slot(
+            &value.title,
+            &value.release_type,
+            &value.provider_id,
+            api_episode_number,
+            api_episode_end_number,
+            manual_parse.as_ref(),
+        );
         let parsed_season_number = value
             .metadata
             .as_ref()
             .and_then(|metadata| metadata.anipar.as_ref())
-            .and_then(|parsed| parsed.season.as_ref().map(|season| season.number));
+            .and_then(|parsed| parsed.season.as_ref().map(|season| season.number))
+            .or_else(|| {
+                manual_parse
+                    .as_ref()
+                    .and_then(|parsed| parsed.season.as_ref().map(|season| season.number))
+            });
         let parsed_resolution = value
             .metadata
             .as_ref()
             .and_then(|metadata| metadata.anipar.as_ref())
             .and_then(|parsed| parsed.file.as_ref())
             .and_then(|file| file.video.as_ref())
-            .and_then(|video| video.resolution.clone());
+            .and_then(|video| video.resolution.clone())
+            .or_else(|| {
+                manual_parse
+                    .as_ref()
+                    .and_then(|parsed| parsed.technical.resolution.clone())
+            });
         let parsed_language = value
             .metadata
             .as_ref()
             .and_then(|metadata| metadata.anipar.as_ref())
-            .and_then(|parsed| parsed.language.clone());
+            .and_then(|parsed| parsed.language.clone())
+            .or_else(|| {
+                manual_parse
+                    .as_ref()
+                    .and_then(|parsed| parsed.subtitles.raw_language.clone())
+            });
         let parsed_subtitles = value
             .metadata
             .as_ref()
             .and_then(|metadata| metadata.anipar.as_ref())
-            .and_then(|parsed| parsed.subtitles.clone());
+            .and_then(|parsed| parsed.subtitles.clone())
+            .or_else(|| {
+                manual_parse.as_ref().and_then(|parsed| {
+                    parsed.subtitles.raw_storage.clone().or_else(|| {
+                        (!parsed.subtitles.languages.is_empty())
+                            .then(|| parsed.subtitles.languages.join("+"))
+                    })
+                })
+            });
 
         Self {
             provider: value.provider,
@@ -634,8 +741,7 @@ impl From<ResourceRaw> for AnimeGardenResource {
             fetched_at: value.fetched_at,
             fansub_name: value.fansub.map(|fansub| fansub.name),
             publisher_name: value.publisher.name,
-            parsed_episode_number,
-            parsed_episode_end_number,
+            merged_release_slot: merged_release_slot.clone(),
             parsed_season_number,
             parsed_resolution,
             parsed_language,

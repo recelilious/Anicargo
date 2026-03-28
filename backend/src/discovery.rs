@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::OnceLock};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::OnceLock,
+};
 
 use chrono::{DateTime, Duration, Utc};
 use regex::Regex;
@@ -9,7 +12,7 @@ use tracing::info;
 use crate::{
     animegarden::{AnimeGardenClient, AnimeGardenResource, AnimeGardenSearchProfile},
     db::{self, NewResourceCandidate},
-    media::{ParsedReleaseSlot, infer_release_slot},
+    media::ParsedReleaseSlot,
     types::{AppError, DownloadJobDto, FansubRuleDto, PolicyDto, ResourceCandidateDto},
 };
 
@@ -44,6 +47,43 @@ impl ResourceDiscoveryCoordinator {
             let mut strategy_parts = Vec::new();
             let mut normalized_resources = Vec::new();
 
+            if job.release_status != "airing" {
+                let search = self.animegarden.search_resources(profile).await?;
+                let broad_resources = dedup_normalized_resources(normalize_resource_release_slots(
+                    search.resources,
+                    profile,
+                    &job.release_status,
+                    Some(targets),
+                ));
+                let broad_has_full_collection =
+                    normalized_resources_cover_all_targets(&broad_resources, targets);
+                info!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    strategy = %search.strategy,
+                    matched_resource_count = broad_resources.len(),
+                    has_full_collection = broad_has_full_collection,
+                    "Resolved broad completed-season resource candidates"
+                );
+                strategy_parts.push(format!("broad:{}", search.strategy));
+                if broad_has_full_collection {
+                    return store_discovered_candidates(
+                        pool,
+                        job,
+                        &format!("targeted:{}", strategy_parts.join(" || ")),
+                        broad_resources,
+                        policy,
+                    )
+                    .await;
+                }
+                normalized_resources.extend(broad_resources.into_iter().filter(|resource| {
+                    resource.release_slot.is_collection
+                        || targets.iter().any(|episode| {
+                            release_slot_matches_target_episode(&resource.release_slot, *episode)
+                        })
+                }));
+            }
+
             for (index, target_episode) in targets.iter().enumerate() {
                 let search = self
                     .animegarden
@@ -53,6 +93,7 @@ impl ResourceDiscoveryCoordinator {
                     search.resources,
                     profile,
                     &job.release_status,
+                    Some(targets),
                 )
                 .into_iter()
                 .filter(|resource| {
@@ -76,102 +117,21 @@ impl ResourceDiscoveryCoordinator {
 
             (
                 format!("targeted:{}", strategy_parts.join(" || ")),
-                normalized_resources,
+                dedup_normalized_resources(normalized_resources),
             )
         } else {
             let search = self.animegarden.search_resources(profile).await?;
             (
                 search.strategy,
-                normalize_resource_release_slots(search.resources, profile, &job.release_status),
+                dedup_normalized_resources(normalize_resource_release_slots(
+                    search.resources,
+                    profile,
+                    &job.release_status,
+                    episode_targets,
+                )),
             )
         };
-        info!(
-            job_id = job.id,
-            subject_id = job.bangumi_subject_id,
-            strategy = %strategy,
-            normalized_resource_count = resources.len(),
-            "AnimeGarden discovery returned normalized resources"
-        );
-        let search_run_id =
-            db::start_resource_search_run(pool, job.id, job.bangumi_subject_id, &strategy).await?;
-
-        let rules = db::list_fansub_rules(pool).await?;
-        let previous_selected =
-            db::latest_selected_candidate_for_subject(pool, job.bangumi_subject_id).await?;
-        let current_selected = db::current_selected_candidate_for_job(pool, job.id).await?;
-
-        let mut stored = Vec::new();
-        for resource in resources {
-            let evaluation = evaluate_candidate(
-                &resource.resource,
-                &rules,
-                previous_selected.as_ref(),
-                policy,
-                &job.release_status,
-            );
-            let candidate = db::create_resource_candidate(
-                pool,
-                NewResourceCandidate {
-                    download_job_id: job.id,
-                    search_run_id,
-                    bangumi_subject_id: job.bangumi_subject_id,
-                    provider: resource.resource.provider,
-                    provider_resource_id: resource.resource.provider_id,
-                    title: resource.resource.title,
-                    href: resource.resource.href,
-                    magnet: resource.resource.magnet,
-                    release_type: resource.resource.release_type,
-                    size_bytes: resource.resource.size,
-                    fansub_name: resource.resource.fansub_name,
-                    publisher_name: resource.resource.publisher_name,
-                    slot_key: resource.release_slot.slot_key,
-                    episode_index: resource.release_slot.episode_index,
-                    episode_end_index: resource.release_slot.episode_end_index,
-                    is_collection: resource.release_slot.is_collection,
-                    source_created_at: resource.resource.created_at,
-                    source_fetched_at: resource.resource.fetched_at,
-                    resolution: evaluation.resolution,
-                    locale_hint: evaluation.locale_hint,
-                    is_raw: evaluation.is_raw,
-                    score: evaluation.score,
-                    rejected_reason: evaluation.rejected_reason,
-                },
-            )
-            .await?;
-            stored.push(candidate);
-        }
-
-        info!(
-            job_id = job.id,
-            subject_id = job.bangumi_subject_id,
-            candidate_count = stored.len(),
-            "Stored resource candidates after evaluation"
-        );
-        let (selected_candidate_id, status, notes) =
-            choose_candidate(job, current_selected.as_ref(), &stored, policy);
-        info!(
-            job_id = job.id,
-            subject_id = job.bangumi_subject_id,
-            selected_candidate_id = ?selected_candidate_id,
-            status,
-            notes = %notes,
-            "Completed candidate selection"
-        );
-        if current_selected.map(|candidate| candidate.id) != selected_candidate_id {
-            db::assign_download_job_candidate(pool, job.id, selected_candidate_id).await?;
-        }
-        db::finish_resource_search_run(
-            pool,
-            search_run_id,
-            job.id,
-            status,
-            stored.len() as i64,
-            selected_candidate_id,
-            Some(&notes),
-        )
-        .await?;
-
-        db::list_resource_candidates(pool, job.id).await
+        store_discovered_candidates(pool, job, &strategy, resources, policy).await
     }
 }
 
@@ -181,6 +141,137 @@ fn release_slot_matches_target_episode(slot: &ParsedReleaseSlot, target_episode:
     };
     let end = slot.episode_end_index.unwrap_or(start);
     target_episode + 0.001 >= start && target_episode - 0.001 <= end
+}
+
+fn dedup_normalized_resources(
+    resources: Vec<NormalizedAnimeGardenResource>,
+) -> Vec<NormalizedAnimeGardenResource> {
+    let mut seen = HashSet::<(String, String)>::new();
+    let mut deduped = Vec::new();
+
+    for resource in resources {
+        let key = (
+            resource.resource.provider.clone(),
+            resource.resource.provider_id.clone(),
+        );
+        if seen.insert(key) {
+            deduped.push(resource);
+        }
+    }
+
+    deduped
+}
+
+fn normalized_resources_cover_all_targets(
+    resources: &[NormalizedAnimeGardenResource],
+    targets: &[f64],
+) -> bool {
+    let Some(collection) = resources.iter().find(|resource| {
+        resource.release_slot.is_collection
+            && targets.iter().all(|episode| {
+                release_slot_matches_target_episode(&resource.release_slot, *episode)
+            })
+    }) else {
+        return false;
+    };
+
+    collection.release_slot.is_collection
+}
+
+async fn store_discovered_candidates(
+    pool: &SqlitePool,
+    job: &DownloadJobDto,
+    strategy: &str,
+    resources: Vec<NormalizedAnimeGardenResource>,
+    policy: &PolicyDto,
+) -> Result<Vec<ResourceCandidateDto>, AppError> {
+    info!(
+        job_id = job.id,
+        subject_id = job.bangumi_subject_id,
+        strategy,
+        normalized_resource_count = resources.len(),
+        "AnimeGarden discovery returned normalized resources"
+    );
+    let search_run_id =
+        db::start_resource_search_run(pool, job.id, job.bangumi_subject_id, strategy).await?;
+
+    let rules = db::list_fansub_rules(pool).await?;
+    let previous_selected =
+        db::latest_selected_candidate_for_subject(pool, job.bangumi_subject_id).await?;
+    let current_selected = db::current_selected_candidate_for_job(pool, job.id).await?;
+
+    let mut stored = Vec::new();
+    for resource in resources {
+        let evaluation = evaluate_candidate(
+            &resource.resource,
+            &rules,
+            previous_selected.as_ref(),
+            policy,
+            &job.release_status,
+        );
+        let candidate = db::create_resource_candidate(
+            pool,
+            NewResourceCandidate {
+                download_job_id: job.id,
+                search_run_id,
+                bangumi_subject_id: job.bangumi_subject_id,
+                provider: resource.resource.provider,
+                provider_resource_id: resource.resource.provider_id,
+                title: resource.resource.title,
+                href: resource.resource.href,
+                magnet: resource.resource.magnet,
+                release_type: resource.resource.release_type,
+                size_bytes: resource.resource.size,
+                fansub_name: resource.resource.fansub_name,
+                publisher_name: resource.resource.publisher_name,
+                slot_key: resource.release_slot.slot_key,
+                episode_index: resource.release_slot.episode_index,
+                episode_end_index: resource.release_slot.episode_end_index,
+                is_collection: resource.release_slot.is_collection,
+                source_created_at: resource.resource.created_at,
+                source_fetched_at: resource.resource.fetched_at,
+                resolution: evaluation.resolution,
+                locale_hint: evaluation.locale_hint,
+                is_raw: evaluation.is_raw,
+                score: evaluation.score,
+                rejected_reason: evaluation.rejected_reason,
+            },
+        )
+        .await?;
+        stored.push(candidate);
+    }
+
+    info!(
+        job_id = job.id,
+        subject_id = job.bangumi_subject_id,
+        candidate_count = stored.len(),
+        "Stored resource candidates after evaluation"
+    );
+    let (selected_candidate_id, status, notes) =
+        choose_candidate(job, current_selected.as_ref(), &stored, policy);
+    info!(
+        job_id = job.id,
+        subject_id = job.bangumi_subject_id,
+        selected_candidate_id = ?selected_candidate_id,
+        status,
+        notes = %notes,
+        "Completed candidate selection"
+    );
+    if current_selected.map(|candidate| candidate.id) != selected_candidate_id {
+        db::assign_download_job_candidate(pool, job.id, selected_candidate_id).await?;
+    }
+    db::finish_resource_search_run(
+        pool,
+        search_run_id,
+        job.id,
+        status,
+        stored.len() as i64,
+        selected_candidate_id,
+        Some(&notes),
+    )
+    .await?;
+
+    db::list_resource_candidates(pool, job.id).await
 }
 
 #[derive(Debug, Clone)]
@@ -201,6 +292,7 @@ fn normalize_resource_release_slots(
     resources: Vec<AnimeGardenResource>,
     profile: &AnimeGardenSearchProfile,
     release_status: &str,
+    expected_episode_targets: Option<&[f64]>,
 ) -> Vec<NormalizedAnimeGardenResource> {
     let canonical_season_hint = profile
         .season_hint
@@ -249,6 +341,10 @@ fn normalize_resource_release_slots(
             ) {
                 release_slot = normalize_slot_with_offset(&observation.raw_slot, inferred_offset);
             }
+            if release_status != "airing" {
+                release_slot =
+                    align_slot_to_expected_targets(&release_slot, expected_episode_targets);
+            }
 
             NormalizedAnimeGardenResource {
                 resource: resources[observation.index].clone(),
@@ -275,37 +371,92 @@ fn most_common_resource_season_number(resources: &[AnimeGardenResource]) -> Opti
 
 fn infer_raw_release_slot(
     resource: &AnimeGardenResource,
-    release_status: &str,
+    _release_status: &str,
 ) -> ParsedReleaseSlot {
-    if let Some(episode) = resource.parsed_episode_number {
-        let end = resource.parsed_episode_end_number.unwrap_or(episode);
-        if end > episode {
-            return ParsedReleaseSlot {
-                slot_key: format!(
-                    "batch:{}-{}",
-                    format_episode_fragment(episode),
-                    format_episode_fragment(end)
-                ),
-                episode_index: Some(episode),
-                episode_end_index: Some(end),
-                is_collection: true,
-            };
+    resource.merged_release_slot.clone()
+}
+
+fn align_slot_to_expected_targets(
+    slot: &ParsedReleaseSlot,
+    expected_episode_targets: Option<&[f64]>,
+) -> ParsedReleaseSlot {
+    let Some(targets) = expected_episode_targets.filter(|targets| !targets.is_empty()) else {
+        return slot.clone();
+    };
+    let Some(start) = slot.episode_index else {
+        return slot.clone();
+    };
+    let end = slot.episode_end_index.unwrap_or(start);
+    let max_target = targets
+        .iter()
+        .copied()
+        .max_by(|left, right| left.total_cmp(right))
+        .unwrap_or(end);
+    let min_target = targets
+        .iter()
+        .copied()
+        .min_by(|left, right| left.total_cmp(right))
+        .unwrap_or(start);
+    let target_span = (max_target - min_target + 1.0).max(1.0);
+
+    let mut best_slot = slot.clone();
+    let mut best_score = score_slot_against_targets(slot, targets);
+    for step in 1..=8 {
+        let offset = target_span * step as f64;
+        let normalized_start = start - offset;
+        let normalized_end = end - offset;
+        if normalized_end < min_target - 1.0 {
+            continue;
         }
 
-        return ParsedReleaseSlot {
-            slot_key: format!("episode:{}", format_episode_fragment(episode)),
-            episode_index: Some(episode),
-            episode_end_index: Some(episode),
-            is_collection: false,
+        let normalized = ParsedReleaseSlot {
+            slot_key: if slot.is_collection {
+                format!(
+                    "batch:{}-{}",
+                    format_episode_fragment(normalized_start),
+                    format_episode_fragment(normalized_end)
+                )
+            } else {
+                format!("episode:{}", format_episode_fragment(normalized_start))
+            },
+            episode_index: Some(normalized_start),
+            episode_end_index: Some(normalized_end),
+            is_collection: slot.is_collection,
         };
+        let score = score_slot_against_targets(&normalized, targets);
+        if score > best_score {
+            best_score = score;
+            best_slot = normalized;
+        }
     }
 
-    infer_release_slot(
-        &resource.title,
-        &resource.release_type,
-        &resource.provider_id,
-        release_status,
-    )
+    best_slot
+}
+
+fn score_slot_against_targets(slot: &ParsedReleaseSlot, targets: &[f64]) -> (i64, i64, i64) {
+    let Some(start) = slot.episode_index else {
+        return (i64::MIN, i64::MIN, i64::MIN);
+    };
+    let end = slot.episode_end_index.unwrap_or(start);
+    let covered = targets
+        .iter()
+        .filter(|episode| **episode + 0.001 >= start && **episode - 0.001 <= end)
+        .count() as i64;
+    let outside_penalty = targets
+        .iter()
+        .map(|episode| {
+            if *episode < start {
+                ((start - *episode) * 100.0).round() as i64
+            } else if *episode > end {
+                ((*episode - end) * 100.0).round() as i64
+            } else {
+                0
+            }
+        })
+        .sum::<i64>();
+    let start_weight = -((start * 100.0).round() as i64);
+
+    (covered, -outside_penalty, start_weight)
 }
 
 fn parse_resource_timestamp(value: &str) -> Option<DateTime<Utc>> {
@@ -901,6 +1052,7 @@ pub(crate) fn within_replacement_window(selection_updated_at: Option<&str>, hour
 mod tests {
     use super::{infer_season_hint_from_texts, normalize_resource_release_slots};
     use crate::animegarden::{AnimeGardenResource, AnimeGardenSearchProfile};
+    use crate::media::ParsedReleaseSlot;
 
     #[test]
     fn parses_subject_season_hints_from_common_titles() {
@@ -949,7 +1101,7 @@ mod tests {
             ),
         ];
 
-        let normalized = normalize_resource_release_slots(resources, &profile, "airing");
+        let normalized = normalize_resource_release_slots(resources, &profile, "airing", None);
         let slot_keys = normalized
             .into_iter()
             .map(|item| item.release_slot.slot_key)
@@ -964,6 +1116,31 @@ mod tests {
                 "episode:8".to_owned(),
             ]
         );
+    }
+
+    #[test]
+    fn aligns_completed_collection_ranges_to_expected_episode_targets() {
+        let profile = AnimeGardenSearchProfile {
+            bangumi_subject_id: 999,
+            title: "Tensei Shitara Slime Datta Ken Season 2 Part 2".to_owned(),
+            title_cn: "That Time I Got Reincarnated as a Slime Season 2 Part 2".to_owned(),
+            season_hint: Some(2),
+        };
+        let normalized = normalize_resource_release_slots(
+            vec![sample_collection_resource(
+                "[LoliHouse] Tensei Shitara Slime Datta Ken S2 Part 2 [37-48 Batch]",
+                "2026-01-01T00:00:00Z",
+                37.0,
+                48.0,
+                Some(2),
+            )],
+            &profile,
+            "completed",
+            Some(&(1..=12).map(|value| value as f64).collect::<Vec<_>>()),
+        );
+        assert_eq!(normalized[0].release_slot.slot_key, "batch:1-12");
+        assert_eq!(normalized[0].release_slot.episode_index, Some(1.0));
+        assert_eq!(normalized[0].release_slot.episode_end_index, Some(12.0));
     }
 
     fn sample_resource(
@@ -984,8 +1161,46 @@ mod tests {
             fetched_at: created_at.to_owned(),
             fansub_name: None,
             publisher_name: String::new(),
-            parsed_episode_number,
-            parsed_episode_end_number: parsed_episode_number,
+            merged_release_slot: ParsedReleaseSlot {
+                slot_key: parsed_episode_number
+                    .map(|episode| format!("episode:{}", episode))
+                    .unwrap_or_else(|| "item:test".to_owned()),
+                episode_index: parsed_episode_number,
+                episode_end_index: parsed_episode_number,
+                is_collection: false,
+            },
+            parsed_season_number,
+            parsed_resolution: Some("1080P".to_owned()),
+            parsed_language: None,
+            parsed_subtitles: None,
+        }
+    }
+
+    fn sample_collection_resource(
+        title: &str,
+        created_at: &str,
+        start: f64,
+        end: f64,
+        parsed_season_number: Option<i64>,
+    ) -> AnimeGardenResource {
+        AnimeGardenResource {
+            provider: "dmhy".to_owned(),
+            provider_id: title.to_owned(),
+            title: title.to_owned(),
+            href: String::new(),
+            release_type: "batch".to_owned(),
+            magnet: String::new(),
+            size: 0,
+            created_at: created_at.to_owned(),
+            fetched_at: created_at.to_owned(),
+            fansub_name: None,
+            publisher_name: String::new(),
+            merged_release_slot: ParsedReleaseSlot {
+                slot_key: format!("batch:{}-{}", start, end),
+                episode_index: Some(start),
+                episode_end_index: Some(end),
+                is_collection: true,
+            },
             parsed_season_number,
             parsed_resolution: Some("1080P".to_owned()),
             parsed_language: None,

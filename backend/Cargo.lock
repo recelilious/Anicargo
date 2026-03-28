@@ -55,10 +55,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "anicargo-metadata-parser"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "serde",
+]
+
+[[package]]
 name = "anicargo-server"
 version = "0.1.0"
 dependencies = [
  "anicargo-downloader",
+ "anicargo-metadata-parser",
  "anyhow",
  "argon2",
  "async-trait",

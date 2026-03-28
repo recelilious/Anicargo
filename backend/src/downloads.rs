@@ -8,8 +8,8 @@ use std::{
 use anicargo_downloader::{
     DownloaderService,
     model::{
-        CreateTaskRequest as EmbeddedCreateTaskRequest, TaskKind as EmbeddedTaskKind,
-        InspectTaskRequest as EmbeddedInspectTaskRequest,
+        CreateTaskRequest as EmbeddedCreateTaskRequest,
+        InspectTaskRequest as EmbeddedInspectTaskRequest, TaskKind as EmbeddedTaskKind,
         TaskSource as EmbeddedTaskSource, TaskSourceKind as EmbeddedTaskSourceKind,
         TaskState as EmbeddedTaskState, UpdateSettingsRequest as EmbeddedUpdateSettingsRequest,
     },
@@ -1438,7 +1438,10 @@ fn ensure_execution_target_path(target_path: &str) -> Result<(), AppError> {
 }
 
 fn is_active_execution_state(state: &str) -> bool {
-    matches!(state, "queued" | "staged" | "starting" | "downloading" | "seeding")
+    matches!(
+        state,
+        "queued" | "staged" | "starting" | "downloading" | "seeding"
+    )
 }
 
 fn should_refresh_media_index(execution: &DownloadExecutionDto, state: &str) -> bool {

@@ -4,6 +4,10 @@ use std::{
     sync::OnceLock,
 };
 
+use anicargo_metadata_parser::{
+    EpisodeDescriptor, EpisodeNumber, EpisodeRangeDescriptor, ParseResult, parse_file_name,
+    parse_release_name,
+};
 use anyhow::Context;
 use regex::Regex;
 
@@ -33,51 +37,12 @@ pub fn infer_release_slot(
     provider_resource_id: &str,
     release_status: &str,
 ) -> ParsedReleaseSlot {
-    if let Some(episode) = extract_single_episode(title) {
-        return ParsedReleaseSlot {
-            slot_key: format!("episode:{}", format_episode_number(episode)),
-            episode_index: Some(episode),
-            episode_end_index: Some(episode),
-            is_collection: false,
-        };
+    let parsed = parse_release_name(title);
+    if let Some(slot) = slot_from_parse(&parsed) {
+        return slot;
     }
 
-    if let Some((start, end)) = extract_collection_span(title) {
-        return ParsedReleaseSlot {
-            slot_key: format!(
-                "batch:{}-{}",
-                format_episode_number(start),
-                format_episode_number(end)
-            ),
-            episode_index: Some(start),
-            episode_end_index: Some(end),
-            is_collection: true,
-        };
-    }
-
-    let lowered_release_type = release_type.to_ascii_lowercase();
-    if lowered_release_type.contains("batch") || lowered_release_type.contains("collection") {
-        return ParsedReleaseSlot {
-            slot_key: format!("batch:{}", sanitize_slot_fragment(provider_resource_id)),
-            episode_index: None,
-            episode_end_index: None,
-            is_collection: true,
-        };
-    }
-
-    let prefix = match release_status {
-        "completed" => "pack",
-        "airing" => "item",
-        "upcoming" => "upcoming",
-        _ => "item",
-    };
-
-    ParsedReleaseSlot {
-        slot_key: format!("{prefix}:{}", sanitize_slot_fragment(provider_resource_id)),
-        episode_index: None,
-        episode_end_index: None,
-        is_collection: false,
-    }
+    infer_release_slot_fallback(title, release_type, provider_resource_id, release_status)
 }
 
 pub fn scan_video_files(
@@ -154,6 +119,11 @@ pub fn scan_video_files(
 }
 
 fn infer_file_slot(file_name: &str, fallback_slot: &ParsedReleaseSlot) -> ParsedReleaseSlot {
+    let parsed = parse_file_name(file_name);
+    if let Some(slot) = slot_from_parse(&parsed) {
+        return slot;
+    }
+
     let stem = PathBuf::from(file_name)
         .file_stem()
         .and_then(|value| value.to_str())
@@ -183,6 +153,115 @@ fn infer_file_slot(file_name: &str, fallback_slot: &ParsedReleaseSlot) -> Parsed
     }
 
     fallback_slot.clone()
+}
+
+fn slot_from_parse(parsed: &ParseResult) -> Option<ParsedReleaseSlot> {
+    if let Some(range) = parsed.episode_range.as_ref() {
+        return slot_from_range(range);
+    }
+
+    parsed.episode.as_ref().map(slot_from_episode)
+}
+
+fn slot_from_episode(descriptor: &EpisodeDescriptor) -> ParsedReleaseSlot {
+    let primary = descriptor.primary.decimal();
+    let secondary = descriptor.secondary.map(EpisodeNumber::decimal);
+    let selected = secondary.map(|value| primary.min(value)).unwrap_or(primary);
+
+    ParsedReleaseSlot {
+        slot_key: format!("episode:{}", format_episode_number(selected)),
+        episode_index: Some(selected),
+        episode_end_index: Some(selected),
+        is_collection: false,
+    }
+}
+
+fn slot_from_range(descriptor: &EpisodeRangeDescriptor) -> Option<ParsedReleaseSlot> {
+    let primary_start = descriptor.primary_start.decimal();
+    let primary_end = descriptor.primary_end.decimal();
+
+    let mut best = (primary_start, primary_end);
+    if let (Some(secondary_start), Some(secondary_end)) =
+        (descriptor.secondary_start, descriptor.secondary_end)
+    {
+        let secondary = (secondary_start.decimal(), secondary_end.decimal());
+        if secondary.0 < best.0
+            || ((secondary.0 - best.0).abs() < f64::EPSILON && secondary.1 < best.1)
+        {
+            best = secondary;
+        }
+    }
+
+    if best.1 < best.0 {
+        return None;
+    }
+
+    Some(ParsedReleaseSlot {
+        slot_key: format!(
+            "batch:{}-{}",
+            format_episode_number(best.0),
+            format_episode_number(best.1)
+        ),
+        episode_index: Some(best.0),
+        episode_end_index: Some(best.1),
+        is_collection: true,
+    })
+}
+
+fn infer_release_slot_fallback(
+    title: &str,
+    release_type: &str,
+    provider_resource_id: &str,
+    release_status: &str,
+) -> ParsedReleaseSlot {
+    if let Some(episode) = extract_single_episode(title) {
+        return ParsedReleaseSlot {
+            slot_key: format!("episode:{}", format_episode_number(episode)),
+            episode_index: Some(episode),
+            episode_end_index: Some(episode),
+            is_collection: false,
+        };
+    }
+
+    if let Some((start, end)) = extract_collection_span(title) {
+        return ParsedReleaseSlot {
+            slot_key: format!(
+                "batch:{}-{}",
+                format_episode_number(start),
+                format_episode_number(end)
+            ),
+            episode_index: Some(start),
+            episode_end_index: Some(end),
+            is_collection: true,
+        };
+    }
+
+    let lowered_release_type = release_type.to_ascii_lowercase();
+    if lowered_release_type.contains("batch")
+        || lowered_release_type.contains("collection")
+        || lowered_release_type.contains("complete")
+    {
+        return ParsedReleaseSlot {
+            slot_key: format!("batch:{}", sanitize_slot_fragment(provider_resource_id)),
+            episode_index: None,
+            episode_end_index: None,
+            is_collection: true,
+        };
+    }
+
+    let prefix = match release_status {
+        "completed" => "pack",
+        "airing" => "item",
+        "upcoming" => "upcoming",
+        _ => "item",
+    };
+
+    ParsedReleaseSlot {
+        slot_key: format!("{prefix}:{}", sanitize_slot_fragment(provider_resource_id)),
+        episode_index: None,
+        episode_end_index: None,
+        is_collection: false,
+    }
 }
 
 fn extract_collection_span(title: &str) -> Option<(f64, f64)> {
@@ -231,7 +310,7 @@ fn parse_episode_capture(value: &str) -> Option<f64> {
     let trimmed = trimmed.trim_start_matches('0');
     let normalized = if trimmed.is_empty() { "0" } else { trimmed };
     let parsed = normalized.parse::<f64>().ok()?;
-    (parsed > 0.0 && parsed <= 500.0).then_some(parsed)
+    (parsed >= 0.0 && parsed <= 500.0).then_some(parsed)
 }
 
 fn format_episode_number(value: f64) -> String {
@@ -267,15 +346,18 @@ fn is_video_extension(extension: &str) -> bool {
 fn collection_range_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
-        Regex::new(r"(?i)(?:^|[^0-9A-Za-z])(\d{1,3}(?:\.\d+)?)\s*[-~]\s*(\d{1,3}(?:\.\d+)?)(?:\s*(?:END|FIN))?(?:[^0-9A-Za-z]|$)")
-            .expect("valid collection range regex")
+        Regex::new(
+            r"(?i)(?:^|[^0-9A-Za-z])(\d{1,3}(?:\.\d+)?)\s*[-~]\s*(\d{1,3}(?:\.\d+)?)(?:\s*(?:END|FIN))?(?:[^0-9A-Za-z]|$)",
+        )
+        .expect("valid collection range regex")
     })
 }
 
 fn collection_total_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
-        Regex::new(r"全\s*(\d{1,3}(?:\.\d+)?)\s*[话話集]").expect("valid collection total regex")
+        Regex::new(r"(?i)(?:all|complete|batch)\s*(\d{1,3}(?:\.\d+)?)")
+            .expect("valid collection total regex")
     })
 }
 
@@ -284,9 +366,9 @@ fn explicit_episode_regex() -> &'static Regex {
     REGEX.get_or_init(|| {
         Regex::new(
             r"(?ix)
-            第 \s* (\d{1,3}(?:\.\d+)?) \s* [话話集]
+            \bEP?\s*[\.\-]?\s*(\d{1,3}(?:\.\d+)?)\b
             |
-            \b E P? \s* [\.\-]? \s* (\d{1,3}(?:\.\d+)?) \b
+            \bEpisode\s*(\d{1,3}(?:\.\d+)?)\b
         ",
         )
         .expect("valid explicit episode regex")
@@ -306,7 +388,7 @@ fn dashed_episode_regex() -> &'static Regex {
         Regex::new(
             r"(?ix)(?:^|[^0-9A-Za-z])-\s*(\d{1,3}(?:\.\d+)?)(?:\s*(?:END|FIN))?(?:\s*(?:[\[\(].*)?)$",
         )
-            .expect("valid dashed episode regex")
+        .expect("valid dashed episode regex")
     })
 }
 
@@ -320,46 +402,75 @@ fn suffix_episode_regex() -> &'static Regex {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_collection_span, extract_single_episode, infer_release_slot};
+    use super::{extract_collection_span, infer_release_slot, scan_video_files, slot_from_parse};
+    use crate::media::ParsedReleaseSlot;
+    use anicargo_metadata_parser::{parse_file_name, parse_release_name};
+    use std::{fs, io::Write};
 
     #[test]
-    fn parses_bracket_episode_without_dropping_trailing_zero() {
-        assert_eq!(
-            extract_single_episode(
-                "[桜都字幕组] 我推的孩子 第三季 / Oshi no Ko 3rd Season [10][1080P][简繁日内封]"
-            ),
-            Some(10.0)
-        );
-    }
-
-    #[test]
-    fn parses_dashed_episode_titles() {
-        assert_eq!(
-            extract_single_episode(
-                "[ANi] 公主殿下，「拷問」的時間到了 第二季 - 22 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]"
-            ),
-            Some(22.0)
-        );
-    }
-
-    #[test]
-    fn does_not_treat_season_marker_as_collection_range() {
+    fn parser_prefers_local_episode_alias_over_absolute_number() {
         let slot = infer_release_slot(
-            "[LoliHouse] 【我推的孩子】 第三季 / Oshi no Ko S3 - 10 [WebRip 1080p HEVC-10bit AAC][简繁内封字幕]",
+            "[LoliHouse] Tensei Shitara Slime Datta Ken 3rd Season - 24(72) [WebRip 1080p]",
             "single",
-            "715220",
+            "example",
             "airing",
         );
-        assert_eq!(slot.slot_key, "episode:10");
-        assert_eq!(slot.episode_index, Some(10.0));
+        assert_eq!(slot.slot_key, "episode:24");
+        assert_eq!(slot.episode_index, Some(24.0));
         assert!(!slot.is_collection);
     }
 
     #[test]
-    fn still_parses_real_collection_ranges() {
+    fn parser_prefers_local_batch_range_when_dual_range_exists() {
+        let parsed = parse_release_name(
+            "[LoliHouse] Tensei Shitara Slime Datta Ken 3rd Season [48.5-72(00-24) Batch][WebRip 1080p][Fin]",
+        );
+        let slot = slot_from_parse(&parsed).expect("slot");
+        assert_eq!(slot.slot_key, "batch:0-24");
+        assert_eq!(slot.episode_index, Some(0.0));
+        assert_eq!(slot.episode_end_index, Some(24.0));
+        assert!(slot.is_collection);
+    }
+
+    #[test]
+    fn still_parses_real_collection_ranges_in_fallback() {
         assert_eq!(
             extract_collection_span("[SubsPlease] Example Title [01-12] [1080p]"),
             Some((1.0, 12.0))
         );
+    }
+
+    #[test]
+    fn file_indexing_uses_metadata_parser_for_dual_episode_names() {
+        let root = std::env::temp_dir().join(format!("anicargo-media-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create temp root");
+        let path = root.join("Tensei Shitara Slime Datta Ken 3rd Season - 24(72).mkv");
+        let mut file = fs::File::create(&path).expect("create video");
+        file.write_all(b"test").expect("write video");
+
+        let fallback = ParsedReleaseSlot {
+            slot_key: "batch:test".to_owned(),
+            episode_index: None,
+            episode_end_index: None,
+            is_collection: true,
+        };
+        let indexed = scan_video_files(&root, &fallback).expect("scan media");
+        assert_eq!(indexed.len(), 1);
+        assert_eq!(indexed[0].episode_index, Some(24.0));
+        assert_eq!(indexed[0].episode_end_index, Some(24.0));
+        assert!(!indexed[0].is_collection);
+
+        fs::remove_dir_all(&root).expect("cleanup temp root");
+    }
+
+    #[test]
+    fn file_parser_can_read_fractional_recap_alias() {
+        let parsed = parse_file_name(
+            "Tensei Shitara Slime Datta Ken 3rd Season - 00(48.5) [WebRip 1080p].mkv",
+        );
+        let slot = slot_from_parse(&parsed).expect("slot");
+        assert_eq!(slot.episode_index, Some(0.0));
+        assert_eq!(slot.slot_key, "episode:0");
     }
 }
