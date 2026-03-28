@@ -21,6 +21,7 @@ const CATALOG_REFRESH_TTL_HOURS: i64 = 12;
 const MATCH_CONCURRENCY: usize = 6;
 const STATUS_REFRESH_CONCURRENCY: usize = 6;
 const INITIAL_STATUS_REFRESH_AT: &str = "1970-01-01T00:00:00Z";
+const RECENT_AIRING_GRACE_DAYS: i64 = 60;
 
 #[derive(Debug, Clone)]
 pub struct ScheduleDisplayOptions {
@@ -1221,6 +1222,11 @@ pub(crate) fn derive_release_status(subject: &SubjectRaw, episodes: &[EpisodeRaw
 
     let aired_count = episode_dates.iter().filter(|date| **date <= today).count();
     let future_count = episode_dates.len().saturating_sub(aired_count);
+    let latest_aired_date = episode_dates
+        .iter()
+        .copied()
+        .filter(|date| *date <= today)
+        .max();
 
     if aired_count == 0 && future_count > 0 {
         return "upcoming";
@@ -1235,7 +1241,11 @@ pub(crate) fn derive_release_status(subject: &SubjectRaw, episodes: &[EpisodeRaw
         .and_then(|total| usize::try_from(total).ok())
         .is_some_and(|total| aired_count < total)
     {
-        return "airing";
+        if latest_aired_date.is_some_and(|date| {
+            today.signed_duration_since(date) <= chrono::Duration::days(RECENT_AIRING_GRACE_DAYS)
+        }) {
+            return "airing";
+        }
     }
 
     "completed"
@@ -1399,9 +1409,11 @@ fn variant_regex() -> &'static Regex {
 
 #[cfg(test)]
 mod tests {
-    use super::{ScheduleDisplayOptions, resolve_schedule_display};
+    use super::{
+        ScheduleDisplayOptions, derive_release_status, resolve_schedule_display, tokyo_today,
+    };
+    use crate::bangumi::{EpisodeRaw, SubjectRaw};
     use chrono_tz::Australia::Brisbane;
-
     #[test]
     fn converts_source_time_into_local_deep_night_display() {
         let options = ScheduleDisplayOptions {
@@ -1424,5 +1436,78 @@ mod tests {
         let (time, weekday) = resolve_schedule_display(3, Some("26:00"), &options);
         assert_eq!(time.as_deref(), Some("04:00"));
         assert_eq!(weekday, Some(4));
+    }
+
+    #[test]
+    fn treats_old_subject_with_missing_total_episode_gap_as_completed() {
+        let today = tokyo_today();
+        let subject = sample_subject(Some(25), None);
+        let episodes = vec![
+            sample_episode(
+                1,
+                (today - chrono::Duration::days(365))
+                    .format("%Y-%m-%d")
+                    .to_string(),
+            ),
+            sample_episode(
+                2,
+                (today - chrono::Duration::days(358))
+                    .format("%Y-%m-%d")
+                    .to_string(),
+            ),
+        ];
+
+        assert_eq!(derive_release_status(&subject, &episodes), "completed");
+    }
+
+    #[test]
+    fn treats_recent_subject_with_missing_total_episode_gap_as_airing() {
+        let today = tokyo_today();
+        let subject = sample_subject(Some(12), None);
+        let episodes = vec![
+            sample_episode(
+                1,
+                (today - chrono::Duration::days(7))
+                    .format("%Y-%m-%d")
+                    .to_string(),
+            ),
+            sample_episode(
+                2,
+                (today - chrono::Duration::days(1))
+                    .format("%Y-%m-%d")
+                    .to_string(),
+            ),
+        ];
+
+        assert_eq!(derive_release_status(&subject, &episodes), "airing");
+    }
+
+    fn sample_subject(total_episodes: Option<i64>, air_date: Option<String>) -> SubjectRaw {
+        SubjectRaw {
+            id: 1,
+            name: "Sample".to_owned(),
+            name_cn: "Sample".to_owned(),
+            summary: String::new(),
+            date: air_date.clone(),
+            air_date,
+            air_weekday: Some(3),
+            total_episodes,
+            images: None,
+            tags: Vec::new(),
+            infobox: Vec::new(),
+            rating: Some(crate::bangumi::RatingRaw { score: Some(7.0) }),
+        }
+    }
+
+    fn sample_episode(id: i64, airdate: String) -> EpisodeRaw {
+        EpisodeRaw {
+            id,
+            sort: Some(id as f64),
+            ep: Some(id as f64),
+            name: format!("Episode {id}"),
+            name_cn: format!("Episode {id}"),
+            airdate,
+            duration_seconds: None,
+        }
     }
 }

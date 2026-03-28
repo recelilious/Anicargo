@@ -220,7 +220,7 @@ impl AnimeGardenClient {
         max_pages: usize,
     ) -> Result<Vec<AnimeGardenResource>, AppError> {
         let mut merged = Vec::new();
-        const MAX_ATTEMPTS: usize = 4;
+        const MAX_ATTEMPTS: usize = 6;
 
         for page in 1..=max_pages.max(1) {
             let mut query = vec![
@@ -245,7 +245,7 @@ impl AnimeGardenClient {
                                 status = %status,
                                 "AnimeGarden rate limited request; retrying with backoff"
                             );
-                            sleep(Duration::from_millis((attempt as u64) * 1_500)).await;
+                            sleep(Duration::from_millis((attempt as u64) * 2_000)).await;
                             continue;
                         }
                         response = Some(result);
@@ -259,7 +259,7 @@ impl AnimeGardenClient {
                             error = %error,
                             "Failed to reach AnimeGarden resources; retrying"
                         );
-                        sleep(Duration::from_millis((attempt as u64) * 900)).await;
+                        sleep(Duration::from_millis((attempt as u64) * 1_200)).await;
                     }
                     Err(error) => {
                         warn!(url = %url, page, error = %error, "Failed to reach AnimeGarden resources");
@@ -301,7 +301,7 @@ impl AnimeGardenClient {
                 break;
             }
 
-            sleep(Duration::from_millis(200)).await;
+            sleep(Duration::from_millis(350)).await;
         }
 
         Ok(merged)

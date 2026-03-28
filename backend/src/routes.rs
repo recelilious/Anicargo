@@ -15,6 +15,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+use tokio::time::{Duration as TokioDuration, sleep};
 use tower::ServiceExt;
 use tower_http::{cors::CorsLayer, services::ServeFile, trace::TraceLayer};
 
@@ -40,9 +41,9 @@ use crate::{
         AdminDownloadExecutionEventsResponse, AdminDownloadExecutionsResponse,
         AdminDownloadQueueResponse, AdminRuntimeResponse, ApiEnvelope, AppError, AuthResponse,
         BootstrapResponse, CalendarResponse, CatalogManifestResponse, CatalogPageResponse,
-        CredentialsRequest, EpisodePlaybackMediaDto, EpisodePlaybackResponse, FansubRuleDto,
-        ForceDownloadResponse, HealthResponse, PlaybackHistoryItemDto,
-        PlaybackHistoryRecordRequest, PlaybackHistoryResponse, ResourceCandidateDto,
+        CredentialsRequest, DownloadJobDto, EpisodePlaybackMediaDto, EpisodePlaybackResponse,
+        FansubRuleDto, ForceDownloadResponse, HealthResponse, PlaybackHistoryItemDto,
+        PlaybackHistoryRecordRequest, PlaybackHistoryResponse, PolicyDto, ResourceCandidateDto,
         ResourceLibraryRequest, ResourceLibraryResponse, RuntimeHttpStatsDto, RuntimeOverviewDto,
         ScheduleDisplayQuery, SearchRequest, SearchResponse, SubjectCardDto,
         SubjectCollectionRequest, SubjectCollectionResponse, SubjectDetailDto,
@@ -965,6 +966,9 @@ fn viewer_to_summary(viewer: &ViewerIdentity) -> ViewerSummary {
     }
 }
 
+const DISCOVERY_MAX_ATTEMPTS: usize = 3;
+const DISCOVERY_RETRY_BASE_DELAY_MS: u64 = 3_000;
+
 fn viewer_to_download_requester(viewer: &ViewerIdentity) -> String {
     match viewer {
         ViewerIdentity::Device { id } => format!("device:{id}"),
@@ -1275,16 +1279,15 @@ async fn run_download_pipeline(
         .as_ref()
         .map(AiringEpisodeTargets::search_targets);
 
-    match state
-        .discovery
-        .discover_for_job(
-            &state.pool,
-            &job,
-            &discovery_profile,
-            &policy,
-            search_targets.as_deref(),
-        )
-        .await
+    match discover_candidates_with_retries(
+        &state,
+        &job,
+        &discovery_profile,
+        &policy,
+        search_targets.as_deref(),
+        reason,
+    )
+    .await
     {
         Ok(candidates) => {
             tracing::info!(
@@ -1377,6 +1380,63 @@ async fn run_download_pipeline(
 #[derive(Debug, Default)]
 struct DownloadPlan {
     candidate_chains: Vec<Vec<i64>>,
+}
+
+async fn discover_candidates_with_retries(
+    state: &AppState,
+    job: &DownloadJobDto,
+    discovery_profile: &AnimeGardenSearchProfile,
+    policy: &PolicyDto,
+    search_targets: Option<&[f64]>,
+    reason: &'static str,
+) -> Result<Vec<ResourceCandidateDto>, AppError> {
+    for attempt in 1..=DISCOVERY_MAX_ATTEMPTS {
+        match state
+            .discovery
+            .discover_for_job(&state.pool, job, discovery_profile, policy, search_targets)
+            .await
+        {
+            Ok(candidates) => return Ok(candidates),
+            Err(error @ AppError::Upstream(_)) if attempt < DISCOVERY_MAX_ATTEMPTS => {
+                let delay_ms = DISCOVERY_RETRY_BASE_DELAY_MS * attempt as u64;
+                let note = format!(
+                    "AnimeGarden discovery attempt {attempt}/{DISCOVERY_MAX_ATTEMPTS} failed; retrying in {}s",
+                    delay_ms / 1000
+                );
+                tracing::warn!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    attempt,
+                    max_attempts = DISCOVERY_MAX_ATTEMPTS,
+                    reason,
+                    error = %error,
+                    delay_ms,
+                    "AnimeGarden discovery attempt failed; scheduling retry"
+                );
+                if let Err(update_error) = db::update_download_job_search_status(
+                    &state.pool,
+                    job.id,
+                    "retrying",
+                    Some(&note),
+                )
+                .await
+                {
+                    tracing::warn!(
+                        job_id = job.id,
+                        subject_id = job.bangumi_subject_id,
+                        error = %update_error,
+                        "Failed to persist resource discovery retry state"
+                    );
+                }
+                sleep(TokioDuration::from_millis(delay_ms)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(AppError::upstream(
+        "AnimeGarden discovery retries exhausted",
+    ))
 }
 
 #[derive(Debug, Clone, Default)]

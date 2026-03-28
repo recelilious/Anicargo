@@ -7,7 +7,7 @@ use chrono::{DateTime, Duration, Utc};
 use regex::Regex;
 use sqlx::SqlitePool;
 use tokio::time::{Duration as TokioDuration, sleep};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     animegarden::{AnimeGardenClient, AnimeGardenResource, AnimeGardenSearchProfile},
@@ -41,11 +41,12 @@ impl ResourceDiscoveryCoordinator {
             episode_targets = ?episode_targets,
             "Starting resource discovery coordination"
         );
-        let (strategy, resources) = if let Some(targets) =
+        let (strategy, resources, discovery_note) = if let Some(targets) =
             episode_targets.filter(|targets| !targets.is_empty())
         {
             let mut strategy_parts = Vec::new();
             let mut normalized_resources = Vec::new();
+            let mut discovery_note = None;
 
             if job.release_status != "airing" {
                 let search = self.animegarden.search_resources(profile).await?;
@@ -73,6 +74,7 @@ impl ResourceDiscoveryCoordinator {
                         &format!("targeted:{}", strategy_parts.join(" || ")),
                         broad_resources,
                         policy,
+                        None,
                     )
                     .await;
                 }
@@ -85,10 +87,37 @@ impl ResourceDiscoveryCoordinator {
             }
 
             for (index, target_episode) in targets.iter().enumerate() {
-                let search = self
+                let search = match self
                     .animegarden
                     .search_episode_resources(profile, *target_episode)
-                    .await?;
+                    .await
+                {
+                    Ok(search) => search,
+                    Err(error) => {
+                        if normalized_resources.is_empty() {
+                            return Err(error);
+                        }
+
+                        let note = format!(
+                            "Stopped targeted discovery early after upstream failure while searching episode {}",
+                            format_episode_fragment(*target_episode)
+                        );
+                        warn!(
+                            job_id = job.id,
+                            subject_id = job.bangumi_subject_id,
+                            episode = target_episode,
+                            error = %error,
+                            preserved_resource_count = normalized_resources.len(),
+                            "Targeted AnimeGarden discovery failed after partial success; keeping previously discovered resources"
+                        );
+                        discovery_note = Some(note);
+                        strategy_parts.push(format!(
+                            "partial-stop:{}",
+                            format_episode_fragment(*target_episode)
+                        ));
+                        break;
+                    }
+                };
                 let matched_resources = normalize_resource_release_slots(
                     search.resources,
                     profile,
@@ -118,6 +147,7 @@ impl ResourceDiscoveryCoordinator {
             (
                 format!("targeted:{}", strategy_parts.join(" || ")),
                 dedup_normalized_resources(normalized_resources),
+                discovery_note,
             )
         } else {
             let search = self.animegarden.search_resources(profile).await?;
@@ -129,9 +159,18 @@ impl ResourceDiscoveryCoordinator {
                     &job.release_status,
                     episode_targets,
                 )),
+                None,
             )
         };
-        store_discovered_candidates(pool, job, &strategy, resources, policy).await
+        store_discovered_candidates(
+            pool,
+            job,
+            &strategy,
+            resources,
+            policy,
+            discovery_note.as_deref(),
+        )
+        .await
     }
 }
 
@@ -184,6 +223,7 @@ async fn store_discovered_candidates(
     strategy: &str,
     resources: Vec<NormalizedAnimeGardenResource>,
     policy: &PolicyDto,
+    discovery_note: Option<&str>,
 ) -> Result<Vec<ResourceCandidateDto>, AppError> {
     info!(
         job_id = job.id,
@@ -249,6 +289,10 @@ async fn store_discovered_candidates(
     );
     let (selected_candidate_id, status, notes) =
         choose_candidate(job, current_selected.as_ref(), &stored, policy);
+    let notes = discovery_note
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| format!("{notes}; {value}"))
+        .unwrap_or(notes);
     info!(
         job_id = job.id,
         subject_id = job.bangumi_subject_id,
