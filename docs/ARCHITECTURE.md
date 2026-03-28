@@ -1,17 +1,19 @@
 # Anicargo Architecture
 
-This document explains the repository-level architecture and points to the files that currently implement each major responsibility.
+This document explains the repository-level architecture and points to the
+files that currently implement each major responsibility.
 
 ## 1. Repository Shape
 
 ```text
 Anicargo/
-├─ backend/               Main API, schedule cache, subscription pipeline, playback
-├─ frontend/web/          React web client
-├─ services/downloader/   Embedded or standalone downloader runtime
-├─ clients/winui3/        Future native client placeholder
-├─ scripts/               Reset, log decoding, and downloader test scripts
-└─ docs/                  Repository-level documentation
+|- backend/                  Main API, schedule cache, subscription pipeline, playback
+|- frontend/web/             React web client
+|- services/downloader/      Embedded or standalone downloader runtime
+|- services/metadata-parser/ Standalone release-title and file-name parser
+|- clients/winui3/           Future native client placeholder
+|- scripts/                  Reset, log decoding, and downloader test scripts
+`- docs/                     Repository-level documentation
 ```
 
 ## 2. High-Level Runtime Flow
@@ -21,6 +23,7 @@ Anicargo/
 3. The web client reads the backend API and renders guest-first pages for season browsing, search, subscriptions, history, resources, and playback.
 4. When a subject reaches the subscription threshold, the backend resolves episode targets, searches AnimeGarden, scores candidates, and materializes download tasks through the downloader service.
 5. Downloaded files are indexed into the media inventory, mapped back to Bangumi episodes, and streamed through HTTP Range playback.
+6. Provider metadata and local naming data can be normalized further through the metadata parser library before later matching or correction logic.
 
 ## 3. Main Backend Entry Points
 
@@ -147,7 +150,25 @@ Configuration and task model:
 - `services/downloader/src/config.rs`
 - `services/downloader/src/model.rs`
 
-## 7. Current Caching Strategy
+## 7. Metadata Parser Library
+
+Metadata parser library exports:
+
+- `services/metadata-parser/src/lib.rs`
+
+Core parser implementation:
+
+- `services/metadata-parser/src/parser.rs`
+
+Shared parse model:
+
+- `services/metadata-parser/src/types.rs`
+
+This library is intentionally provider-agnostic and has no HTTP surface. It is
+designed to be embedded by backend workflows that need deterministic parsing of
+release titles and file names before applying provider-aware corrections.
+
+## 8. Current Caching Strategy
 
 The repository already has several local caches:
 
@@ -155,5 +176,3 @@ The repository already has several local caches:
 - compact runtime logs under `backend/runtime/logs`
 - downloader runtime state under `services/downloader/runtime` or the embedded runtime directory
 - frontend browser-local session and appearance state
-
-The planned dedicated filename parsing service is not part of the current architecture yet.

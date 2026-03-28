@@ -1,0 +1,15 @@
+[package]
+name = "anicargo-metadata-parser"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "anicargo_metadata_parser"
+path = "src/lib.rs"
+
+[dependencies]
+regex = "1.12"
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0"

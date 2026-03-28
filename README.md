@@ -7,6 +7,7 @@ The repository currently contains:
 - A Rust backend API.
 - A React + TypeScript web client.
 - An embedded or standalone torrent downloader service.
+- A standalone metadata parsing library for release titles and file names.
 - A placeholder directory for a future WinUI 3 client.
 
 ## Quick Start
@@ -48,6 +49,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\reset-backend-runtime.ps1 -St
 - `backend/`: Rust API, schedule cache, subscription orchestration, media indexing, playback.
 - `frontend/web/`: React web client.
 - `services/downloader/`: Embedded or standalone download scheduler and torrent runtime.
+- `services/metadata-parser/`: Standalone parsing library for release titles and file names.
 - `clients/winui3/`: Reserved for the future native Windows client.
 - `scripts/`: Maintenance, reset, and downloader test scripts.
 - `docs/`: Repository-level deployment, API, and architecture documentation.
@@ -60,6 +62,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\reset-backend-runtime.ps1 -St
 - [Backend docs](./backend/README.md)
 - [Web docs](./frontend/web/README.md)
 - [Downloader docs](./services/downloader/README.md)
+- [Metadata parser docs](./services/metadata-parser/README.md)
 
 ## Licensing And Upstream Notes
 
@@ -79,5 +82,4 @@ The repository already covers:
 - Guest-first viewer flow with optional user accounts and a dedicated `/admin` surface.
 - Subscription-driven resource discovery and playback.
 - Embedded downloader integration with an optional standalone HTTP port.
-
-The dedicated filename parsing service discussed next is not implemented in this repository yet.
+- A standalone metadata parsing library that can be embedded into backend workflows.

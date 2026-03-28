@@ -48,8 +48,10 @@ data/
 *.sqlite3
 *.db
 ignore/
+services/metadata-parser/test/
+services/metadata-parser/tests/output/
+services/metadata-parser/tests/tmp/
 
 # WinUI / .NET
 bin/
 obj/
-
