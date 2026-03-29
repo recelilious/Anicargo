@@ -31,7 +31,7 @@ use crate::{
     db,
     discovery::{
         ResourceDiscoveryCoordinator, candidate_priority_key, infer_season_hint_from_texts,
-        within_replacement_window,
+        replacement_window_elapsed,
     },
     downloads::{DownloadCoordinator, DownloadDemandInput, DownloadRuntimeSettings},
     media, season_catalog,
@@ -372,7 +372,8 @@ async fn active_downloads(
     }
 
     let executions =
-        db::list_active_download_executions(&state.pool, state.downloads.engine_name(), 24).await?;
+        db::list_visible_download_executions(&state.pool, state.downloads.engine_name(), 24)
+            .await?;
     let items = hydrate_active_downloads(&state.bangumi, &state.yuc, executions).await;
 
     Ok(Json(ApiEnvelope::new(ActiveDownloadsResponse { items })))
@@ -1003,6 +1004,8 @@ fn viewer_to_summary(viewer: &ViewerIdentity) -> ViewerSummary {
 
 const DISCOVERY_MAX_ATTEMPTS: usize = 3;
 const DISCOVERY_RETRY_BASE_DELAY_MS: u64 = 3_000;
+const CANDIDATE_PROBE_TIMEOUT_SECS: u64 = 12;
+const CANDIDATE_MATERIALIZE_TIMEOUT_SECS: u64 = 20;
 
 fn viewer_to_download_requester(viewer: &ViewerIdentity) -> String {
     match viewer {
@@ -1154,11 +1157,10 @@ async fn resolve_download_episode_targets(
     job: &crate::types::DownloadJobDto,
     policy: &crate::types::PolicyDto,
 ) -> Result<AiringEpisodeTargets, AppError> {
-    let (episodes, availability, executions, current_selected) = tokio::try_join!(
+    let (episodes, availability, executions) = tokio::try_join!(
         state.bangumi.fetch_episodes(job.bangumi_subject_id),
         db::list_subject_episode_availability(&state.pool, job.bangumi_subject_id),
-        db::list_download_executions(&state.pool, job.id),
-        db::current_selected_candidate_for_job(&state.pool, job.id)
+        db::list_download_executions(&state.pool, job.id)
     )?;
 
     let mut tracked_episodes = episodes
@@ -1176,27 +1178,38 @@ async fn resolve_download_episode_targets(
     tracked_episodes.dedup_by(|left, right| (*left - *right).abs() < 0.001);
 
     let latest = tracked_episodes.last().copied();
-    let backlog = tracked_episodes
+    let baseline_fansub = tracked_episodes.iter().copied().find_map(|episode_number| {
+        resolve_episode_tracking_record(episode_number, &availability, &executions)
+            .and_then(|record| record.source_fansub_name.clone())
+            .filter(|value| !value.trim().is_empty())
+    });
+    let due_targets = tracked_episodes
+        .iter()
+        .copied()
+        .filter(|episode_number| {
+            if !episode_already_tracked(*episode_number, &availability, &executions) {
+                return true;
+            }
+
+            job.release_status == "airing"
+                && should_revisit_episode_source(
+                    *episode_number,
+                    &baseline_fansub,
+                    &availability,
+                    &executions,
+                    policy.replacement_window_hours,
+                )
+        })
+        .collect::<Vec<_>>();
+    let backlog = due_targets
         .iter()
         .copied()
         .filter(|episode_number| Some(*episode_number) != latest)
-        .filter(|episode_number| {
-            !episode_already_tracked(*episode_number, &availability, &executions)
-        })
         .collect::<Vec<_>>();
     let latest_should_search = latest.is_some_and(|latest_episode| {
-        if !episode_already_tracked(latest_episode, &availability, &executions) {
-            return true;
-        }
-
-        job.release_status == "airing"
-            && current_selected.as_ref().is_some_and(|candidate| {
-                candidate_covers_episode(candidate, latest_episode)
-                    && within_replacement_window(
-                        job.selection_updated_at.as_deref(),
-                        policy.replacement_window_hours,
-                    )
-            })
+        due_targets
+            .iter()
+            .any(|episode_number| (*episode_number - latest_episode).abs() < 0.001)
     });
 
     let targets = AiringEpisodeTargets {
@@ -1208,6 +1221,8 @@ async fn resolve_download_episode_targets(
         job_id = job.id,
         subject_id = job.bangumi_subject_id,
         release_status = %job.release_status,
+        baseline_fansub = ?baseline_fansub,
+        due_targets = ?due_targets,
         backlog = ?targets.backlog,
         latest = ?targets.latest,
         "Resolved Bangumi episode targets for sequential download planning"
@@ -1496,6 +1511,65 @@ impl AiringEpisodeTargets {
     }
 }
 
+#[derive(Debug, Clone)]
+struct EpisodeTrackingRecord {
+    source_fansub_name: Option<String>,
+    updated_at: Option<String>,
+}
+
+fn resolve_episode_tracking_record(
+    episode_number: f64,
+    availability: &[db::SubjectEpisodeAvailability],
+    executions: &[crate::types::DownloadExecutionDto],
+) -> Option<EpisodeTrackingRecord> {
+    if let Some(item) = availability
+        .iter()
+        .find(|item| availability_covers_episode(item, episode_number))
+    {
+        return Some(EpisodeTrackingRecord {
+            source_fansub_name: item.source_fansub_name.clone(),
+            updated_at: Some(item.updated_at.clone()),
+        });
+    }
+
+    executions
+        .iter()
+        .find(|execution| {
+            matches!(
+                execution.state.as_str(),
+                "queued" | "staged" | "starting" | "downloading" | "completed" | "seeding"
+            ) && execution_covers_episode(execution, episode_number)
+        })
+        .map(|execution| EpisodeTrackingRecord {
+            source_fansub_name: execution.source_fansub_name.clone(),
+            updated_at: Some(execution.updated_at.clone()),
+        })
+}
+
+fn should_revisit_episode_source(
+    episode_number: f64,
+    baseline_fansub: &Option<String>,
+    availability: &[db::SubjectEpisodeAvailability],
+    executions: &[crate::types::DownloadExecutionDto],
+    replacement_window_hours: i64,
+) -> bool {
+    let Some(baseline_fansub) = baseline_fansub.as_deref() else {
+        return false;
+    };
+    let Some(current) = resolve_episode_tracking_record(episode_number, availability, executions)
+    else {
+        return false;
+    };
+    let Some(current_fansub) = current.source_fansub_name.as_deref() else {
+        return false;
+    };
+    if normalize_fansub_name(current_fansub) == normalize_fansub_name(baseline_fansub) {
+        return false;
+    }
+
+    replacement_window_elapsed(current.updated_at.as_deref(), replacement_window_hours)
+}
+
 async fn apply_download_plan(
     state: &AppState,
     job: &crate::types::DownloadJobDto,
@@ -1533,18 +1607,31 @@ async fn materialize_candidate_chain_with_peer_fallback(
     let mut last_error = None;
 
     for candidate_id in candidate_chain {
-        let probed_peer_count = match state
-            .downloads
-            .probe_candidate_with_priority(
+        let probed_peer_count = match timeout(
+            TokioDuration::from_secs(CANDIDATE_PROBE_TIMEOUT_SECS),
+            state.downloads.probe_candidate_with_priority(
                 &state.pool,
                 &state.config.storage.media_root,
                 job.id,
                 *candidate_id,
                 priority,
-            )
-            .await
+            ),
+        )
+        .await
         {
-            Ok(probe) if probe.peer_count == Some(0) => {
+            Err(_) => {
+                tracing::warn!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    candidate_id,
+                    priority,
+                    timeout_secs = CANDIDATE_PROBE_TIMEOUT_SECS,
+                    "Candidate source inspection timed out; trying next scored candidate"
+                );
+                last_error = Some(AppError::internal("candidate source inspection timed out"));
+                continue;
+            }
+            Ok(Ok(probe)) if probe.peer_count == Some(0) => {
                 tracing::info!(
                     job_id = job.id,
                     subject_id = job.bangumi_subject_id,
@@ -1555,7 +1642,7 @@ async fn materialize_candidate_chain_with_peer_fallback(
                 );
                 continue;
             }
-            Ok(probe) => {
+            Ok(Ok(probe)) => {
                 tracing::info!(
                     job_id = job.id,
                     subject_id = job.bangumi_subject_id,
@@ -1567,7 +1654,7 @@ async fn materialize_candidate_chain_with_peer_fallback(
                 );
                 probe.peer_count
             }
-            Err(error) => {
+            Ok(Err(error)) => {
                 tracing::warn!(
                     job_id = job.id,
                     subject_id = job.bangumi_subject_id,
@@ -1581,18 +1668,31 @@ async fn materialize_candidate_chain_with_peer_fallback(
             }
         };
 
-        match state
-            .downloads
-            .materialize_candidate_with_priority(
+        match timeout(
+            TokioDuration::from_secs(CANDIDATE_MATERIALIZE_TIMEOUT_SECS),
+            state.downloads.materialize_candidate_with_priority(
                 &state.pool,
                 &state.config.storage.media_root,
                 job.id,
                 *candidate_id,
                 priority,
-            )
-            .await
+            ),
+        )
+        .await
         {
-            Ok(decision) => {
+            Err(_) => {
+                tracing::warn!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    candidate_id,
+                    priority,
+                    timeout_secs = CANDIDATE_MATERIALIZE_TIMEOUT_SECS,
+                    "Candidate activation timed out; trying next scored candidate"
+                );
+                last_error = Some(AppError::internal("candidate activation timed out"));
+                continue;
+            }
+            Ok(Ok(decision)) => {
                 if let (Some(execution), Some(probe_peer_count)) =
                     (decision.execution.as_ref(), probed_peer_count)
                 {
@@ -1614,7 +1714,7 @@ async fn materialize_candidate_chain_with_peer_fallback(
                 }
                 return Ok(());
             }
-            Err(error) => {
+            Ok(Err(error)) => {
                 tracing::warn!(
                     job_id = job.id,
                     subject_id = job.bangumi_subject_id,
@@ -1665,9 +1765,10 @@ async fn build_airing_download_plan(
             .push(candidate);
     }
 
-    let latest_episode_key = targets
-        .and_then(|targets| targets.latest.map(episode_sort_key))
-        .or_else(|| candidates_by_episode.keys().next_back().copied());
+    let latest_episode_key = match targets {
+        Some(targets) => targets.latest.map(episode_sort_key),
+        None => candidates_by_episode.keys().next_back().copied(),
+    };
     let backlog_episodes = targets
         .map(|targets| targets.backlog.clone())
         .unwrap_or_else(|| {
@@ -1763,22 +1864,14 @@ async fn build_airing_download_plan(
 
     let latest_candidates = latest_episode_key
         .and_then(|latest_episode_key| candidates_by_episode.get(&latest_episode_key))
-        .and_then(|latest_candidates| {
-            if job.release_status == "airing" {
-                choose_latest_airing_candidates(
-                    job,
-                    policy,
-                    current_selected.as_ref(),
-                    latest_candidates.as_slice(),
-                    preferred_fansub.as_deref(),
-                )
-            } else {
-                Some(ordered_slot_candidates(
-                    latest_candidates.as_slice(),
-                    &job.release_status,
-                    preferred_fansub.as_deref(),
-                ))
-            }
+        .map(|latest_candidates| {
+            choose_latest_airing_candidates(
+                job,
+                policy,
+                current_selected.as_ref(),
+                latest_candidates.as_slice(),
+                preferred_fansub.as_deref(),
+            )
         });
 
     if let Some(candidate) = latest_candidates
@@ -1998,31 +2091,33 @@ fn choose_latest_airing_candidates<'a>(
     current_selected: Option<&'a ResourceCandidateDto>,
     latest_candidates: &[&'a ResourceCandidateDto],
     preferred_fansub: Option<&str>,
-) -> Option<Vec<&'a ResourceCandidateDto>> {
+) -> Vec<&'a ResourceCandidateDto> {
     let ordered = ordered_slot_candidates(latest_candidates, &job.release_status, preferred_fansub);
-    let best = ordered.first().copied()?;
+    let Some(best) = ordered.first().copied() else {
+        return Vec::new();
+    };
 
     let Some(current) = current_selected else {
-        return Some(ordered);
+        return ordered;
     };
 
     if current.slot_key != best.slot_key {
-        return Some(ordered);
+        return ordered;
     }
 
-    if !within_replacement_window(
+    if !replacement_window_elapsed(
         job.selection_updated_at.as_deref(),
         policy.replacement_window_hours,
     ) {
-        return Some(vec![current]);
+        return vec![current];
     }
 
     if slot_candidate_priority_key(best, &job.release_status, preferred_fansub)
         > slot_candidate_priority_key(current, &job.release_status, preferred_fansub)
     {
-        Some(ordered)
+        ordered
     } else {
-        Some(vec![current])
+        vec![current]
     }
 }
 

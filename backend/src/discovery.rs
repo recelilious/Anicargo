@@ -747,14 +747,15 @@ fn choose_candidate(
 
     if let Some(current) = current_selected {
         if current.slot_key == best.slot_key {
-            if !within_replacement_window(
+            if !replacement_window_elapsed(
                 job.selection_updated_at.as_deref(),
                 policy.replacement_window_hours,
             ) {
                 return (
                     Some(current.id),
                     "retained",
-                    "Replacement window expired; retained existing selected candidate".to_owned(),
+                    "Replacement window has not elapsed yet; retained existing selected candidate"
+                        .to_owned(),
                 );
             }
 
@@ -764,7 +765,7 @@ fn choose_candidate(
                 return (
                     Some(current.id),
                     "retained",
-                    "Current selected candidate remains preferred within replacement window"
+                    "Current selected candidate remains preferred after replacement review"
                         .to_owned(),
                 );
             }
@@ -1139,7 +1140,7 @@ fn normalize_name(value: &str) -> String {
         .collect()
 }
 
-pub(crate) fn within_replacement_window(selection_updated_at: Option<&str>, hours: i64) -> bool {
+pub(crate) fn replacement_window_elapsed(selection_updated_at: Option<&str>, hours: i64) -> bool {
     let Some(selection_updated_at) = selection_updated_at else {
         return true;
     };
@@ -1149,14 +1150,17 @@ pub(crate) fn within_replacement_window(selection_updated_at: Option<&str>, hour
     };
 
     let deadline = parsed.with_timezone(&Utc) + Duration::hours(hours.max(0));
-    Utc::now() <= deadline
+    Utc::now() >= deadline
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{infer_season_hint_from_texts, normalize_resource_release_slots};
+    use super::{
+        infer_season_hint_from_texts, normalize_resource_release_slots, replacement_window_elapsed,
+    };
     use crate::animegarden::{AnimeGardenResource, AnimeGardenSearchProfile};
     use crate::media::ParsedReleaseSlot;
+    use chrono::{Duration, Utc};
 
     #[test]
     fn parses_subject_season_hints_from_common_titles() {
@@ -1273,6 +1277,15 @@ mod tests {
         assert_eq!(normalized[0].release_slot.slot_key, "batch:1-24");
         assert_eq!(normalized[0].release_slot.episode_index, Some(1.0));
         assert_eq!(normalized[0].release_slot.episode_end_index, Some(24.0));
+    }
+
+    #[test]
+    fn replacement_window_opens_only_after_deadline() {
+        let recent = (Utc::now() - Duration::hours(24)).to_rfc3339();
+        let expired = (Utc::now() - Duration::hours(96)).to_rfc3339();
+
+        assert!(!replacement_window_elapsed(Some(recent.as_str()), 72));
+        assert!(replacement_window_elapsed(Some(expired.as_str()), 72));
     }
 
     fn sample_resource(

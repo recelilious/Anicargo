@@ -192,6 +192,8 @@ struct SubjectEpisodeAvailabilityRow {
     episode_end_index: Option<f64>,
     is_collection: i64,
     status: String,
+    source_fansub_name: Option<String>,
+    updated_at: String,
 }
 
 #[derive(Debug, FromRow)]
@@ -336,6 +338,8 @@ pub struct SubjectEpisodeAvailability {
     pub episode_end_index: Option<f64>,
     pub is_collection: bool,
     pub status: String,
+    pub source_fansub_name: Option<String>,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone)]
@@ -2141,6 +2145,43 @@ pub async fn list_active_download_executions(
     Ok(rows.into_iter().map(map_download_execution).collect())
 }
 
+pub async fn list_visible_download_executions(
+    pool: &SqlitePool,
+    engine_name: &str,
+    limit: usize,
+) -> Result<Vec<DownloadExecutionDto>, AppError> {
+    let limit = limit.clamp(1, 512) as i64;
+    let rows = sqlx::query_as::<_, DownloadExecutionRow>(
+        "SELECT *
+         FROM download_executions
+         WHERE engine_name = ?1
+           AND (
+                state IN ('queued', 'staged', 'starting', 'downloading')
+                OR (state IN ('paused', 'failed') AND downloaded_bytes > 0)
+                OR (state IN ('seeding', 'completed') AND COALESCE(last_indexed_at, '') = '')
+           )
+         ORDER BY CASE state
+             WHEN 'downloading' THEN 0
+             WHEN 'starting' THEN 1
+             WHEN 'queued' THEN 2
+             WHEN 'staged' THEN 3
+             WHEN 'paused' THEN 4
+             WHEN 'failed' THEN 5
+             ELSE 6
+         END ASC,
+         updated_at DESC,
+         created_at DESC
+         LIMIT ?2",
+    )
+    .bind(engine_name)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to list visible download executions"))?;
+
+    Ok(rows.into_iter().map(map_download_execution).collect())
+}
+
 pub async fn mark_download_execution_replaced(
     pool: &SqlitePool,
     execution_id: i64,
@@ -2279,11 +2320,13 @@ pub async fn list_subject_episode_availability(
             media_inventory.episode_index,
             media_inventory.episode_end_index,
             media_inventory.is_collection,
-            media_inventory.status
+            media_inventory.status,
+            download_executions.source_fansub_name,
+            media_inventory.updated_at
          FROM media_inventory
          INNER JOIN download_executions
             ON download_executions.id = media_inventory.download_execution_id
-         WHERE media_inventory.bangumi_subject_id = ?1
+        WHERE media_inventory.bangumi_subject_id = ?1
            AND media_inventory.status IN ('ready', 'partial')
            AND download_executions.state IN ('starting', 'downloading', 'completed', 'seeding')
          ORDER BY CASE media_inventory.status
@@ -2305,6 +2348,8 @@ pub async fn list_subject_episode_availability(
             episode_end_index: row.episode_end_index,
             is_collection: row.is_collection != 0,
             status: row.status,
+            source_fansub_name: row.source_fansub_name,
+            updated_at: row.updated_at,
         })
         .collect())
 }
