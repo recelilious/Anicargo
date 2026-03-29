@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, Spinner, Text, makeStyles } from "@fluentui/react-components";
 
 import { fetchCatalogPage } from "../api";
@@ -10,50 +10,113 @@ const useStyles = makeStyles({
   page: {
     display: "flex",
     flexDirection: "column",
-    gap: "20px"
+    gap: "20px",
   },
-  header: {
-    padding: "18px 22px",
-    backgroundColor: "var(--app-surface-1)",
-    border: "1px solid var(--app-border)",
-    boxShadow: "var(--app-card-shadow)"
-  },
-  section: {
+  hero: {
     display: "flex",
     flexDirection: "column",
-    gap: "12px"
-  },
-  sectionHeader: {
-    padding: "14px 18px",
+    gap: "14px",
+    padding: "22px 24px",
     backgroundColor: "var(--app-surface-1)",
     border: "1px solid var(--app-border)",
-    boxShadow: "var(--app-card-shadow)"
+    boxShadow: "var(--app-card-shadow)",
+  },
+  heroTop: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: "20px",
+    flexWrap: "wrap",
+  },
+  heroTitleGroup: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+  },
+  heroSource: {
+    color: "var(--app-muted)",
+    whiteSpace: "nowrap",
+  },
+  heroNote: {
+    color: "var(--app-muted)",
+  },
+  stack: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "18px",
+  },
+  sectionShell: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "14px",
+    padding: "18px",
+    backgroundColor: "var(--app-surface-1)",
+    border: "1px solid var(--app-border)",
+    boxShadow: "var(--app-card-shadow)",
+  },
+  sectionHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "12px",
+    flexWrap: "wrap",
+  },
+  sectionCount: {
+    color: "var(--app-muted)",
   },
   grid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))",
-    gap: "16px"
-  },
-  muted: {
-    color: "var(--app-muted)"
+    gap: "16px",
   },
   emptyCard: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
     padding: "24px 22px",
     backgroundColor: "var(--app-surface-1)",
     border: "1px solid var(--app-border)",
-    boxShadow: "var(--app-card-shadow)"
-  }
+    boxShadow: "var(--app-card-shadow)",
+  },
+  muted: {
+    color: "var(--app-muted)",
+  },
 });
 
-function CatalogPageView({
-  kind,
-  fallbackTitle
-}: {
-  kind: "preview" | "special";
-  fallbackTitle: string;
-}) {
+type CatalogPageKind = "preview" | "special";
+
+type PageCopy = {
+  title: string;
+  source: string;
+  note: string;
+  emptyTitle: string;
+  emptyNote: string;
+};
+
+function pageCopy(kind: CatalogPageKind): PageCopy {
+  if (kind === "preview") {
+    return {
+      title: "新季度前瞻",
+      source: "来源：新番卫星观测站 | 長門番堂",
+      note: "优先展示已出现的下个季度番剧表，后续再补充更远期的前瞻条目。",
+      emptyTitle: "暂时还没有新的前瞻条目",
+      emptyNote: "如果 Yuc 还没有放出下个季度页面或卫星观测站内容，这里会保持为空。",
+    };
+  }
+
+  return {
+    title: "特别放送",
+    source: "来源：Movie / OVA / OAD / SP etc. | 長門番堂",
+    note: "这里汇总剧场版、OVA、OAD、SP 和网络放送等特别内容。",
+    emptyTitle: "暂时还没有特别放送条目",
+    emptyNote: "等 Yuc 更新特别放送页面后，这里会自动显示新的内容。",
+  };
+}
+
+function CatalogPageView({ kind }: { kind: CatalogPageKind }) {
   const styles = useStyles();
   const { deviceId, userToken } = useSession();
+  const copy = useMemo(() => pageCopy(kind), [kind]);
   const [page, setPage] = useState<CatalogPageResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -80,47 +143,67 @@ function CatalogPageView({
 
   return (
     <section className={styles.page}>
-      <Card className={styles.header}>
-        <Text weight="semibold" size={800}>
-          {page?.title || fallbackTitle}
-        </Text>
+      <Card className={styles.hero}>
+        <div className={styles.heroTop}>
+          <div className={styles.heroTitleGroup}>
+            <Text weight="semibold" size={800}>
+              {copy.title}
+            </Text>
+            <Text size={300} className={styles.heroNote}>
+              {copy.note}
+            </Text>
+          </div>
+
+          <Text size={200} className={styles.heroSource}>
+            {copy.source}
+          </Text>
+        </div>
       </Card>
 
       {!page && !error ? <Spinner label="正在同步目录..." /> : null}
       {error ? <Text>{error}</Text> : null}
+
       {page && page.sections.length === 0 ? (
         <Card className={styles.emptyCard}>
-          <Text weight="semibold">褰撳墠娌℃湁鍙樉绀虹殑鐩綍鍐呭</Text>
+          <Text weight="semibold">{copy.emptyTitle}</Text>
           <Text size={300} className={styles.muted}>
-            濡傛灉鍒氬垰鍚姩鍚庣涓€娆℃墦寮€锛屽悗绔鍦ㄧ紦瀛樺拰鍖归厤 Bangumi 鏁版嵁銆?
+            {copy.emptyNote}
           </Text>
         </Card>
       ) : null}
 
-      {page?.sections.map((section) => (
-        <section key={section.key} className={styles.section}>
-          <Card className={styles.sectionHeader}>
-            <Text weight="semibold">{section.title}</Text>
-            <Text size={300} className={styles.muted}>
-              {section.items.length} 部
-            </Text>
-          </Card>
+      {page?.sections.length ? (
+        <div className={styles.stack}>
+          {page.sections.map((section) => (
+            <section key={section.key} className={styles.sectionShell}>
+              <div className={styles.sectionHeader}>
+                <Text weight="semibold">{section.title}</Text>
+                <Text size={200} className={styles.sectionCount}>
+                  {section.items.length} 部
+                </Text>
+              </div>
 
-          <div className={styles.grid}>
-            {section.items.map((subject) => (
-              <SubjectCard key={subject.bangumiSubjectId} subject={subject} metaVariant="catalog" />
-            ))}
-          </div>
-        </section>
-      ))}
+              <div className={styles.grid}>
+                {section.items.map((subject) => (
+                  <SubjectCard
+                    key={`${section.key}-${subject.bangumiSubjectId}`}
+                    subject={subject}
+                    metaVariant="catalog"
+                  />
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }
 
 export function PreviewPage() {
-  return <CatalogPageView kind="preview" fallbackTitle="新季度前瞻" />;
+  return <CatalogPageView kind="preview" />;
 }
 
 export function SpecialPage() {
-  return <CatalogPageView kind="special" fallbackTitle="特别放送" />;
+  return <CatalogPageView kind="special" />;
 }

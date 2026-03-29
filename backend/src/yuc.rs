@@ -86,6 +86,10 @@ impl YucClient {
         format!("{}{:02}", now.year(), quarter_month)
     }
 
+    pub fn next_season_key(&self) -> String {
+        next_season_key_from(&self.current_season_key())
+    }
+
     pub fn season_url(&self, season_key: &str) -> String {
         format!("{}/{}/", self.base_url, season_key)
     }
@@ -106,13 +110,50 @@ impl YucClient {
     pub async fn fetch_preview_catalog(
         &self,
     ) -> Result<(String, Vec<CatalogSectionDto>), AppError> {
-        self.fetch_cached_catalog_page(
-            "preview",
-            "新季度前瞻",
-            &self.preview_url(),
-            parse_preview_sections,
-        )
-        .await
+        if let Some(cached) = self
+            .catalog_cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get("preview").cloned())
+            .filter(|cached| {
+                Utc::now() - cached.fetched_at
+                    < chrono::Duration::hours(CATALOG_PAGE_CACHE_TTL_HOURS)
+            })
+        {
+            return Ok((cached.title, cached.sections));
+        }
+
+        let mut sections = Vec::new();
+        if let Some((_, season_sections)) = self.fetch_next_season_preview_catalog().await? {
+            let season_key = self.next_season_key();
+            sections.extend(
+                season_sections
+                    .into_iter()
+                    .map(|section| CatalogSectionDto {
+                        key: format!("next-season-{season_key}-{}", section.key),
+                        title: section.title,
+                        items: section.items,
+                    }),
+            );
+        }
+
+        let preview_url = self.preview_url();
+        let html = self.fetch_html(&preview_url, "Yuc preview page").await?;
+        let title = "新季度前瞻".to_owned();
+        sections.extend(parse_preview_sections(&html));
+
+        if let Ok(mut cache) = self.catalog_cache.lock() {
+            cache.insert(
+                "preview".to_owned(),
+                CachedCatalogPage {
+                    title: title.clone(),
+                    sections: sections.clone(),
+                    fetched_at: Utc::now(),
+                },
+            );
+        }
+
+        Ok((title, sections))
     }
 
     pub async fn fetch_special_catalog(
@@ -164,12 +205,42 @@ impl YucClient {
         Ok((title, sections))
     }
 
+    async fn fetch_next_season_preview_catalog(
+        &self,
+    ) -> Result<Option<(String, Vec<CatalogSectionDto>)>, AppError> {
+        let season_key = self.next_season_key();
+        let url = self.season_url(&season_key);
+        let html = match self.fetch_html(&url, "Yuc next-season page").await {
+            Ok(html) => html,
+            Err(AppError::NotFound(_)) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+
+        let title = strip_yuc_site_suffix(
+            &extract_page_title(&html).unwrap_or_else(|| format!("{season_key} 新番表")),
+        );
+        let sections = parse_future_season_sections(&html, &title);
+        if sections.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some((title, sections)))
+    }
+
     async fn fetch_html(&self, url: &str, label: &str) -> Result<String, AppError> {
-        self.http
+        let response = self
+            .http
             .get(url)
             .send()
             .await
-            .map_err(|error| AppError::upstream(format!("failed to reach {label}: {error}")))?
+            .map_err(|error| AppError::upstream(format!("failed to reach {label}: {error}")))?;
+
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Err(AppError::not_found(format!("{label} not found")));
+        }
+
+        response
             .error_for_status()
             .map_err(|error| AppError::upstream(format!("{label} returned an error: {error}")))?
             .text()
@@ -566,6 +637,76 @@ fn parse_preview_sections(html: &str) -> Vec<CatalogSectionDto> {
     sections
 }
 
+fn parse_future_season_sections(html: &str, title: &str) -> Vec<CatalogSectionDto> {
+    let items = future_season_card_regex()
+        .captures_iter(html)
+        .filter_map(|card| {
+            let title_cn = card
+                .name("title_cn")
+                .map(|value| sanitize_title(value.as_str()))
+                .unwrap_or_default();
+            let title_jp = card
+                .name("title_jp")
+                .map(|value| sanitize_title(value.as_str()))
+                .unwrap_or_default();
+
+            if title_cn.is_empty() && title_jp.is_empty() {
+                return None;
+            }
+
+            let primary_title = if title_jp.is_empty() {
+                title_cn.clone()
+            } else {
+                title_jp
+            };
+            let display_title_cn = if title_cn.is_empty() {
+                primary_title.clone()
+            } else {
+                title_cn
+            };
+
+            let media_type = card
+                .name("kind")
+                .map(|value| sanitize_title(value.as_str()))
+                .filter(|value| !value.is_empty());
+            let broadcast = card
+                .name("broadcast")
+                .map(|value| sanitize_title(value.as_str()))
+                .filter(|value| !value.is_empty());
+            let catalog_label = join_catalog_label(media_type.as_deref(), broadcast.as_deref());
+            let image_url =
+                normalize_catalog_image_url(card.name("image").map(|value| value.as_str()));
+
+            Some(SubjectCardDto {
+                bangumi_subject_id: stable_catalog_subject_id("preview-season", &primary_title),
+                title: primary_title,
+                title_cn: display_title_cn,
+                summary: String::new(),
+                release_status: "upcoming".to_owned(),
+                air_date: None,
+                broadcast_time: None,
+                air_weekday: None,
+                image_banner: image_url.clone(),
+                image_portrait: image_url,
+                tags: Vec::new(),
+                total_episodes: None,
+                rating_score: None,
+                catalog_label,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if items.is_empty() {
+        return Vec::new();
+    }
+
+    vec![CatalogSectionDto {
+        key: "season-overview".to_owned(),
+        title: title.to_owned(),
+        items,
+    }]
+}
+
 fn parse_special_sections(html: &str) -> Vec<CatalogSectionDto> {
     let mut sections = Vec::new();
 
@@ -728,8 +869,40 @@ fn extract_page_title(html: &str) -> Option<String> {
     }
 }
 
+fn strip_yuc_site_suffix(value: &str) -> String {
+    value
+        .strip_suffix(" | 長門番堂")
+        .or_else(|| value.strip_suffix("| 長門番堂"))
+        .map(str::trim)
+        .unwrap_or(value)
+        .to_owned()
+}
+
 fn beijing_now() -> DateTime<FixedOffset> {
     Utc::now().with_timezone(&FixedOffset::east_opt(8 * 3600).expect("valid beijing utc offset"))
+}
+
+fn next_season_key_from(current: &str) -> String {
+    let Some(year) = current
+        .get(0..4)
+        .and_then(|value| value.parse::<i32>().ok())
+    else {
+        return current.to_owned();
+    };
+    let Some(month) = current
+        .get(4..6)
+        .and_then(|value| value.parse::<u32>().ok())
+    else {
+        return current.to_owned();
+    };
+
+    match month {
+        1 => format!("{year}04"),
+        4 => format!("{year}07"),
+        7 => format!("{year}10"),
+        10 => format!("{}01", year + 1),
+        _ => current.to_owned(),
+    }
 }
 
 fn sanitize_title(raw: &str) -> String {
@@ -880,6 +1053,16 @@ fn detail_card_regex() -> &'static Regex {
     })
 }
 
+fn future_season_card_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(
+            r#"(?s)<div style="float:left"><img[^>]*data-src="(?P<image>[^"]*)"[^>]*></div>\s*<div><table width="500px"><tr><td class="title_main_r" colspan="2" rowspan="2">\s*<p class="title_cn_r">(?P<title_cn>.*?)</p>\s*<p class="title_jp_r">(?P<title_jp>.*?)</p></td>\s*<td class="type_[^"]*_r">(?P<kind>.*?)</td>.*?<p class="broadcast_r">(?P<broadcast>.*?)</p>"#,
+        )
+        .expect("valid yuc future season card regex")
+    })
+}
+
 fn html_tag_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| Regex::new(r"<[^>]+>").expect("valid html tag regex"))
@@ -897,7 +1080,10 @@ fn variant_regex() -> &'static Regex {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_preview_sections, parse_special_sections};
+    use super::{
+        next_season_key_from, parse_future_season_sections, parse_preview_sections,
+        parse_special_sections,
+    };
 
     #[test]
     fn parses_preview_sections_into_catalog_cards() {
@@ -943,5 +1129,44 @@ mod tests {
             Some("Movie 2099/3/6上映")
         );
         assert_eq!(sections[0].items[0].release_status, "upcoming");
+    }
+
+    #[test]
+    fn parses_future_season_page_into_preview_section() {
+        let html = r#"
+            <title>2026年4月新番表 | 長門番堂</title>
+            <!--#A01-->
+            <div style="float:left"><img width="180px" data-src="https://example.com/season.jpg" referrerPolicy="no-referrer"></div>
+            <div><table width="500px"><tr><td class="title_main_r" colspan="2" rowspan="2">
+            <p class="title_cn_r">测试四月新番</p>
+            <p class="title_jp_r">テスト四月新番</p></td>
+            <td class="type_a_r">原创动画</td></tr>
+            <tr><td class="type_tag_r">战斗/日常</td></tr><tr>
+            <td rowspan="2" class="staff_r">staff</td>
+            <td rowspan="2" class="cast_r">cast</td>
+            <td class="link_a_r">
+            <p class="broadcast_r">4/5周日深夜</p>
+            <p class="broadcast_ex_r"></p></td></tr>
+            <tr><td class="link_b_r"></td></tr></table></div>
+        "#;
+
+        let sections = parse_future_season_sections(html, "2026年4月新番表");
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].title, "2026年4月新番表");
+        assert_eq!(sections[0].items.len(), 1);
+        assert_eq!(sections[0].items[0].title_cn, "测试四月新番");
+        assert_eq!(sections[0].items[0].title, "テスト四月新番");
+        assert_eq!(
+            sections[0].items[0].catalog_label.as_deref(),
+            Some("原创动画 4/5周日深夜")
+        );
+    }
+
+    #[test]
+    fn computes_next_season_key_across_year_boundary() {
+        assert_eq!(next_season_key_from("202601"), "202604");
+        assert_eq!(next_season_key_from("202604"), "202607");
+        assert_eq!(next_season_key_from("202607"), "202610");
+        assert_eq!(next_season_key_from("202610"), "202701");
     }
 }

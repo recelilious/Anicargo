@@ -245,24 +245,7 @@ pub async fn load_catalog_page(
         return Err(AppError::internal("catalog page is empty"));
     }
 
-    let mut sections = Vec::<CatalogSectionDto>::new();
-    for row in rows {
-        let section_key = row.section_key();
-        if sections
-            .last()
-            .is_none_or(|section| section.key != section_key)
-        {
-            sections.push(CatalogSectionDto {
-                key: section_key.clone(),
-                title: row.section_title(),
-                items: Vec::new(),
-            });
-        }
-
-        if let Some(section) = sections.last_mut() {
-            section.items.push(row.to_card());
-        }
-    }
+    let sections = rows_into_sections(rows);
 
     Ok(CatalogPageResponse {
         kind: kind.key().to_owned(),
@@ -280,7 +263,8 @@ async fn sync_catalog(
     let snapshot = load_catalog_snapshot(pool, kind.key()).await?;
     let needs_fetch = snapshot
         .as_ref()
-        .is_none_or(|row| is_stale_rfc3339(&row.refreshed_at, CATALOG_REFRESH_TTL_HOURS));
+        .is_none_or(|row| is_stale_rfc3339(&row.refreshed_at, CATALOG_REFRESH_TTL_HOURS))
+        || catalog_requires_shape_refresh(pool, kind).await?;
 
     if needs_fetch {
         let payload = fetch_catalog_payload(yuc, kind).await?;
@@ -297,6 +281,30 @@ async fn sync_catalog(
     populate_missing_matches(pool, bangumi, kind.key()).await?;
     refresh_subject_statuses(pool, bangumi, kind.key()).await?;
     Ok(())
+}
+
+async fn catalog_requires_shape_refresh(
+    pool: &SqlitePool,
+    kind: CatalogKind,
+) -> Result<bool, AppError> {
+    if !matches!(kind, CatalogKind::Preview) {
+        return Ok(false);
+    }
+
+    let title = sqlx::query_scalar::<_, String>(
+        "SELECT title
+         FROM yuc_catalogs
+         WHERE catalog_key = ?1
+         LIMIT 1",
+    )
+    .bind(kind.key())
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to inspect cached catalog shape"))?;
+
+    Ok(title
+        .as_deref()
+        .is_some_and(|value| value.trim() != "新季度前瞻"))
 }
 
 async fn fetch_catalog_payload(
@@ -552,6 +560,29 @@ async fn load_catalog_rows(
     .fetch_all(pool)
     .await
     .map_err(|_| AppError::internal("failed to load cached catalog rows"))
+}
+
+fn rows_into_sections(rows: Vec<CatalogPageRow>) -> Vec<CatalogSectionDto> {
+    let mut sections = Vec::<CatalogSectionDto>::new();
+    for row in rows {
+        let section_key = row.section_key();
+        if sections
+            .last()
+            .is_none_or(|section| section.key != section_key)
+        {
+            sections.push(CatalogSectionDto {
+                key: section_key.clone(),
+                title: row.section_title(),
+                items: Vec::new(),
+            });
+        }
+
+        if let Some(section) = sections.last_mut() {
+            section.items.push(row.to_card());
+        }
+    }
+
+    sections
 }
 
 async fn populate_missing_matches(
