@@ -374,7 +374,10 @@ async fn active_downloads(
     let executions =
         db::list_visible_download_executions(&state.pool, state.downloads.engine_name(), 24)
             .await?;
-    let items = hydrate_active_downloads(&state.bangumi, &state.yuc, executions).await;
+    let items = normalize_visible_active_downloads(
+        hydrate_active_downloads(&state.bangumi, &state.yuc, executions).await,
+        state.config.torrent.max_concurrent_downloads,
+    );
 
     Ok(Json(ApiEnvelope::new(ActiveDownloadsResponse { items })))
 }
@@ -2447,6 +2450,31 @@ async fn hydrate_active_downloads(
         .collect()
 }
 
+fn normalize_visible_active_downloads(
+    items: Vec<ActiveDownloadDto>,
+    max_concurrent_downloads: usize,
+) -> Vec<ActiveDownloadDto> {
+    let mut remaining_active_slots = max_concurrent_downloads.max(1);
+
+    items
+        .into_iter()
+        .map(|mut item| {
+            if matches!(item.state.as_str(), "downloading" | "starting") {
+                if remaining_active_slots > 0 {
+                    remaining_active_slots -= 1;
+                } else {
+                    item.state = "queued".to_owned();
+                    item.download_rate_bytes = 0;
+                    item.upload_rate_bytes = 0;
+                    item.peer_count = 0;
+                }
+            }
+
+            item
+        })
+        .collect()
+}
+
 fn sanitize_download_display_slot(
     source_title: &str,
     release_status: &str,
@@ -2760,8 +2788,8 @@ fn format_runtime_duration(duration: std::time::Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::collection_matches_target_window;
-    use crate::types::ResourceCandidateDto;
+    use super::{collection_matches_target_window, normalize_visible_active_downloads};
+    use crate::types::{ActiveDownloadDto, ResourceCandidateDto};
 
     fn sample_collection_candidate(start: f64, end: f64) -> ResourceCandidateDto {
         ResourceCandidateDto {
@@ -2804,5 +2832,43 @@ mod tests {
             &sample_collection_candidate(0.0, 11.0),
             &targets,
         ));
+    }
+
+    #[test]
+    fn visible_active_downloads_are_capped_to_configured_limit() {
+        let items = (0..6)
+            .map(|index| ActiveDownloadDto {
+                bangumi_subject_id: 1,
+                title: "sample".to_owned(),
+                title_cn: String::new(),
+                image_portrait: None,
+                release_status: "airing".to_owned(),
+                slot_key: format!("episode:{}", index + 1),
+                episode_index: Some((index + 1) as f64),
+                episode_end_index: Some((index + 1) as f64),
+                is_collection: false,
+                state: "downloading".to_owned(),
+                source_title: "sample".to_owned(),
+                source_fansub_name: None,
+                downloaded_bytes: 0,
+                total_bytes: 100,
+                download_rate_bytes: 128,
+                upload_rate_bytes: 0,
+                peer_count: 2,
+                updated_at: "2026-01-01T00:00:00Z".to_owned(),
+            })
+            .collect::<Vec<_>>();
+
+        let normalized = normalize_visible_active_downloads(items, 5);
+        assert_eq!(
+            normalized
+                .iter()
+                .filter(|item| matches!(item.state.as_str(), "starting" | "downloading"))
+                .count(),
+            5
+        );
+        assert_eq!(normalized[5].state, "queued");
+        assert_eq!(normalized[5].download_rate_bytes, 0);
+        assert_eq!(normalized[5].peer_count, 0);
     }
 }
