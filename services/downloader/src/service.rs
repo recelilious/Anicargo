@@ -43,8 +43,8 @@ use crate::{
     },
 };
 
-const TASK_SESSION_START_TIMEOUT_SECS: u64 = 20;
-const TASK_SESSION_RESUME_TIMEOUT_SECS: u64 = 8;
+const TASK_SESSION_START_TIMEOUT_SECS: u64 = 60;
+const TASK_SESSION_RESUME_TIMEOUT_SECS: u64 = 20;
 const TASK_SESSION_PAUSE_TIMEOUT_SECS: u64 = 8;
 const TASK_TIMEOUT_PRIORITY_BUMP: u32 = 5;
 const TASK_PRIORITY_MAX: u32 = 1023;
@@ -798,6 +798,14 @@ impl DownloaderService {
         }
     }
 
+    async fn requeue_task_after_timeout(&self, task_id: Uuid, reason: impl Into<String>) {
+        let reason = reason.into();
+        let mut tasks = self.tasks.write().await;
+        if let Some(record) = tasks.get_mut(&task_id) {
+            apply_timeout_requeue(record, &reason);
+        }
+    }
+
     async fn ensure_task_active(
         &self,
         task: TaskRecord,
@@ -828,7 +836,7 @@ impl DownloaderService {
                         TASK_SESSION_START_TIMEOUT_SECS
                     );
                     warn!(task_id = %task.id, error = %error, "Downloader task start timed out");
-                    self.mark_task_failed(task.id, error).await;
+                    self.requeue_task_after_timeout(task.id, error).await;
                     return Ok(());
                 }
             };
@@ -872,7 +880,7 @@ impl DownloaderService {
                     );
                     warn!(task_id = %task.id, error = %error, "Downloader task resume timed out");
                     drop(sessions);
-                    self.mark_task_failed(task.id, error).await;
+                    self.requeue_task_after_timeout(task.id, error).await;
                     return Ok(());
                 }
             }
