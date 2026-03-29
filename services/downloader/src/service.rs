@@ -46,6 +46,8 @@ use crate::{
 const TASK_SESSION_START_TIMEOUT_SECS: u64 = 20;
 const TASK_SESSION_RESUME_TIMEOUT_SECS: u64 = 8;
 const TASK_SESSION_PAUSE_TIMEOUT_SECS: u64 = 8;
+const TASK_TIMEOUT_PRIORITY_BUMP: u32 = 5;
+const TASK_PRIORITY_MAX: u32 = 1023;
 
 #[derive(Clone)]
 pub struct DownloaderService {
@@ -736,10 +738,7 @@ impl DownloaderService {
             let Some(task) = tasks.get_mut(&task_id) else {
                 continue;
             };
-            task.enabled = false;
-            task.state = TaskState::Failed;
-            task.last_error = Some(reason);
-            task.updated_at = Utc::now();
+            apply_timeout_requeue(task, &reason);
         }
 
         Ok(())
@@ -1692,6 +1691,26 @@ fn timeout_reason(task: &TaskRecord, now: DateTime<Utc>) -> Option<&'static str>
     None
 }
 
+fn apply_timeout_requeue(task: &mut TaskRecord, reason: &str) {
+    task.priority = task
+        .priority
+        .saturating_add(TASK_TIMEOUT_PRIORITY_BUMP)
+        .min(TASK_PRIORITY_MAX);
+    task.enabled = true;
+    task.state = TaskState::Queued;
+    task.download_rate_bytes = 0;
+    task.upload_rate_bytes = 0;
+    task.peer_count = 0;
+    task.started_at = None;
+    task.last_progress_at = None;
+    task.last_progress_bytes = task.downloaded_bytes;
+    task.last_error = Some(format!(
+        "{reason}; re-queued with priority {}",
+        task.priority
+    ));
+    task.updated_at = Utc::now();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1880,6 +1899,50 @@ mod tests {
         task.total_timeout_secs = 600;
 
         assert_eq!(timeout_reason(&task, now), None);
+    }
+
+    #[test]
+    fn timed_out_task_is_requeued_with_bumped_priority() {
+        let now = Utc
+            .with_ymd_and_hms(2026, 3, 27, 4, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        let mut task = sample_task(7, now - chrono::Duration::seconds(300), None);
+        task.state = TaskState::Downloading;
+        task.started_at = Some(now - chrono::Duration::seconds(300));
+        task.downloaded_bytes = 1234;
+        task.last_progress_bytes = 1234;
+
+        apply_timeout_requeue(&mut task, "stalled without download progress");
+
+        assert_eq!(task.state, TaskState::Queued);
+        assert!(task.enabled);
+        assert_eq!(task.priority, 12);
+        assert_eq!(task.peer_count, 0);
+        assert_eq!(task.download_rate_bytes, 0);
+        assert_eq!(task.last_progress_bytes, 1234);
+        assert!(task.started_at.is_none());
+        assert!(task.last_progress_at.is_none());
+        assert!(
+            task.last_error
+                .as_deref()
+                .is_some_and(|message| message.contains("re-queued with priority 12"))
+        );
+    }
+
+    #[test]
+    fn timed_out_task_priority_caps_at_upper_bound() {
+        let now = Utc
+            .with_ymd_and_hms(2026, 3, 27, 5, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        let mut task = sample_task(1022, now - chrono::Duration::seconds(300), None);
+
+        apply_timeout_requeue(&mut task, "total timeout reached");
+        assert_eq!(task.priority, 1023);
+
+        apply_timeout_requeue(&mut task, "total timeout reached");
+        assert_eq!(task.priority, 1023);
     }
 
     #[test]
