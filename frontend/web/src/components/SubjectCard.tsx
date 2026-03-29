@@ -151,17 +151,17 @@ function prefersReducedMotion() {
 }
 
 function formatRating(score: number | null) {
-  return score == null ? "暂无评分" : score.toFixed(1);
+  return score == null ? "\u6682\u65e0\u8bc4\u5206" : score.toFixed(1);
 }
 
 function formatStatus(status: SubjectCardModel["releaseStatus"]) {
   switch (status) {
     case "airing":
-      return "放送中";
+      return "\u653e\u9001\u4e2d";
     case "upcoming":
-      return "未播出";
+      return "\u672a\u64ad\u51fa";
     default:
-      return "已完结";
+      return "\u5df2\u5b8c\u7ed3";
   }
 }
 
@@ -171,30 +171,43 @@ function extractCatalogYear(airDate: string | null) {
 }
 
 function normalizeCompactType(value: string) {
-  const compact = value.replace(/\s+/g, "").toLowerCase();
+  const normalized = value.trim();
+  const compact = normalized.replace(/\s+/g, "").toLowerCase();
 
   if (!compact) {
     return null;
   }
 
-  if (compact.includes("漫改") || compact.includes("漫画改")) {
-    return "漫改";
+  if (
+    compact.includes("\u884d\u751f") ||
+    compact.includes("\u5409\u7965\u7269") ||
+    compact.includes("spinoff") ||
+    compact.includes("spin-off")
+  ) {
+    return "\u884d\u751f";
   }
 
-  if (compact.includes("轻小说") || compact.includes("小說改") || compact.includes("小说改")) {
-    return "小说改";
+  if (compact.includes("\u6f2b\u6539") || compact.includes("\u6f2b\u753b\u6539")) {
+    return "\u6f2b\u6539";
   }
 
-  if (compact.includes("游戏改")) {
-    return "游戏改";
+  if (
+    compact.includes("\u8f7b\u5c0f\u8bf4\u6539") ||
+    compact.includes("\u5c0f\u8bf4\u6539")
+  ) {
+    return "\u5c0f\u8bf4\u6539";
   }
 
-  if (compact.includes("原创")) {
-    return "原创";
+  if (compact.includes("\u6e38\u620f\u6539")) {
+    return "\u6e38\u620f\u6539";
   }
 
-  if (compact.includes("movie") || compact.includes("剧场")) {
-    return "剧场版";
+  if (compact.includes("\u539f\u521b")) {
+    return "\u539f\u521b";
+  }
+
+  if (compact.includes("movie") || compact.includes("\u5267\u573a")) {
+    return "\u5267\u573a\u7248";
   }
 
   if (compact.includes("ova")) {
@@ -213,7 +226,7 @@ function normalizeCompactType(value: string) {
     return "WEB";
   }
 
-  return value.trim();
+  return normalized;
 }
 
 function inferTypeLabel(subject: SubjectCardModel) {
@@ -244,7 +257,7 @@ function extractCatalogTiming(label: string | null) {
     return value;
   }
 
-  return parts.slice(1).join(" ");
+  return parts[1] ?? null;
 }
 
 function resolveMeta(subject: SubjectCardModel, variant: SubjectCardMetaVariant) {
