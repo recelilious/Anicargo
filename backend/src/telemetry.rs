@@ -113,7 +113,7 @@ pub fn should_enable_terminal_ui(config: &TelemetryConfig) -> bool {
 pub fn init_tracing(
     config: &TelemetryConfig,
     terminal_ui_active: bool,
-) -> anyhow::Result<Vec<WorkerGuard>> {
+) -> anyhow::Result<(Vec<WorkerGuard>, PathBuf)> {
     if let Some(parent) = config.log_dir.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent).with_context(|| {
@@ -131,7 +131,12 @@ pub fn init_tracing(
         )
     })?;
 
-    let file_appender = tracing_appender::rolling::daily(&config.log_dir, "anicargo.log");
+    let log_file_name = format!(
+        "anicargo.log.{}",
+        chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")
+    );
+    let log_file_path = config.log_dir.join(&log_file_name);
+    let file_appender = tracing_appender::rolling::never(&config.log_dir, log_file_name);
     let (file_writer, file_guard) = tracing_appender::non_blocking(file_appender);
 
     let file_layer = tracing_subscriber::fmt::layer()
@@ -152,7 +157,7 @@ pub fn init_tracing(
         .with(console_layer)
         .init();
 
-    Ok(vec![file_guard])
+    Ok((vec![file_guard], log_file_path))
 }
 
 pub async fn track_http_metrics(
@@ -189,7 +194,7 @@ pub fn spawn_terminal_dashboard(
     metrics: Arc<RuntimeMetrics>,
     pool: SqlitePool,
     engine_name: String,
-    log_dir: PathBuf,
+    log_file_path: PathBuf,
 ) {
     if !should_enable_terminal_ui(config) {
         return;
@@ -253,13 +258,9 @@ pub fn spawn_terminal_dashboard(
             ));
 
             buffer.push_str("Logs\n");
-            let current_log_file = log_dir.join(format!(
-                "anicargo.log.{}",
-                chrono::Local::now().format("%Y-%m-%d")
-            ));
             buffer.push_str(&format!(
                 "  Persistent log file: {}\n",
-                current_log_file.display()
+                log_file_path.display()
             ));
 
             let _ = print_and_flush(&buffer);

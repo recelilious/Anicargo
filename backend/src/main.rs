@@ -44,8 +44,9 @@ use crate::{
 async fn main() -> anyhow::Result<()> {
     let config = AppConfig::load().context("failed to load configuration")?;
     let terminal_ui_active = telemetry::should_enable_terminal_ui(&config.telemetry);
-    let _telemetry_guards = telemetry::init_tracing(&config.telemetry, terminal_ui_active)
-        .context("failed to initialize telemetry")?;
+    let (_telemetry_guards, log_file_path) =
+        telemetry::init_tracing(&config.telemetry, terminal_ui_active)
+            .context("failed to initialize telemetry")?;
     let pool = connect_and_migrate(&config)
         .await
         .context("failed to initialize database")?;
@@ -110,7 +111,7 @@ async fn main() -> anyhow::Result<()> {
         metrics,
         pool,
         download_engine_name,
-        config.telemetry.log_dir.clone(),
+        log_file_path,
     );
     let _downloader_runtime = downloader_runtime;
     let listener = tokio::net::TcpListener::bind(&address)
