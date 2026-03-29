@@ -2059,6 +2059,13 @@ pub async fn list_jobs_ready_for_activation(
          FROM download_jobs
          WHERE selected_candidate_id IS NOT NULL
            AND lifecycle IN ('queued', 'planning', 'searching', 'staged')
+           AND NOT EXISTS (
+                SELECT 1
+                FROM download_executions
+                WHERE download_executions.download_job_id = download_jobs.id
+                  AND download_executions.resource_candidate_id = download_jobs.selected_candidate_id
+                  AND download_executions.state NOT IN ('failed', 'replaced')
+           )
          ORDER BY created_at ASC, id ASC
          LIMIT ?1",
     )

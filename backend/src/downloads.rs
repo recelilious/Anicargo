@@ -23,6 +23,7 @@ use librqbit::{
     TorrentStatsState,
 };
 use sqlx::SqlitePool;
+use tokio::time::{Duration as TokioDuration, timeout};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -34,6 +35,8 @@ use crate::{
         DownloadJobDto, ResourceCandidateDto,
     },
 };
+
+const ENGINE_SYNC_TIMEOUT_SECS: u64 = 8;
 
 #[derive(Debug, Clone)]
 pub struct DownloadDemandInput {
@@ -1209,8 +1212,14 @@ impl DownloadCoordinator {
         let executions = db::list_active_download_executions(pool, self.engine.name(), 256).await?;
 
         for execution in executions {
-            match self.engine.sync_execution(&execution).await {
-                Ok(snapshot) => {
+            let sync_result = timeout(
+                TokioDuration::from_secs(ENGINE_SYNC_TIMEOUT_SECS),
+                self.engine.sync_execution(&execution),
+            )
+            .await;
+
+            match sync_result {
+                Ok(Ok(snapshot)) => {
                     info!(
                         execution_id = execution.id,
                         job_id = execution.download_job_id,
@@ -1269,7 +1278,7 @@ impl DownloadCoordinator {
                         .await?;
                     }
                 }
-                Err(error) => {
+                Ok(Err(error)) => {
                     let error_message = format!("Execution sync failed: {error:#}");
                     warn!(
                         execution_id = execution.id,
@@ -1311,6 +1320,46 @@ impl DownloadCoordinator {
                         execution.download_job_id,
                         "failed",
                         Some(&error_message),
+                    )
+                    .await?;
+                }
+                Err(_) => {
+                    let timeout_message = format!(
+                        "Execution sync timed out after {}s",
+                        ENGINE_SYNC_TIMEOUT_SECS
+                    );
+                    warn!(
+                        execution_id = execution.id,
+                        engine = self.engine.name(),
+                        timeout_secs = ENGINE_SYNC_TIMEOUT_SECS,
+                        "Download execution sync timed out"
+                    );
+                    db::update_download_execution_metrics(
+                        pool,
+                        execution.id,
+                        &execution.state,
+                        execution.downloaded_bytes,
+                        execution.source_size_bytes.max(execution.downloaded_bytes),
+                        execution.uploaded_bytes,
+                        0,
+                        0,
+                        execution.peer_count,
+                        Some(&timeout_message),
+                    )
+                    .await?;
+                    db::create_download_execution_event(
+                        pool,
+                        db::NewDownloadExecutionEvent {
+                            download_execution_id: execution.id,
+                            level: "warning".to_owned(),
+                            event_kind: "sync_timeout".to_owned(),
+                            message: timeout_message,
+                            downloaded_bytes: Some(execution.downloaded_bytes),
+                            uploaded_bytes: Some(execution.uploaded_bytes),
+                            download_rate_bytes: Some(0),
+                            upload_rate_bytes: Some(0),
+                            peer_count: Some(execution.peer_count),
+                        },
                     )
                     .await?;
                 }

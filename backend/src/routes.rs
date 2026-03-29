@@ -15,7 +15,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-use tokio::time::{Duration as TokioDuration, sleep};
+use tokio::time::{Duration as TokioDuration, sleep, timeout};
 use tower::ServiceExt;
 use tower_http::{cors::CorsLayer, services::ServeFile, trace::TraceLayer};
 
@@ -353,6 +353,23 @@ async fn resources(
 async fn active_downloads(
     State(state): State<AppState>,
 ) -> Result<Json<ApiEnvelope<ActiveDownloadsResponse>>, AppError> {
+    match timeout(
+        TokioDuration::from_secs(2),
+        state
+            .downloads
+            .sync_active_executions(&state.pool, &state.config.storage.media_root),
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            tracing::warn!(error = %error, "Active downloads request failed to refresh execution state")
+        }
+        Err(_) => {
+            tracing::warn!("Active downloads request timed out while refreshing execution state")
+        }
+    }
+
     let executions =
         db::list_active_download_executions(&state.pool, state.downloads.engine_name(), 24).await?;
     let items = hydrate_active_downloads(&state.bangumi, &state.yuc, executions).await;
