@@ -12,32 +12,16 @@ const useStyles = makeStyles({
     flexDirection: "column",
     gap: "20px",
   },
-  hero: {
+  header: {
     display: "flex",
     flexDirection: "column",
-    gap: "14px",
-    padding: "22px 24px",
+    gap: "8px",
+    padding: "18px 22px",
     backgroundColor: "var(--app-surface-1)",
     border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)",
   },
-  heroTop: {
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: "20px",
-    flexWrap: "wrap",
-  },
-  heroTitleGroup: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "8px",
-  },
-  heroSource: {
-    color: "var(--app-muted)",
-    whiteSpace: "nowrap",
-  },
-  heroNote: {
+  source: {
     color: "var(--app-muted)",
   },
   stack: {
@@ -88,7 +72,6 @@ type CatalogPageKind = "preview" | "special";
 type PageCopy = {
   title: string;
   source: string;
-  note: string;
   emptyTitle: string;
   emptyNote: string;
 };
@@ -98,16 +81,14 @@ function pageCopy(kind: CatalogPageKind): PageCopy {
     return {
       title: "新季度前瞻",
       source: "来源：新番卫星观测站 | 長門番堂",
-      note: "优先展示已出现的下个季度番剧表，后续再补充更远期的前瞻条目。",
       emptyTitle: "暂时还没有新的前瞻条目",
-      emptyNote: "如果 Yuc 还没有放出下个季度页面或卫星观测站内容，这里会保持为空。",
+      emptyNote: "如果 Yuc 还没有放出下一个季度页面或前瞻内容，这里会暂时保持为空。",
     };
   }
 
   return {
     title: "特别放送",
     source: "来源：Movie / OVA / OAD / SP etc. | 長門番堂",
-    note: "这里汇总剧场版、OVA、OAD、SP 和网络放送等特别内容。",
     emptyTitle: "暂时还没有特别放送条目",
     emptyNote: "等 Yuc 更新特别放送页面后，这里会自动显示新的内容。",
   };
@@ -143,21 +124,13 @@ function CatalogPageView({ kind }: { kind: CatalogPageKind }) {
 
   return (
     <section className={styles.page}>
-      <Card className={styles.hero}>
-        <div className={styles.heroTop}>
-          <div className={styles.heroTitleGroup}>
-            <Text weight="semibold" size={800}>
-              {copy.title}
-            </Text>
-            <Text size={300} className={styles.heroNote}>
-              {copy.note}
-            </Text>
-          </div>
-
-          <Text size={200} className={styles.heroSource}>
-            {copy.source}
-          </Text>
-        </div>
+      <Card className={styles.header}>
+        <Text weight="semibold" size={800}>
+          {copy.title}
+        </Text>
+        <Text size={300} className={styles.source}>
+          {copy.source}
+        </Text>
       </Card>
 
       {!page && !error ? <Spinner label="正在同步目录..." /> : null}

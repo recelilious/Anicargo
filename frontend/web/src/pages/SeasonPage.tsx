@@ -14,13 +14,19 @@ const useStyles = makeStyles({
   page: {
     display: "flex",
     flexDirection: "column",
-    gap: "20px"
+    gap: "20px",
   },
   header: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
     padding: "18px 22px",
     backgroundColor: "var(--app-surface-1)",
     border: "1px solid var(--app-border)",
-    boxShadow: "var(--app-card-shadow)"
+    boxShadow: "var(--app-card-shadow)",
+  },
+  headerSource: {
+    color: "var(--app-muted)",
   },
   weekSwitch: {
     display: "grid",
@@ -29,7 +35,7 @@ const useStyles = makeStyles({
     padding: "8px",
     backgroundColor: "var(--app-surface-1)",
     border: "1px solid var(--app-border)",
-    boxShadow: "var(--app-card-shadow)"
+    boxShadow: "var(--app-card-shadow)",
   },
   weekButton: {
     position: "relative",
@@ -42,10 +48,10 @@ const useStyles = makeStyles({
     font: "inherit",
     transition: "color 160ms ease",
     "&:hover": {
-      color: "var(--app-text)"
+      color: "var(--app-text)",
     },
     "&:focus-visible": {
-      outlineOffset: "-2px"
+      outlineOffset: "-2px",
     },
     "&::after": {
       content: '""',
@@ -56,39 +62,39 @@ const useStyles = makeStyles({
       height: "3px",
       borderRadius: tokens.borderRadiusCircular,
       backgroundColor: "transparent",
-      transition: "background-color 160ms ease"
-    }
+      transition: "background-color 160ms ease",
+    },
   },
   weekButtonActive: {
     color: "var(--app-text)",
     fontWeight: tokens.fontWeightSemibold,
     "&::after": {
-      backgroundColor: "var(--app-selected-fg)"
-    }
+      backgroundColor: "var(--app-selected-fg)",
+    },
   },
   viewport: {
-    overflow: "hidden"
+    overflow: "hidden",
   },
   track: {
     display: "flex",
     alignItems: "flex-start",
     willChange: "transform",
     transitionProperty: "transform",
-    transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)"
+    transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
   },
   panel: {
     flex: "0 0 100%",
-    minWidth: "100%"
+    minWidth: "100%",
   },
   grid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))",
     gap: "16px",
-    paddingTop: "4px"
+    paddingTop: "4px",
   },
   panelPlaceholder: {
-    minHeight: "1px"
-  }
+    minHeight: "1px",
+  },
 });
 
 function resolveCurrentWeekday(deepNightMode: boolean) {
@@ -318,6 +324,9 @@ export function SeasonPage() {
         <Text weight="semibold" size={800}>
           新番时间表
         </Text>
+        <Text size={300} className={styles.headerSource}>
+          来源：Yuc 新番时间表 · Bangumi 元数据与状态补全
+        </Text>
       </Card>
 
       {isLoading ? <Spinner label="正在同步时间表..." /> : null}
@@ -349,7 +358,7 @@ export function SeasonPage() {
               className={styles.track}
               style={{
                 transform: `translateX(-${selectedIndex * 100}%)`,
-                transitionDuration: `${slideDurationMs}ms`
+                transitionDuration: `${slideDurationMs}ms`,
               }}
             >
               {days.map((day) => (
