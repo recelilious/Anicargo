@@ -260,6 +260,7 @@ pub struct SubjectDetailDto {
     pub title: String,
     pub title_cn: String,
     pub summary: String,
+    pub release_status: String,
     pub air_date: Option<String>,
     pub broadcast_time: Option<String>,
     pub air_weekday: Option<u8>,

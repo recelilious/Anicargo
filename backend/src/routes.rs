@@ -403,7 +403,9 @@ async fn subject_detail(
         (false, 0)
     };
 
-    let subject = enrich_detail(&state.yuc, subject.to_detail()).await;
+    let release_status = crate::season_catalog::derive_release_status(&subject, &episodes).to_owned();
+    let mut subject = enrich_detail(&state.yuc, subject.to_detail()).await;
+    subject.release_status = release_status;
 
     Ok(Json(ApiEnvelope::new(SubjectDetailResponse {
         subject,

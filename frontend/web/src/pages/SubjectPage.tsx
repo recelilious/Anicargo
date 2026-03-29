@@ -71,6 +71,12 @@ const useStyles = makeStyles({
     alignSelf: "flex-start",
     minWidth: "132px",
   },
+  disabledSubscribeButton: {
+    alignSelf: "flex-start",
+    minWidth: "132px",
+    opacity: 0.72,
+    cursor: "not-allowed",
+  },
   backButton: {
     minWidth: "108px",
   },
@@ -164,6 +170,20 @@ function formatBroadcast(detail: SubjectDetailResponse["subject"]) {
 
 function formatSubscriptionSource(source: SubjectDetailResponse["subscription"]["source"]) {
   return source.kind === "user" ? "账号订阅" : "设备订阅";
+}
+
+function resolveSubscriptionAction(detail: SubjectDetailResponse) {
+  if (detail.subject.releaseStatus === "upcoming") {
+    return {
+      label: "未播出",
+      disabled: true,
+    };
+  }
+
+  return {
+    label: detail.subscription.isSubscribed ? "取消订阅" : "订阅",
+    disabled: false,
+  };
 }
 
 export function SubjectPage() {
@@ -281,6 +301,8 @@ export function SubjectPage() {
     return <Text>{error ?? "条目不存在。"}</Text>;
   }
 
+  const subscriptionAction = resolveSubscriptionAction(detail);
+
   return (
     <section className={styles.page}>
       <Card className={styles.hero}>
@@ -323,12 +345,12 @@ export function SubjectPage() {
 
           <div className={styles.buttonRow}>
             <Button
-              appearance="primary"
-              className={styles.subscribeButton}
-              onClick={handleToggleSubscription}
-              disabled={isSubscribing}
+              appearance={subscriptionAction.disabled ? "secondary" : "primary"}
+              className={subscriptionAction.disabled ? styles.disabledSubscribeButton : styles.subscribeButton}
+              onClick={subscriptionAction.disabled ? undefined : handleToggleSubscription}
+              disabled={subscriptionAction.disabled || isSubscribing}
             >
-              {detail.subscription.isSubscribed ? "取消订阅" : "订阅"}
+              {subscriptionAction.label}
             </Button>
           </div>
 

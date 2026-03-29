@@ -412,6 +412,7 @@ impl SubjectRaw {
             title: self.name.clone(),
             title_cn: self.name_cn.clone(),
             summary: self.summary.clone(),
+            release_status: self.search_release_status().to_owned(),
             air_date: self.air_date.clone().or(self.date.clone()),
             broadcast_time: None,
             air_weekday: self.air_weekday,
