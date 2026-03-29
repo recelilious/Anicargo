@@ -1179,23 +1179,6 @@ impl DownloadCoordinator {
         })
     }
 
-    async fn activate_queued_candidates(
-        &self,
-        pool: &SqlitePool,
-        media_root: &Path,
-    ) -> Result<(), AppError> {
-        let jobs = db::list_jobs_ready_for_activation(pool, 32).await?;
-
-        for job in jobs {
-            let decision = self
-                .materialize_selected_candidate(pool, media_root, job.id)
-                .await?;
-            let _ = decision;
-        }
-
-        Ok(())
-    }
-
     pub async fn list_executions(
         &self,
         pool: &SqlitePool,
@@ -1207,7 +1190,7 @@ impl DownloadCoordinator {
     pub async fn sync_active_executions(
         &self,
         pool: &SqlitePool,
-        media_root: &Path,
+        _media_root: &Path,
     ) -> Result<(), AppError> {
         let executions = db::list_active_download_executions(pool, self.engine.name(), 256).await?;
 
@@ -1365,8 +1348,6 @@ impl DownloadCoordinator {
                 }
             }
         }
-
-        self.activate_queued_candidates(pool, media_root).await?;
 
         Ok(())
     }

@@ -2049,34 +2049,6 @@ pub async fn list_active_download_executions(
     Ok(rows.into_iter().map(map_download_execution).collect())
 }
 
-pub async fn list_jobs_ready_for_activation(
-    pool: &SqlitePool,
-    limit: usize,
-) -> Result<Vec<DownloadJobDto>, AppError> {
-    let limit = limit.clamp(1, 256) as i64;
-    let rows = sqlx::query_as::<_, DownloadJobRow>(
-        "SELECT *
-         FROM download_jobs
-         WHERE selected_candidate_id IS NOT NULL
-           AND lifecycle IN ('queued', 'planning', 'searching', 'staged')
-           AND NOT EXISTS (
-                SELECT 1
-                FROM download_executions
-                WHERE download_executions.download_job_id = download_jobs.id
-                  AND download_executions.resource_candidate_id = download_jobs.selected_candidate_id
-                  AND download_executions.state NOT IN ('failed', 'replaced')
-           )
-         ORDER BY created_at ASC, id ASC
-         LIMIT ?1",
-    )
-    .bind(limit)
-    .fetch_all(pool)
-    .await
-    .map_err(|_| AppError::internal("failed to list jobs ready for activation"))?;
-
-    Ok(rows.into_iter().map(map_download_job).collect())
-}
-
 pub async fn mark_download_execution_replaced(
     pool: &SqlitePool,
     execution_id: i64,

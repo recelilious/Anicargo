@@ -1835,7 +1835,7 @@ async fn build_completed_download_plan(
             &collection_candidates
                 .iter()
                 .copied()
-                .filter(|candidate| collection_covers_all_targets(candidate, &missing_episodes))
+                .filter(|candidate| collection_matches_target_window(candidate, &missing_episodes))
                 .collect::<Vec<_>>(),
             &job.release_status,
             preferred_fansub,
@@ -1946,6 +1946,29 @@ fn collection_covers_all_targets(candidate: &ResourceCandidateDto, targets: &[f6
         && targets
             .iter()
             .all(|episode| candidate_covers_episode(candidate, *episode))
+}
+
+fn collection_matches_target_window(candidate: &ResourceCandidateDto, targets: &[f64]) -> bool {
+    if !collection_covers_all_targets(candidate, targets) {
+        return false;
+    }
+
+    let Some(start) = candidate.episode_index else {
+        return false;
+    };
+    let end = candidate.episode_end_index.unwrap_or(start);
+    let min_target = targets
+        .iter()
+        .copied()
+        .min_by(|left, right| left.total_cmp(right))
+        .unwrap_or(start);
+    let max_target = targets
+        .iter()
+        .copied()
+        .max_by(|left, right| left.total_cmp(right))
+        .unwrap_or(end);
+
+    start >= min_target - 1.0 && end <= max_target + 1.0
 }
 
 fn choose_latest_airing_candidates<'a>(
@@ -2541,4 +2564,53 @@ fn format_runtime_duration(duration: std::time::Duration) -> String {
     let minutes = (total % 3600) / 60;
     let seconds = total % 60;
     format!("{hours:02}:{minutes:02}:{seconds:02}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collection_matches_target_window;
+    use crate::types::ResourceCandidateDto;
+
+    fn sample_collection_candidate(start: f64, end: f64) -> ResourceCandidateDto {
+        ResourceCandidateDto {
+            id: 1,
+            download_job_id: 1,
+            search_run_id: 1,
+            bangumi_subject_id: 1,
+            slot_key: format!("batch:{start}-{end}"),
+            episode_index: Some(start),
+            episode_end_index: Some(end),
+            is_collection: true,
+            provider: "animegarden".to_owned(),
+            provider_resource_id: "sample".to_owned(),
+            title: "sample".to_owned(),
+            href: String::new(),
+            magnet: String::new(),
+            release_type: "batch".to_owned(),
+            size_bytes: 1,
+            fansub_name: Some("sample".to_owned()),
+            publisher_name: "sample".to_owned(),
+            source_created_at: "2026-01-01T00:00:00Z".to_owned(),
+            source_fetched_at: "2026-01-01T00:00:00Z".to_owned(),
+            resolution: Some("1080P".to_owned()),
+            locale_hint: Some("zh-Hans".to_owned()),
+            is_raw: false,
+            score: 10.0,
+            rejected_reason: None,
+            discovered_at: "2026-01-01T00:00:00Z".to_owned(),
+        }
+    }
+
+    #[test]
+    fn completed_collection_window_rejects_oversized_franchise_batches() {
+        let targets = (1..=11).map(|value| value as f64).collect::<Vec<_>>();
+        assert!(!collection_matches_target_window(
+            &sample_collection_candidate(1.0, 24.0),
+            &targets,
+        ));
+        assert!(collection_matches_target_window(
+            &sample_collection_candidate(0.0, 11.0),
+            &targets,
+        ));
+    }
 }
