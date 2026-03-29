@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use tokio::{
     sync::{Mutex, RwLock},
     task::JoinHandle,
-    time::sleep,
+    time::{sleep, timeout},
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{info, warn};
@@ -42,6 +42,10 @@ use crate::{
         UpdateTaskRequest,
     },
 };
+
+const TASK_SESSION_START_TIMEOUT_SECS: u64 = 20;
+const TASK_SESSION_RESUME_TIMEOUT_SECS: u64 = 8;
+const TASK_SESSION_PAUSE_TIMEOUT_SECS: u64 = 8;
 
 #[derive(Clone)]
 pub struct DownloaderService {
@@ -708,8 +712,23 @@ impl DownloaderService {
 
         for (task_id, reason) in timeouts {
             if let Some(session) = self.sessions.lock().await.get(&task_id) {
-                if let Err(error) = session.pause().await {
-                    warn!(task_id = %task_id, error = %error, "Failed to pause timed-out task");
+                match timeout(
+                    Duration::from_secs(TASK_SESSION_PAUSE_TIMEOUT_SECS),
+                    session.pause(),
+                )
+                .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => {
+                        warn!(task_id = %task_id, error = %error, "Failed to pause timed-out task");
+                    }
+                    Err(_) => {
+                        warn!(
+                            task_id = %task_id,
+                            timeout_secs = TASK_SESSION_PAUSE_TIMEOUT_SECS,
+                            "Pausing timed-out task timed out"
+                        );
+                    }
                 }
             }
 
@@ -767,6 +786,19 @@ impl DownloaderService {
         Ok(())
     }
 
+    async fn mark_task_failed(&self, task_id: Uuid, error: impl Into<String>) {
+        let error = error.into();
+        let mut tasks = self.tasks.write().await;
+        if let Some(record) = tasks.get_mut(&task_id) {
+            record.state = TaskState::Failed;
+            record.enabled = false;
+            record.download_rate_bytes = 0;
+            record.upload_rate_bytes = 0;
+            record.last_error = Some(error);
+            record.updated_at = Utc::now();
+        }
+    }
+
     async fn ensure_task_active(
         &self,
         task: TaskRecord,
@@ -775,9 +807,32 @@ impl DownloaderService {
     ) -> anyhow::Result<()> {
         let has_session = self.sessions.lock().await.contains_key(&task.id);
         if !has_session {
-            let session = self
-                .start_task_session(&task, download_limit_bps, upload_limit_bps)
-                .await?;
+            let session = match timeout(
+                Duration::from_secs(TASK_SESSION_START_TIMEOUT_SECS),
+                self.start_task_session(&task, download_limit_bps, upload_limit_bps),
+            )
+            .await
+            {
+                Ok(Ok(session)) => session,
+                Ok(Err(error)) => {
+                    warn!(
+                        task_id = %task.id,
+                        error = %error,
+                        "Failed to start standalone downloader task session"
+                    );
+                    self.mark_task_failed(task.id, error.to_string()).await;
+                    return Ok(());
+                }
+                Err(_) => {
+                    let error = format!(
+                        "starting downloader task session timed out after {}s",
+                        TASK_SESSION_START_TIMEOUT_SECS
+                    );
+                    warn!(task_id = %task.id, error = %error, "Downloader task start timed out");
+                    self.mark_task_failed(task.id, error).await;
+                    return Ok(());
+                }
+            };
             self.sessions.lock().await.insert(task.id, session);
 
             let mut tasks = self.tasks.write().await;
@@ -798,16 +853,29 @@ impl DownloaderService {
             task.state,
             TaskState::Paused | TaskState::Queued | TaskState::Completed
         ) {
-            if let Err(error) = session.resume().await {
-                warn!(task_id = %task.id, error = %error, "Failed to resume active task");
-                let mut tasks = self.tasks.write().await;
-                if let Some(record) = tasks.get_mut(&task.id) {
-                    record.state = TaskState::Failed;
-                    record.enabled = false;
-                    record.last_error = Some(error.to_string());
-                    record.updated_at = Utc::now();
+            match timeout(
+                Duration::from_secs(TASK_SESSION_RESUME_TIMEOUT_SECS),
+                session.resume(),
+            )
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    warn!(task_id = %task.id, error = %error, "Failed to resume active task");
+                    drop(sessions);
+                    self.mark_task_failed(task.id, error.to_string()).await;
+                    return Ok(());
                 }
-                return Ok(());
+                Err(_) => {
+                    let error = format!(
+                        "resuming downloader task timed out after {}s",
+                        TASK_SESSION_RESUME_TIMEOUT_SECS
+                    );
+                    warn!(task_id = %task.id, error = %error, "Downloader task resume timed out");
+                    drop(sessions);
+                    self.mark_task_failed(task.id, error).await;
+                    return Ok(());
+                }
             }
         }
         drop(sessions);
@@ -835,8 +903,23 @@ impl DownloaderService {
             task.state,
             TaskState::Downloading | TaskState::Starting | TaskState::Seeding
         ) {
-            if let Err(error) = session.pause().await {
-                warn!(task_id = %task.id, error = %error, "Failed to pause inactive task");
+            match timeout(
+                Duration::from_secs(TASK_SESSION_PAUSE_TIMEOUT_SECS),
+                session.pause(),
+            )
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    warn!(task_id = %task.id, error = %error, "Failed to pause inactive task");
+                }
+                Err(_) => {
+                    warn!(
+                        task_id = %task.id,
+                        timeout_secs = TASK_SESSION_PAUSE_TIMEOUT_SECS,
+                        "Pausing inactive task timed out"
+                    );
+                }
             }
         }
         drop(sessions);
@@ -1483,17 +1566,17 @@ fn metadata_from_add_response(response: ApiAddTorrentResponse) -> TorrentMetadat
     }
 }
 
-fn fast_metadata_from_source(source: &TaskSource, output_dir: &Path) -> Option<TorrentMetadataSummary> {
+fn fast_metadata_from_source(
+    source: &TaskSource,
+    output_dir: &Path,
+) -> Option<TorrentMetadataSummary> {
     match source.kind {
         TaskSourceKind::Url => fast_metadata_from_magnet(&source.value, output_dir),
         TaskSourceKind::TorrentFile => None,
     }
 }
 
-fn fast_metadata_from_magnet(
-    magnet: &str,
-    output_dir: &Path,
-) -> Option<TorrentMetadataSummary> {
+fn fast_metadata_from_magnet(magnet: &str, output_dir: &Path) -> Option<TorrentMetadataSummary> {
     let query = magnet.strip_prefix("magnet:?")?;
     let mut info_hash = None;
     let mut display_name = None;
@@ -1531,7 +1614,10 @@ fn fast_metadata_from_magnet(
 
 fn normalize_btih(value: &str) -> Option<String> {
     let normalized = value.trim();
-    if normalized.len() == 40 && normalized.chars().all(|character| character.is_ascii_hexdigit())
+    if normalized.len() == 40
+        && normalized
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
     {
         return Some(normalized.to_ascii_lowercase());
     }
