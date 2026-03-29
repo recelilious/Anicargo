@@ -7,7 +7,7 @@ import { buildRoutePath, rememberReturnTarget, type RouteState } from "../naviga
 import { useSession } from "../session";
 import type { SubjectCard as SubjectCardModel } from "../types";
 
-type SubjectCardMetaVariant = "schedule" | "catalog";
+type SubjectCardMetaVariant = "schedule" | "catalog" | "preview";
 
 const useStyles = makeStyles({
   link: {
@@ -122,16 +122,24 @@ const useStyles = makeStyles({
     paddingInline: "8px",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
   },
-  metaRatingOnly: {
+  metaSoloLeft: {
+    justifyContent: "flex-start",
+  },
+  metaSoloRight: {
     justifyContent: "flex-end",
+  },
+  metaValue: {
+    minWidth: 0,
+    color: tokens.colorNeutralForeground2,
+    fontVariantNumeric: "tabular-nums",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
   },
   rating: {
     color: tokens.colorBrandForeground1,
     fontVariantNumeric: "tabular-nums",
-  },
-  metaValue: {
-    color: tokens.colorNeutralForeground2,
-    fontVariantNumeric: "tabular-nums",
+    whiteSpace: "nowrap",
   },
 });
 
@@ -162,13 +170,105 @@ function extractCatalogYear(airDate: string | null) {
   return year ?? null;
 }
 
-function resolveMetaValue(subject: SubjectCardModel, variant: SubjectCardMetaVariant) {
-  if (variant === "schedule") {
-    const value = subject.broadcastTime?.trim();
-    return value ? value : null;
+function normalizeCompactType(value: string) {
+  const compact = value.replace(/\s+/g, "").toLowerCase();
+
+  if (!compact) {
+    return null;
   }
 
-  return subject.catalogLabel?.trim() || extractCatalogYear(subject.airDate);
+  if (compact.includes("漫改") || compact.includes("漫画改")) {
+    return "漫改";
+  }
+
+  if (compact.includes("轻小说") || compact.includes("小說改") || compact.includes("小说改")) {
+    return "小说改";
+  }
+
+  if (compact.includes("游戏改")) {
+    return "游戏改";
+  }
+
+  if (compact.includes("原创")) {
+    return "原创";
+  }
+
+  if (compact.includes("movie") || compact.includes("剧场")) {
+    return "剧场版";
+  }
+
+  if (compact.includes("ova")) {
+    return "OVA";
+  }
+
+  if (compact.includes("oad")) {
+    return "OAD";
+  }
+
+  if (compact === "sp" || compact.includes("special")) {
+    return "SP";
+  }
+
+  if (compact.includes("web")) {
+    return "WEB";
+  }
+
+  return value.trim();
+}
+
+function inferTypeLabel(subject: SubjectCardModel) {
+  const catalogType = subject.catalogLabel?.trim().split(/\s+/)[0];
+  const catalogMapped = catalogType ? normalizeCompactType(catalogType) : null;
+  if (catalogMapped) {
+    return catalogMapped;
+  }
+
+  for (const tag of subject.tags) {
+    const mapped = normalizeCompactType(tag);
+    if (mapped) {
+      return mapped;
+    }
+  }
+
+  return null;
+}
+
+function extractCatalogTiming(label: string | null) {
+  const value = label?.trim();
+  if (!value) {
+    return null;
+  }
+
+  const parts = value.split(/\s+/);
+  if (parts.length <= 1) {
+    return value;
+  }
+
+  return parts.slice(1).join(" ");
+}
+
+function resolveMeta(subject: SubjectCardModel, variant: SubjectCardMetaVariant) {
+  if (variant === "schedule") {
+    return {
+      left: inferTypeLabel(subject),
+      right: subject.broadcastTime?.trim() || null,
+      rating: null as string | null,
+    };
+  }
+
+  if (variant === "preview") {
+    return {
+      left: inferTypeLabel(subject),
+      right: extractCatalogTiming(subject.catalogLabel) || extractCatalogYear(subject.airDate),
+      rating: null as string | null,
+    };
+  }
+
+  return {
+    left: subject.catalogLabel?.trim() || extractCatalogYear(subject.airDate),
+    right: null as string | null,
+    rating: formatRating(subject.ratingScore),
+  };
 }
 
 export function SubjectCard({
@@ -192,7 +292,7 @@ export function SubjectCard({
   const secondaryTitle = subject.titleCn && subject.titleCn !== subject.title ? subject.title : null;
   const displayedTags = tags.slice(0, 8);
   const displayedTagsKey = displayedTags.join("|");
-  const metaValue = resolveMetaValue(subject, metaVariant);
+  const meta = resolveMeta(subject, metaVariant);
   const fromPath = buildRoutePath(location);
   const isLinkedCard = subject.bangumiSubjectId > 0;
 
@@ -367,6 +467,14 @@ export function SubjectCard({
     "--tag-transition-duration": prefersReducedMotion() ? "0ms" : "220ms",
   } as CSSProperties;
 
+  const metaClassName = [
+    styles.meta,
+    meta.left && !meta.right && !meta.rating ? styles.metaSoloLeft : "",
+    !meta.left && (meta.right || meta.rating) ? styles.metaSoloRight : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   const cardContent = (
     <Card className={styles.card} appearance="filled-alternative">
       <div className={styles.posterWrap}>
@@ -404,15 +512,22 @@ export function SubjectCard({
           ) : null}
         </div>
 
-        <div className={`${styles.meta} ${metaValue ? "" : styles.metaRatingOnly}`.trim()}>
-          {metaValue ? (
+        <div className={metaClassName}>
+          {meta.left ? (
             <Text size={300} className={styles.metaValue}>
-              {metaValue}
+              {meta.left}
             </Text>
           ) : null}
-          <Text weight="semibold" className={styles.rating}>
-            {formatRating(subject.ratingScore)}
-          </Text>
+          {meta.right ? (
+            <Text size={300} className={styles.metaValue}>
+              {meta.right}
+            </Text>
+          ) : null}
+          {meta.rating ? (
+            <Text weight="semibold" className={styles.rating}>
+              {meta.rating}
+            </Text>
+          ) : null}
         </div>
       </div>
     </Card>

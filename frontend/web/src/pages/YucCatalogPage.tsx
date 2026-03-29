@@ -33,7 +33,7 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: "14px",
-    padding: "18px",
+    padding: "18px 0",
     backgroundColor: "var(--app-surface-1)",
     border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)",
@@ -44,6 +44,7 @@ const useStyles = makeStyles({
     justifyContent: "space-between",
     gap: "12px",
     flexWrap: "wrap",
+    paddingInline: "18px",
   },
   sectionCount: {
     color: "var(--app-muted)",
@@ -161,7 +162,7 @@ function CatalogPageView({ kind }: { kind: CatalogPageKind }) {
                   <SubjectCard
                     key={`${section.key}-${subject.bangumiSubjectId}`}
                     subject={subject}
-                    metaVariant="catalog"
+                    metaVariant="preview"
                   />
                 ))}
               </div>
