@@ -33,7 +33,7 @@ use crate::{
         within_replacement_window,
     },
     downloads::{DownloadCoordinator, DownloadDemandInput, DownloadRuntimeSettings},
-    season_catalog,
+    media, season_catalog,
     telemetry::{self, RuntimeMetrics},
     types::{
         ActivateDownloadResponse, ActiveDownloadDto, ActiveDownloadsResponse,
@@ -2270,6 +2270,18 @@ async fn hydrate_active_downloads(
         .map(|execution| {
             let fallback_title = execution.source_title.clone();
             let card = card_map.get(&execution.bangumi_subject_id);
+            let release_status = card
+                .map(|item| item.release_status.clone())
+                .unwrap_or_else(|| "completed".to_owned());
+            let (slot_key, episode_index, episode_end_index, is_collection) =
+                sanitize_download_display_slot(
+                    &execution.source_title,
+                    &release_status,
+                    execution.is_collection,
+                    execution.slot_key.clone(),
+                    execution.episode_index,
+                    execution.episode_end_index,
+                );
             ActiveDownloadDto {
                 bangumi_subject_id: execution.bangumi_subject_id,
                 title: card
@@ -2277,13 +2289,11 @@ async fn hydrate_active_downloads(
                     .unwrap_or_else(|| fallback_title.clone()),
                 title_cn: card.map(|item| item.title_cn.clone()).unwrap_or_default(),
                 image_portrait: card.and_then(|item| item.image_portrait.clone()),
-                release_status: card
-                    .map(|item| item.release_status.clone())
-                    .unwrap_or_else(|| "completed".to_owned()),
-                slot_key: execution.slot_key,
-                episode_index: execution.episode_index,
-                episode_end_index: execution.episode_end_index,
-                is_collection: execution.is_collection,
+                release_status,
+                slot_key,
+                episode_index,
+                episode_end_index,
+                is_collection,
                 state: execution.state,
                 source_title: execution.source_title,
                 source_fansub_name: execution.source_fansub_name,
@@ -2296,6 +2306,73 @@ async fn hydrate_active_downloads(
             }
         })
         .collect()
+}
+
+fn sanitize_download_display_slot(
+    source_title: &str,
+    release_status: &str,
+    is_collection: bool,
+    slot_key: String,
+    episode_index: Option<f64>,
+    episode_end_index: Option<f64>,
+) -> (String, Option<f64>, Option<f64>, bool) {
+    let has_negative = episode_index.is_some_and(|value| value < 0.0)
+        || episode_end_index.is_some_and(|value| value < 0.0);
+    let has_inverted_range = episode_index
+        .zip(episode_end_index)
+        .is_some_and(|(start, end)| end < start);
+    if !has_negative && !has_inverted_range {
+        return (slot_key, episode_index, episode_end_index, is_collection);
+    }
+
+    let reparsed = media::infer_release_slot(
+        source_title,
+        if is_collection { "batch" } else { "single" },
+        &slot_key,
+        release_status,
+    );
+    let reparsed_valid = reparsed.episode_index.is_some_and(|value| value >= 0.0)
+        && reparsed
+            .episode_end_index
+            .unwrap_or(reparsed.episode_index.unwrap_or(0.0))
+            >= reparsed.episode_index.unwrap_or(0.0);
+    if reparsed_valid {
+        return (
+            reparsed.slot_key,
+            reparsed.episode_index,
+            reparsed.episode_end_index,
+            reparsed.is_collection,
+        );
+    }
+
+    let fallback_start = episode_index.unwrap_or(0.0).max(0.0);
+    let fallback_end = episode_end_index
+        .unwrap_or(fallback_start)
+        .max(fallback_start);
+    let sanitized_slot_key = if is_collection {
+        format!(
+            "batch:{}-{}",
+            format_download_slot_fragment(fallback_start),
+            format_download_slot_fragment(fallback_end)
+        )
+    } else {
+        format!("episode:{}", format_download_slot_fragment(fallback_start))
+    };
+
+    (
+        sanitized_slot_key,
+        Some(fallback_start),
+        Some(fallback_end),
+        is_collection,
+    )
+}
+
+fn format_download_slot_fragment(value: f64) -> String {
+    if value.fract().abs() < f64::EPSILON {
+        format!("{}", value.round() as i64)
+    } else {
+        format!("{value:.1}")
+    }
 }
 
 #[derive(Debug, Clone)]

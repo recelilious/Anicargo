@@ -449,6 +449,9 @@ fn align_slot_to_expected_targets(
         let offset = target_span * step as f64;
         let normalized_start = start - offset;
         let normalized_end = end - offset;
+        if normalized_start < 0.0 {
+            continue;
+        }
         if normalized_end < min_target - 1.0 {
             continue;
         }
@@ -477,11 +480,24 @@ fn align_slot_to_expected_targets(
     best_slot
 }
 
-fn score_slot_against_targets(slot: &ParsedReleaseSlot, targets: &[f64]) -> (i64, i64, i64) {
+fn score_slot_against_targets(
+    slot: &ParsedReleaseSlot,
+    targets: &[f64],
+) -> (i64, i64, i64, i64, i64) {
     let Some(start) = slot.episode_index else {
-        return (i64::MIN, i64::MIN, i64::MIN);
+        return (i64::MIN, i64::MIN, i64::MIN, i64::MIN, i64::MIN);
     };
     let end = slot.episode_end_index.unwrap_or(start);
+    let min_target = targets
+        .iter()
+        .copied()
+        .min_by(|left, right| left.total_cmp(right))
+        .unwrap_or(start);
+    let max_target = targets
+        .iter()
+        .copied()
+        .max_by(|left, right| left.total_cmp(right))
+        .unwrap_or(end);
     let covered = targets
         .iter()
         .filter(|episode| **episode + 0.001 >= start && **episode - 0.001 <= end)
@@ -498,9 +514,18 @@ fn score_slot_against_targets(slot: &ParsedReleaseSlot, targets: &[f64]) -> (i64
             }
         })
         .sum::<i64>();
-    let start_weight = -((start * 100.0).round() as i64);
+    let negative_start_penalty = (((0.0 - start).max(0.0)) * 100.0).round() as i64;
+    let overflow_penalty =
+        ((((min_target - start).max(0.0)) + ((end - max_target).max(0.0))) * 100.0).round() as i64;
+    let start_distance_penalty = ((start - min_target).abs() * 100.0).round() as i64;
 
-    (covered, -outside_penalty, start_weight)
+    (
+        covered,
+        -outside_penalty,
+        -negative_start_penalty,
+        -overflow_penalty,
+        -start_distance_penalty,
+    )
 }
 
 fn parse_resource_timestamp(value: &str) -> Option<DateTime<Utc>> {
@@ -1185,6 +1210,31 @@ mod tests {
         assert_eq!(normalized[0].release_slot.slot_key, "batch:1-12");
         assert_eq!(normalized[0].release_slot.episode_index, Some(1.0));
         assert_eq!(normalized[0].release_slot.episode_end_index, Some(12.0));
+    }
+
+    #[test]
+    fn completed_collection_alignment_does_not_shift_ranges_into_negative_numbers() {
+        let profile = AnimeGardenSearchProfile {
+            bangumi_subject_id: 1000,
+            title: "Oshi no Ko Season 3".to_owned(),
+            title_cn: "【我推的孩子】 第三季".to_owned(),
+            season_hint: Some(3),
+        };
+        let normalized = normalize_resource_release_slots(
+            vec![sample_collection_resource(
+                "【动漫国字幕组】★04月新番[【我推的孩子】][01-24(全集)][1080P][简体][MP4]",
+                "2026-01-01T00:00:00Z",
+                1.0,
+                24.0,
+                Some(3),
+            )],
+            &profile,
+            "completed",
+            Some(&(1..=13).map(|value| value as f64).collect::<Vec<_>>()),
+        );
+        assert_eq!(normalized[0].release_slot.slot_key, "batch:1-24");
+        assert_eq!(normalized[0].release_slot.episode_index, Some(1.0));
+        assert_eq!(normalized[0].release_slot.episode_end_index, Some(24.0));
     }
 
     fn sample_resource(

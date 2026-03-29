@@ -16,6 +16,7 @@ import { useSession } from "../session";
 import type { ActiveDownload, ResourceLibraryItem } from "../types";
 
 const PAGE_SIZE = 24;
+const ACTIVE_DOWNLOAD_REFRESH_MS = 1000;
 
 const useStyles = makeStyles({
   page: {
@@ -328,17 +329,28 @@ export function ResourcesPage() {
 
   useEffect(() => {
     let isMounted = true;
-    const interval = window.setInterval(() => {
-      void fetchActiveDownloads(deviceId, userToken).then((response) => {
+    let timeoutId: number | undefined;
+
+    const poll = async () => {
+      try {
+        const response = await fetchActiveDownloads(deviceId, userToken);
         if (isMounted) {
           setDownloads(response.items);
         }
-      });
-    }, 2000);
+      } finally {
+        if (isMounted) {
+          timeoutId = window.setTimeout(poll, ACTIVE_DOWNLOAD_REFRESH_MS);
+        }
+      }
+    };
+
+    timeoutId = window.setTimeout(poll, ACTIVE_DOWNLOAD_REFRESH_MS);
 
     return () => {
       isMounted = false;
-      window.clearInterval(interval);
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
     };
   }, [deviceId, userToken]);
 
