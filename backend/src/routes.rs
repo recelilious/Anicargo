@@ -9,6 +9,7 @@ use axum::{
 use chrono::{FixedOffset, NaiveDate, Utc};
 use chrono_tz::Tz;
 use futures::stream::{self, StreamExt};
+use serde_json::Value;
 use sqlx::SqlitePool;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -24,7 +25,7 @@ use crate::{
     auth::{
         AdminIdentity, ViewerIdentity, extract_admin_token, extract_device_id, extract_user_token,
     },
-    bangumi::{BangumiClient, BangumiSearchQuery, EpisodeRaw, SearchFacets},
+    bangumi::{BangumiClient, BangumiSearchQuery, EpisodeRaw, SearchFacets, SubjectRaw},
     catalog_cache,
     config::AppConfig,
     db,
@@ -402,8 +403,16 @@ async fn subject_detail(
     } else {
         (false, 0)
     };
+    let display_subscription_count = db::display_subscription_count(
+        &state.pool,
+        subject_id,
+        subscription_count,
+        policy.subscription_threshold,
+    )
+    .await?;
 
-    let release_status = crate::season_catalog::derive_release_status(&subject, &episodes).to_owned();
+    let release_status =
+        crate::season_catalog::derive_release_status(&subject, &episodes).to_owned();
     let mut subject = enrich_detail(&state.yuc, subject.to_detail()).await;
     subject.release_status = release_status;
 
@@ -419,7 +428,7 @@ async fn subject_detail(
             .collect(),
         subscription: SubscriptionStateDto {
             is_subscribed,
-            subscription_count,
+            subscription_count: display_subscription_count,
             threshold: policy.subscription_threshold,
             source: viewer
                 .as_ref()
@@ -545,7 +554,7 @@ async fn toggle_subscription(
 
     let viewer = resolve_viewer(&state.pool, &headers, &device_id).await?;
     let policy = db::load_policy(&state.pool).await?;
-    let (is_subscribed, subscription_count) =
+    let (is_subscribed, actual_subscription_count) =
         db::toggle_subscription(&state.pool, &viewer, subject_id).await?;
     let profile = resolve_subject_search_profile(&state.pool, &state.bangumi, subject_id).await;
     let download = state
@@ -555,7 +564,7 @@ async fn toggle_subscription(
             DownloadDemandInput {
                 bangumi_subject_id: subject_id,
                 release_status: profile.release_status.clone(),
-                subscription_count,
+                subscription_count: actual_subscription_count,
                 threshold: policy.subscription_threshold,
                 trigger_kind: "subscription",
                 requested_by: viewer_to_download_requester(&viewer),
@@ -563,6 +572,13 @@ async fn toggle_subscription(
             },
         )
         .await?;
+    let display_subscription_count = db::display_subscription_count(
+        &state.pool,
+        subject_id,
+        actual_subscription_count,
+        policy.subscription_threshold,
+    )
+    .await?;
 
     if matches!(
         download.reason.as_str(),
@@ -590,7 +606,7 @@ async fn toggle_subscription(
         bangumi_subject_id: subject_id,
         subscription: SubscriptionStateDto {
             is_subscribed,
-            subscription_count,
+            subscription_count: display_subscription_count,
             threshold: policy.subscription_threshold,
             source: viewer_to_summary(&viewer),
         },
@@ -1087,6 +1103,7 @@ async fn resolve_subject_search_profile(
                 bangumi_subject_id: subject_id,
                 title: subject.name.clone(),
                 title_cn: subject.name_cn.clone(),
+                aliases: subject_search_aliases(&subject),
                 release_status,
                 season_hint: infer_season_hint_from_texts([
                     subject.name.as_str(),
@@ -1114,6 +1131,7 @@ async fn resolve_subject_search_profile(
                     bangumi_subject_id: subject_id,
                     title: cached.title,
                     title_cn: cached.title_cn,
+                    aliases: Vec::new(),
                     release_status: cached.release_status,
                     season_hint,
                 };
@@ -1123,6 +1141,7 @@ async fn resolve_subject_search_profile(
                 bangumi_subject_id: subject_id,
                 title: String::new(),
                 title_cn: String::new(),
+                aliases: Vec::new(),
                 release_status: "completed".to_owned(),
                 season_hint: None,
             }
@@ -2405,6 +2424,7 @@ struct AnimeGardenSearchProfileWithStatus {
     bangumi_subject_id: i64,
     title: String,
     title_cn: String,
+    aliases: Vec<String>,
     release_status: String,
     season_hint: Option<i64>,
 }
@@ -2415,7 +2435,82 @@ impl AnimeGardenSearchProfileWithStatus {
             bangumi_subject_id: self.bangumi_subject_id,
             title: self.title.clone(),
             title_cn: self.title_cn.clone(),
+            aliases: self.aliases.clone(),
             season_hint: self.season_hint,
+        }
+    }
+}
+
+fn subject_search_aliases(subject: &SubjectRaw) -> Vec<String> {
+    let mut aliases = Vec::new();
+    push_subject_alias(&mut aliases, &subject.name);
+    push_subject_alias(&mut aliases, &subject.name_cn);
+
+    for item in &subject.infobox {
+        if !is_alias_infobox_key(&item.key) {
+            continue;
+        }
+        collect_alias_values(&item.value, &mut aliases);
+    }
+
+    let mut seen = HashSet::new();
+    aliases
+        .into_iter()
+        .filter_map(|value| {
+            let normalized = value.trim();
+            if normalized.is_empty() {
+                return None;
+            }
+            let dedupe_key = normalized.to_lowercase();
+            if !seen.insert(dedupe_key) {
+                return None;
+            }
+            Some(normalized.to_owned())
+        })
+        .collect()
+}
+
+fn push_subject_alias(target: &mut Vec<String>, value: &str) {
+    let normalized = value.trim();
+    if !normalized.is_empty() {
+        target.push(normalized.to_owned());
+    }
+}
+
+fn is_alias_infobox_key(key: &str) -> bool {
+    let lowered = key.trim().to_lowercase();
+    lowered.contains("alias")
+        || lowered.contains("别名")
+        || lowered.contains("英文名")
+        || lowered.contains("日文名")
+        || lowered.contains("罗马")
+        || lowered.contains("原名")
+        || lowered.contains("中文名")
+}
+
+fn collect_alias_values(value: &Value, target: &mut Vec<String>) {
+    match value {
+        Value::Null => {}
+        Value::String(text) => push_subject_alias(target, text),
+        Value::Number(number) => push_subject_alias(target, &number.to_string()),
+        Value::Bool(flag) => push_subject_alias(target, &flag.to_string()),
+        Value::Array(values) => {
+            for value in values {
+                collect_alias_values(value, target);
+            }
+        }
+        Value::Object(map) => {
+            if let Some(value) = map
+                .get("v")
+                .or_else(|| map.get("value"))
+                .or_else(|| map.get("name"))
+            {
+                collect_alias_values(value, target);
+            } else {
+                for value in map.values() {
+                    collect_alias_values(value, target);
+                }
+            }
         }
     }
 }

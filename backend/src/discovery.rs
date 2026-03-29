@@ -47,46 +47,57 @@ impl ResourceDiscoveryCoordinator {
             let mut strategy_parts = Vec::new();
             let mut normalized_resources = Vec::new();
             let mut discovery_note = None;
-
-            if job.release_status != "airing" {
-                let search = self.animegarden.search_resources(profile).await?;
-                let broad_resources = dedup_normalized_resources(normalize_resource_release_slots(
-                    search.resources,
-                    profile,
-                    &job.release_status,
-                    Some(targets),
-                ));
-                let broad_has_full_collection =
-                    normalized_resources_cover_all_targets(&broad_resources, targets);
-                info!(
-                    job_id = job.id,
-                    subject_id = job.bangumi_subject_id,
-                    strategy = %search.strategy,
-                    matched_resource_count = broad_resources.len(),
-                    has_full_collection = broad_has_full_collection,
-                    "Resolved broad completed-season resource candidates"
-                );
-                strategy_parts.push(format!("broad:{}", search.strategy));
-                if broad_has_full_collection {
-                    return store_discovered_candidates(
-                        pool,
-                        job,
-                        &format!("targeted:{}", strategy_parts.join(" || ")),
-                        broad_resources,
-                        policy,
-                        None,
-                    )
-                    .await;
-                }
-                normalized_resources.extend(broad_resources.into_iter().filter(|resource| {
+            let broad_search = self.animegarden.search_resources(profile).await?;
+            let broad_resources = dedup_normalized_resources(normalize_resource_release_slots(
+                broad_search.resources,
+                profile,
+                &job.release_status,
+                Some(targets),
+            ));
+            let filtered_broad_resources = broad_resources
+                .into_iter()
+                .filter(|resource| {
                     resource.release_slot.is_collection
                         || targets.iter().any(|episode| {
                             release_slot_matches_target_episode(&resource.release_slot, *episode)
                         })
-                }));
+                })
+                .collect::<Vec<_>>();
+            let broad_has_full_collection =
+                normalized_resources_cover_all_targets(&filtered_broad_resources, targets);
+            info!(
+                job_id = job.id,
+                subject_id = job.bangumi_subject_id,
+                strategy = %broad_search.strategy,
+                matched_resource_count = filtered_broad_resources.len(),
+                has_full_collection = broad_has_full_collection,
+                "Resolved broad resource candidates before targeted hole filling"
+            );
+            strategy_parts.push(format!("broad:{}", broad_search.strategy));
+            if broad_has_full_collection {
+                return store_discovered_candidates(
+                    pool,
+                    job,
+                    &format!("targeted:{}", strategy_parts.join(" || ")),
+                    filtered_broad_resources,
+                    policy,
+                    None,
+                )
+                .await;
             }
+            normalized_resources.extend(filtered_broad_resources);
 
-            for (index, target_episode) in targets.iter().enumerate() {
+            let missing_targets = targets
+                .iter()
+                .copied()
+                .filter(|target_episode| {
+                    !normalized_resources.iter().any(|resource| {
+                        release_slot_matches_target_episode(&resource.release_slot, *target_episode)
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            for (index, target_episode) in missing_targets.iter().enumerate() {
                 let search = match self
                     .animegarden
                     .search_episode_resources(profile, *target_episode)
@@ -139,7 +150,7 @@ impl ResourceDiscoveryCoordinator {
                 );
                 strategy_parts.push(search.strategy);
                 normalized_resources.extend(matched_resources);
-                if index + 1 < targets.len() {
+                if index + 1 < missing_targets.len() {
                     sleep(TokioDuration::from_millis(250)).await;
                 }
             }
@@ -385,7 +396,7 @@ fn normalize_resource_release_slots(
             ) {
                 release_slot = normalize_slot_with_offset(&observation.raw_slot, inferred_offset);
             }
-            if release_status != "airing" {
+            if release_status != "airing" && release_slot.is_collection {
                 release_slot =
                     align_slot_to_expected_targets(&release_slot, expected_episode_targets);
             }
@@ -417,7 +428,31 @@ fn infer_raw_release_slot(
     resource: &AnimeGardenResource,
     _release_status: &str,
 ) -> ParsedReleaseSlot {
-    resource.merged_release_slot.clone()
+    match (
+        resource.api_release_slot.as_ref(),
+        resource.parser_release_slot.as_ref(),
+    ) {
+        (Some(api_slot), Some(parser_slot))
+            if resource.parsed_season_number.is_some()
+                && parser_slot.episode_index.is_some()
+                && api_slot.episode_index.is_some()
+                && parser_slot.episode_index.unwrap_or_default() >= 0.0
+                && parser_slot.episode_index.unwrap_or_default()
+                    < api_slot.episode_index.unwrap_or_default() =>
+        {
+            parser_slot.clone()
+        }
+        (_, Some(parser_slot))
+            if resource.parsed_season_number.is_some()
+                && parser_slot.episode_index.is_some()
+                && parser_slot.episode_index.unwrap_or_default() >= 0.0 =>
+        {
+            parser_slot.clone()
+        }
+        (Some(api_slot), _) => api_slot.clone(),
+        (_, Some(parser_slot)) => parser_slot.clone(),
+        _ => resource.merged_release_slot.clone(),
+    }
 }
 
 fn align_slot_to_expected_targets(
@@ -1141,6 +1176,7 @@ mod tests {
             bangumi_subject_id: 517057,
             title: "【推しの子】 第3期".to_owned(),
             title_cn: "【我推的孩子】 第三季".to_owned(),
+            aliases: Vec::new(),
             season_hint: Some(3),
         };
         let resources = vec![
@@ -1193,6 +1229,7 @@ mod tests {
             bangumi_subject_id: 999,
             title: "Tensei Shitara Slime Datta Ken Season 2 Part 2".to_owned(),
             title_cn: "That Time I Got Reincarnated as a Slime Season 2 Part 2".to_owned(),
+            aliases: Vec::new(),
             season_hint: Some(2),
         };
         let normalized = normalize_resource_release_slots(
@@ -1218,6 +1255,7 @@ mod tests {
             bangumi_subject_id: 1000,
             title: "Oshi no Ko Season 3".to_owned(),
             title_cn: "【我推的孩子】 第三季".to_owned(),
+            aliases: Vec::new(),
             season_hint: Some(3),
         };
         let normalized = normalize_resource_release_slots(
@@ -1255,6 +1293,8 @@ mod tests {
             fetched_at: created_at.to_owned(),
             fansub_name: None,
             publisher_name: String::new(),
+            api_release_slot: None,
+            parser_release_slot: None,
             merged_release_slot: ParsedReleaseSlot {
                 slot_key: parsed_episode_number
                     .map(|episode| format!("episode:{}", episode))
@@ -1289,6 +1329,8 @@ mod tests {
             fetched_at: created_at.to_owned(),
             fansub_name: None,
             publisher_name: String::new(),
+            api_release_slot: None,
+            parser_release_slot: None,
             merged_release_slot: ParsedReleaseSlot {
                 slot_key: format!("batch:{}-{}", start, end),
                 episode_index: Some(start),

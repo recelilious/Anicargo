@@ -48,6 +48,8 @@ struct DownloadSubjectRow {
     demand_state: String,
     subscription_count: i64,
     threshold_snapshot: i64,
+    threshold_reached_once: i64,
+    threshold_reached_at: Option<String>,
     last_queued_job_id: Option<i64>,
     last_evaluated_at: String,
 }
@@ -341,6 +343,12 @@ pub struct ViewerSubscriptionEntry {
     pub bangumi_subject_id: i64,
     pub subscribed_at: String,
     pub latest_ready_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DownloadSubjectState {
+    pub threshold_reached_once: bool,
+    pub threshold_reached_at: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1007,6 +1015,8 @@ pub async fn upsert_download_subject(
     demand_state: &str,
     subscription_count: i64,
     threshold_snapshot: i64,
+    threshold_reached_once: bool,
+    threshold_reached_at: Option<&str>,
 ) -> Result<(), AppError> {
     let now = now_string();
 
@@ -1017,15 +1027,26 @@ pub async fn upsert_download_subject(
             demand_state,
             subscription_count,
             threshold_snapshot,
+            threshold_reached_once,
+            threshold_reached_at,
             last_evaluated_at,
             created_at,
             updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?6)
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?8)
          ON CONFLICT(bangumi_subject_id) DO UPDATE SET
             release_status = excluded.release_status,
             demand_state = excluded.demand_state,
             subscription_count = excluded.subscription_count,
             threshold_snapshot = excluded.threshold_snapshot,
+            threshold_reached_once = CASE
+                WHEN download_subjects.threshold_reached_once = 1 OR excluded.threshold_reached_once = 1
+                THEN 1
+                ELSE 0
+            END,
+            threshold_reached_at = COALESCE(
+                download_subjects.threshold_reached_at,
+                excluded.threshold_reached_at
+            ),
             last_evaluated_at = excluded.last_evaluated_at,
             updated_at = excluded.updated_at",
     )
@@ -1034,12 +1055,71 @@ pub async fn upsert_download_subject(
     .bind(demand_state)
     .bind(subscription_count)
     .bind(threshold_snapshot)
+    .bind(if threshold_reached_once { 1 } else { 0 })
+    .bind(threshold_reached_at)
     .bind(now)
     .execute(pool)
     .await
     .map_err(|_| AppError::internal("failed to upsert download subject state"))?;
 
     Ok(())
+}
+
+pub async fn download_subject_state(
+    pool: &SqlitePool,
+    bangumi_subject_id: i64,
+) -> Result<Option<DownloadSubjectState>, AppError> {
+    let row = sqlx::query_as::<_, DownloadSubjectRow>(
+        "SELECT
+            bangumi_subject_id,
+            release_status,
+            demand_state,
+            subscription_count,
+            threshold_snapshot,
+            threshold_reached_once,
+            threshold_reached_at,
+            last_queued_job_id,
+            last_evaluated_at
+         FROM download_subjects
+         WHERE bangumi_subject_id = ?1",
+    )
+    .bind(bangumi_subject_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to read download subject state"))?;
+
+    Ok(row.map(|row| DownloadSubjectState {
+        threshold_reached_once: row.threshold_reached_once > 0,
+        threshold_reached_at: row.threshold_reached_at,
+    }))
+}
+
+pub fn display_subscription_count_from_state(
+    state: Option<&DownloadSubjectState>,
+    actual_subscription_count: i64,
+    threshold_snapshot: i64,
+) -> i64 {
+    if state.is_some_and(|item| item.threshold_reached_once)
+        && actual_subscription_count < threshold_snapshot
+    {
+        threshold_snapshot
+    } else {
+        actual_subscription_count
+    }
+}
+
+pub async fn display_subscription_count(
+    pool: &SqlitePool,
+    bangumi_subject_id: i64,
+    actual_subscription_count: i64,
+    threshold_snapshot: i64,
+) -> Result<i64, AppError> {
+    let state = download_subject_state(pool, bangumi_subject_id).await?;
+    Ok(display_subscription_count_from_state(
+        state.as_ref(),
+        actual_subscription_count,
+        threshold_snapshot,
+    ))
 }
 
 pub async fn find_open_download_job(
@@ -1268,6 +1348,8 @@ pub async fn subject_download_status(
             demand_state,
             subscription_count,
             threshold_snapshot,
+            threshold_reached_once,
+            threshold_reached_at,
             last_queued_job_id,
             last_evaluated_at
          FROM download_subjects
@@ -1315,11 +1397,21 @@ pub async fn subject_download_status(
         .await
         .map_err(|_| AppError::internal("failed to aggregate subject media readiness"))?;
 
+    let release_status = subject.release_status.clone();
+    let demand_state = subject.demand_state.clone();
+
     Ok(Some(SubjectDownloadStatusDto {
         bangumi_subject_id: subject.bangumi_subject_id,
-        release_status: subject.release_status,
-        demand_state: subject.demand_state,
-        subscription_count: subject.subscription_count,
+        release_status,
+        demand_state,
+        subscription_count: display_subscription_count_from_state(
+            Some(&DownloadSubjectState {
+                threshold_reached_once: subject.threshold_reached_once > 0,
+                threshold_reached_at: subject.threshold_reached_at.clone(),
+            }),
+            subject.subscription_count,
+            subject.threshold_snapshot,
+        ),
         threshold_snapshot: subject.threshold_snapshot,
         last_queued_job_id: job
             .as_ref()

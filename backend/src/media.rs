@@ -21,6 +21,7 @@ pub struct ParsedReleaseSlot {
 
 #[derive(Debug, Clone)]
 pub struct IndexedMediaFile {
+    pub slot_key: String,
     pub relative_path: String,
     pub absolute_path: String,
     pub file_name: String,
@@ -102,6 +103,7 @@ pub fn scan_video_files(
             let inferred_slot = infer_file_slot(&file_name, fallback_slot);
 
             files.push(IndexedMediaFile {
+                slot_key: inferred_slot.slot_key.clone(),
                 relative_path,
                 absolute_path: path.to_string_lossy().into_owned(),
                 file_name,
@@ -166,7 +168,12 @@ fn slot_from_parse(parsed: &ParseResult) -> Option<ParsedReleaseSlot> {
 fn slot_from_episode(descriptor: &EpisodeDescriptor) -> ParsedReleaseSlot {
     let primary = descriptor.primary.decimal();
     let secondary = descriptor.secondary.map(EpisodeNumber::decimal);
-    let selected = secondary.map(|value| primary.min(value)).unwrap_or(primary);
+    let selected = match secondary {
+        Some(value) if primary <= 0.0 && value > 0.0 => value,
+        Some(value) if value > 0.0 && primary > 0.0 => primary.min(value),
+        Some(value) => value,
+        None => primary,
+    };
 
     ParsedReleaseSlot {
         slot_key: format!("episode:{}", format_episode_number(selected)),
@@ -470,7 +477,7 @@ mod tests {
             "Tensei Shitara Slime Datta Ken 3rd Season - 00(48.5) [WebRip 1080p].mkv",
         );
         let slot = slot_from_parse(&parsed).expect("slot");
-        assert_eq!(slot.episode_index, Some(0.0));
-        assert_eq!(slot.slot_key, "episode:0");
+        assert_eq!(slot.episode_index, Some(48.5));
+        assert_eq!(slot.slot_key, "episode:48.5");
     }
 }

@@ -724,8 +724,22 @@ impl DownloadCoordinator {
         pool: &SqlitePool,
         input: DownloadDemandInput,
     ) -> Result<DownloadDecisionDto, AppError> {
+        let existing_subject = db::download_subject_state(pool, input.bangumi_subject_id).await?;
         let demand_state =
             determine_demand_state(input.subscription_count, input.threshold, input.force);
+        let threshold_met =
+            should_queue_job(input.subscription_count, input.threshold, input.force);
+        let threshold_reached_once = existing_subject
+            .as_ref()
+            .is_some_and(|state| state.threshold_reached_once);
+        let threshold_triggered_now = !input.force && threshold_met && !threshold_reached_once;
+        let threshold_reached_at = if threshold_triggered_now {
+            Some(chrono::Utc::now().to_rfc3339())
+        } else {
+            existing_subject
+                .as_ref()
+                .and_then(|state| state.threshold_reached_at.clone())
+        };
 
         db::upsert_download_subject(
             pool,
@@ -734,10 +748,12 @@ impl DownloadCoordinator {
             demand_state,
             input.subscription_count,
             input.threshold,
+            threshold_reached_once || threshold_triggered_now,
+            threshold_reached_at.as_deref(),
         )
         .await?;
 
-        if !should_queue_job(input.subscription_count, input.threshold, input.force) {
+        if !threshold_met {
             return Ok(DownloadDecisionDto {
                 demand_state: demand_state.to_owned(),
                 reason: "below_threshold".to_owned(),
@@ -785,10 +801,20 @@ impl DownloadCoordinator {
                 demand_state: demand_state.to_owned(),
                 reason: if input.force {
                     "reused_existing_force_job".to_owned()
-                } else {
+                } else if threshold_triggered_now {
                     "reused_existing_threshold_job".to_owned()
+                } else {
+                    "threshold_already_active".to_owned()
                 },
                 job: Some(job),
+            });
+        }
+
+        if !input.force && threshold_reached_once && !threshold_triggered_now {
+            return Ok(DownloadDecisionDto {
+                demand_state: demand_state.to_owned(),
+                reason: "threshold_already_triggered".to_owned(),
+                job: None,
             });
         }
 
@@ -1409,7 +1435,7 @@ async fn sync_execution_media_inventory(
             download_job_id: execution.download_job_id,
             download_execution_id: execution.id,
             resource_candidate_id: execution.resource_candidate_id,
-            slot_key: execution.slot_key.clone(),
+            slot_key: file.slot_key,
             relative_path: file.relative_path,
             absolute_path: file.absolute_path,
             file_name: file.file_name,

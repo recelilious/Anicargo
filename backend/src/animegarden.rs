@@ -26,6 +26,7 @@ pub struct AnimeGardenSearchProfile {
     pub bangumi_subject_id: i64,
     pub title: String,
     pub title_cn: String,
+    pub aliases: Vec<String>,
     pub season_hint: Option<i64>,
 }
 
@@ -48,6 +49,8 @@ pub struct AnimeGardenResource {
     pub fetched_at: String,
     pub fansub_name: Option<String>,
     pub publisher_name: String,
+    pub api_release_slot: Option<ParsedReleaseSlot>,
+    pub parser_release_slot: Option<ParsedReleaseSlot>,
     pub merged_release_slot: ParsedReleaseSlot,
     pub parsed_season_number: Option<i64>,
     pub parsed_resolution: Option<String>,
@@ -74,67 +77,42 @@ impl AnimeGardenClient {
         &self,
         profile: &AnimeGardenSearchProfile,
     ) -> Result<AnimeGardenSearchResult, AppError> {
+        let search_terms = profile_search_terms(profile);
         info!(
             subject_id = profile.bangumi_subject_id,
             title = %profile.title,
             title_cn = %profile.title_cn,
+            aliases = ?profile.aliases,
             season_hint = ?profile.season_hint,
-            "Starting AnimeGarden subject-first discovery"
+            search_terms = ?search_terms,
+            "Starting AnimeGarden discovery"
         );
-        let by_subject = self
-            .fetch_resources(build_subject_params(profile.bangumi_subject_id))
+        let mut resources = self
+            .fetch_resources_with_limits(build_subject_params(profile.bangumi_subject_id), 100, 8)
             .await?;
-        if !by_subject.is_empty() {
-            info!(
-                subject_id = profile.bangumi_subject_id,
-                resource_count = by_subject.len(),
-                "AnimeGarden subject search returned resources"
-            );
-            return Ok(AnimeGardenSearchResult {
-                strategy: "subject".to_owned(),
-                resources: by_subject,
-            });
-        }
+        let mut strategies = vec!["subject".to_owned()];
 
-        if let Some(keyword) = preferred_search_term(profile) {
-            let by_search = self
-                .fetch_resources(build_search_params(keyword.clone()))
+        for term in search_terms {
+            let fetched = self
+                .fetch_resources(build_search_params(term.clone()))
                 .await?;
-            if !by_search.is_empty() {
+            if !fetched.is_empty() {
                 info!(
                     subject_id = profile.bangumi_subject_id,
-                    keyword = %keyword,
-                    resource_count = by_search.len(),
-                    "AnimeGarden preferred keyword search returned resources"
+                    keyword = %term,
+                    resource_count = fetched.len(),
+                    "AnimeGarden keyword discovery returned resources"
                 );
-                return Ok(AnimeGardenSearchResult {
-                    strategy: format!("search:{keyword}"),
-                    resources: by_search,
-                });
+                resources.extend(fetched);
+                strategies.push(format!("search:{term}"));
             }
         }
 
-        if let Some(keyword) = secondary_search_term(profile) {
-            let by_search = self
-                .fetch_resources(build_search_params(keyword.clone()))
-                .await?;
-            if !by_search.is_empty() {
-                info!(
-                    subject_id = profile.bangumi_subject_id,
-                    keyword = %keyword,
-                    resource_count = by_search.len(),
-                    "AnimeGarden secondary keyword search returned resources"
-                );
-                return Ok(AnimeGardenSearchResult {
-                    strategy: format!("search:{keyword}"),
-                    resources: by_search,
-                });
-            }
-        }
+        let resources = dedup_resources(resources);
 
         Ok(AnimeGardenSearchResult {
-            strategy: "subject_then_search".to_owned(),
-            resources: Vec::new(),
+            strategy: strategies.join(" || "),
+            resources,
         })
     }
 
@@ -143,31 +121,23 @@ impl AnimeGardenClient {
         profile: &AnimeGardenSearchProfile,
         episode_number: f64,
     ) -> Result<AnimeGardenSearchResult, AppError> {
+        let search_terms = build_episode_search_terms(profile, episode_number);
         let subject_episode_params =
             build_subject_episode_params(profile.bangumi_subject_id, episode_number);
         let subject_episode_results = self
             .fetch_resources_with_limits(subject_episode_params, 100, 1)
             .await?;
+        let mut resources = subject_episode_results;
+        let mut strategies = vec![format!(
+            "subject_keyword:{}",
+            format_episode_fragment(episode_number)
+        )];
         info!(
             subject_id = profile.bangumi_subject_id,
             episode = episode_number,
-            resource_count = subject_episode_results.len(),
+            resource_count = resources.len(),
             "AnimeGarden subject+keyword episode search finished"
         );
-        if !subject_episode_results.is_empty() {
-            return Ok(AnimeGardenSearchResult {
-                strategy: format!(
-                    "subject_keyword:{}",
-                    format_episode_fragment(episode_number)
-                ),
-                resources: dedup_resources(subject_episode_results),
-            });
-        }
-
-        let search_terms = build_episode_search_terms(profile, episode_number);
-        if search_terms.is_empty() {
-            return self.search_resources(profile).await;
-        }
 
         info!(
             subject_id = profile.bangumi_subject_id,
@@ -188,20 +158,18 @@ impl AnimeGardenClient {
                 "AnimeGarden targeted episode search finished"
             );
             if !fetched.is_empty() {
-                return Ok(AnimeGardenSearchResult {
-                    strategy: format!(
-                        "episode:{}:{}",
-                        format_episode_fragment(episode_number),
-                        keyword
-                    ),
-                    resources: dedup_resources(fetched),
-                });
+                resources.extend(fetched);
+                strategies.push(format!(
+                    "episode:{}:{}",
+                    format_episode_fragment(episode_number),
+                    keyword
+                ));
             }
         }
 
         Ok(AnimeGardenSearchResult {
-            strategy: format!("episode:{}:empty", format_episode_fragment(episode_number)),
-            resources: Vec::new(),
+            strategy: strategies.join(" || "),
+            resources: dedup_resources(resources),
         })
     }
 
@@ -339,6 +307,16 @@ fn secondary_search_term(profile: &AnimeGardenSearchProfile) -> Option<String> {
     }
 }
 
+fn profile_search_terms(profile: &AnimeGardenSearchProfile) -> Vec<String> {
+    let mut terms = Vec::new();
+    push_term(&mut terms, preferred_search_term(profile));
+    push_term(&mut terms, secondary_search_term(profile));
+    for alias in &profile.aliases {
+        push_term(&mut terms, sanitize_search_term(alias));
+    }
+    terms
+}
+
 fn sanitize_search_term(value: &str) -> Option<String> {
     let term = value
         .replace(
@@ -363,6 +341,7 @@ fn build_episode_search_terms(
     } else {
         format_episode_fragment(episode_number)
     };
+    let episode_fragment = format_episode_fragment(episode_number);
 
     if let Some(season_hint) = profile.season_hint {
         let chinese_season = format_chinese_number(season_hint);
@@ -402,6 +381,31 @@ fn build_episode_search_terms(
     }
     if let Some(title_cn) = sanitize_search_term(&profile.title_cn) {
         push_term(&mut terms, Some(format!("{title_cn} {padded_episode}")));
+    }
+
+    for title in profile_search_terms(profile) {
+        push_term(&mut terms, Some(format!("{title} {padded_episode}")));
+        if episode_fragment != padded_episode {
+            push_term(&mut terms, Some(format!("{title} {episode_fragment}")));
+        }
+
+        if let Some(season_hint) = profile.season_hint {
+            push_term(
+                &mut terms,
+                Some(format!("{title} S{season_hint} {padded_episode}")),
+            );
+            push_term(
+                &mut terms,
+                Some(format!("{title} Season {season_hint} {padded_episode}")),
+            );
+            push_term(
+                &mut terms,
+                Some(format!(
+                    "{title} {} Season {padded_episode}",
+                    format_english_ordinal(season_hint)
+                )),
+            );
+        }
     }
 
     terms
@@ -611,7 +615,12 @@ fn parse_result_slot(parsed: &ParseResult) -> Option<ParsedReleaseSlot> {
     parsed.episode.as_ref().map(|episode| {
         let primary = episode.primary.decimal();
         let secondary = episode.secondary.map(|item| item.decimal());
-        let selected = secondary.map(|value| value.min(primary)).unwrap_or(primary);
+        let selected = match secondary {
+            Some(value) if primary <= 0.0 && value > 0.0 => value,
+            Some(value) if value > 0.0 && primary > 0.0 => value.min(primary),
+            Some(value) => value,
+            None => primary,
+        };
         ParsedReleaseSlot {
             slot_key: format!("episode:{}", format_episode_fragment(selected)),
             episode_index: Some(selected),
@@ -621,6 +630,55 @@ fn parse_result_slot(parsed: &ParseResult) -> Option<ParsedReleaseSlot> {
     })
 }
 
+fn api_release_slot(
+    api_episode_number: Option<f64>,
+    api_episode_end_number: Option<f64>,
+) -> Option<ParsedReleaseSlot> {
+    let start = api_episode_number?;
+    let end = api_episode_end_number.unwrap_or(start);
+    Some(ParsedReleaseSlot {
+        slot_key: if end > start {
+            format!(
+                "batch:{}-{}",
+                format_episode_fragment(start),
+                format_episode_fragment(end)
+            )
+        } else {
+            format!("episode:{}", format_episode_fragment(start))
+        },
+        episode_index: Some(start),
+        episode_end_index: Some(end),
+        is_collection: end > start,
+    })
+}
+
+fn build_slot_from_fields(
+    episode_index: Option<f64>,
+    episode_end_index: Option<f64>,
+    is_collection: bool,
+    fallback: ParsedReleaseSlot,
+) -> ParsedReleaseSlot {
+    let Some(start) = episode_index else {
+        return fallback;
+    };
+    let end = episode_end_index.unwrap_or(start);
+    let collection = is_collection || end > start;
+    ParsedReleaseSlot {
+        slot_key: if collection {
+            format!(
+                "batch:{}-{}",
+                format_episode_fragment(start),
+                format_episode_fragment(end)
+            )
+        } else {
+            format!("episode:{}", format_episode_fragment(start))
+        },
+        episode_index: Some(start),
+        episode_end_index: Some(end),
+        is_collection: collection,
+    }
+}
+
 fn merge_release_slot(
     title: &str,
     release_type: &str,
@@ -628,30 +686,29 @@ fn merge_release_slot(
     api_episode_number: Option<f64>,
     api_episode_end_number: Option<f64>,
     manual_parse: Option<&ParseResult>,
-) -> ParsedReleaseSlot {
-    if let Some(parsed) = manual_parse.and_then(parse_result_slot) {
-        return parsed;
-    }
+) -> (
+    Option<ParsedReleaseSlot>,
+    Option<ParsedReleaseSlot>,
+    ParsedReleaseSlot,
+) {
+    let api_slot = api_release_slot(api_episode_number, api_episode_end_number);
+    let parser_slot = manual_parse.and_then(parse_result_slot);
+    let fallback = infer_release_slot(title, release_type, provider_id, "airing");
+    let merged = build_slot_from_fields(
+        api_slot
+            .as_ref()
+            .and_then(|slot| slot.episode_index)
+            .or_else(|| parser_slot.as_ref().and_then(|slot| slot.episode_index)),
+        api_slot
+            .as_ref()
+            .and_then(|slot| slot.episode_end_index)
+            .or_else(|| parser_slot.as_ref().and_then(|slot| slot.episode_end_index)),
+        api_slot.as_ref().is_some_and(|slot| slot.is_collection)
+            || parser_slot.as_ref().is_some_and(|slot| slot.is_collection),
+        fallback,
+    );
 
-    if let Some(start) = api_episode_number {
-        let end = api_episode_end_number.unwrap_or(start);
-        return ParsedReleaseSlot {
-            slot_key: if end > start {
-                format!(
-                    "batch:{}-{}",
-                    format_episode_fragment(start),
-                    format_episode_fragment(end)
-                )
-            } else {
-                format!("episode:{}", format_episode_fragment(start))
-            },
-            episode_index: Some(start),
-            episode_end_index: Some(end),
-            is_collection: end > start,
-        };
-    }
-
-    infer_release_slot(title, release_type, provider_id, "airing")
+    (api_slot, parser_slot, merged)
 }
 
 impl From<ResourceRaw> for AnimeGardenResource {
@@ -675,7 +732,7 @@ impl From<ResourceRaw> for AnimeGardenResource {
             .and_then(|parsed| parsed.episode_range.as_ref().map(|range| range.to))
             .or(api_episode_number);
         let manual_parse = Some(parse_release_name(&value.title));
-        let merged_release_slot = merge_release_slot(
+        let (api_release_slot, parser_release_slot, merged_release_slot) = merge_release_slot(
             &value.title,
             &value.release_type,
             &value.provider_id,
@@ -741,7 +798,9 @@ impl From<ResourceRaw> for AnimeGardenResource {
             fetched_at: value.fetched_at,
             fansub_name: value.fansub.map(|fansub| fansub.name),
             publisher_name: value.publisher.name,
-            merged_release_slot: merged_release_slot.clone(),
+            api_release_slot,
+            parser_release_slot,
+            merged_release_slot,
             parsed_season_number,
             parsed_resolution,
             parsed_language,
