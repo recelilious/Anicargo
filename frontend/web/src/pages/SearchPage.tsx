@@ -1,15 +1,5 @@
 import { startTransition, useEffect, useRef, useState } from "react";
-import {
-  Button,
-  Card,
-  Field,
-  Input,
-  Select,
-  Spinner,
-  Text,
-  makeStyles,
-  tokens,
-} from "@fluentui/react-components";
+import { Button, Card, Field, Input, Select, Spinner, Text, makeStyles } from "@fluentui/react-components";
 
 import { searchSubjects } from "../api";
 import { SubjectCard } from "../components/SubjectCard";
@@ -21,33 +11,19 @@ type SearchFormState = {
   sort: "score" | "rank" | "heat" | "match";
   year: string;
   season: "" | "winter" | "spring" | "summer" | "fall";
-  tagInput: string;
-  metaTagInput: string;
   startDate: string;
   endDate: string;
   ratingMin: string;
   ratingMax: string;
-  ratingCountMin: string;
-  ratingCountMax: string;
-  rankMin: string;
-  rankMax: string;
-  nsfwMode: "any" | "safe" | "only";
 };
 
 type SearchRequestModel = {
   keyword: string;
   sort: SearchFormState["sort"];
-  tags: string[];
-  metaTags: string[];
   airDateStart: string | null;
   airDateEnd: string | null;
   ratingMin: string | null;
   ratingMax: string | null;
-  ratingCountMin: string | null;
-  ratingCountMax: string | null;
-  rankMin: string | null;
-  rankMax: string | null;
-  nsfwMode: SearchFormState["nsfwMode"];
   pageSize: number;
 };
 
@@ -76,17 +52,10 @@ const DEFAULT_FORM: SearchFormState = {
   sort: "score",
   year: "",
   season: "",
-  tagInput: "",
-  metaTagInput: "",
   startDate: "",
   endDate: "",
   ratingMin: "",
   ratingMax: "",
-  ratingCountMin: "",
-  ratingCountMax: "",
-  rankMin: "",
-  rankMax: "",
-  nsfwMode: "safe",
 };
 
 const CARD_MIN_WIDTH = 210;
@@ -113,19 +82,30 @@ const useStyles = makeStyles({
   },
   headerRow: {
     display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: "12px",
+    flexDirection: "column",
+    alignItems: "flex-start",
+    gap: "8px",
     marginBottom: "14px",
   },
-  filterGrid: {
+  headerSource: {
+    color: "var(--app-muted)",
+  },
+  filterRows: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+  },
+  primaryRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(280px, 1fr) 180px",
+    gap: "12px",
+    alignItems: "end",
+  },
+  secondaryRow: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
     gap: "12px",
     alignItems: "end",
-  },
-  keywordField: {
-    gridColumn: "span 2",
   },
   footerRow: {
     display: "flex",
@@ -173,13 +153,6 @@ const useStyles = makeStyles({
   },
 });
 
-function splitTerms(value: string) {
-  return value
-    .split(/[,，]/)
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-}
-
 function buildDateRange(form: SearchFormState) {
   if (form.startDate || form.endDate) {
     return {
@@ -222,17 +195,10 @@ function buildRequestModel(form: SearchFormState, pageSize: number): SearchReque
   return {
     keyword: form.keyword.trim(),
     sort: form.sort,
-    tags: splitTerms(form.tagInput),
-    metaTags: splitTerms(form.metaTagInput),
     airDateStart,
     airDateEnd,
     ratingMin: form.ratingMin || null,
     ratingMax: form.ratingMax || null,
-    ratingCountMin: form.ratingCountMin || null,
-    ratingCountMax: form.ratingCountMax || null,
-    rankMin: form.rankMin || null,
-    rankMax: form.rankMax || null,
-    nsfwMode: form.nsfwMode,
     pageSize,
   };
 }
@@ -243,16 +209,7 @@ function buildSearchParams(request: SearchRequestModel, page: number) {
     sort: request.sort,
     page: String(page),
     pageSize: String(request.pageSize),
-    nsfwMode: request.nsfwMode,
   });
-
-  for (const tag of request.tags) {
-    params.append("tag", tag);
-  }
-
-  for (const metaTag of request.metaTags) {
-    params.append("metaTag", metaTag);
-  }
 
   if (request.airDateStart) {
     params.set("airDateStart", request.airDateStart);
@@ -268,22 +225,6 @@ function buildSearchParams(request: SearchRequestModel, page: number) {
 
   if (request.ratingMax) {
     params.set("ratingMax", request.ratingMax);
-  }
-
-  if (request.ratingCountMin) {
-    params.set("ratingCountMin", request.ratingCountMin);
-  }
-
-  if (request.ratingCountMax) {
-    params.set("ratingCountMax", request.ratingCountMax);
-  }
-
-  if (request.rankMin) {
-    params.set("rankMin", request.rankMin);
-  }
-
-  if (request.rankMax) {
-    params.set("rankMax", request.rankMax);
   }
 
   return params;
@@ -352,15 +293,10 @@ export function SearchPage() {
   );
 
   const debouncedKeyword = useDebouncedValue(form.keyword, 280);
-  const debouncedTagInput = useDebouncedValue(form.tagInput, 280);
-  const debouncedMetaTagInput = useDebouncedValue(form.metaTagInput, 280);
-
   const requestModel = buildRequestModel(
     {
       ...form,
       keyword: debouncedKeyword,
-      tagInput: debouncedTagInput,
-      metaTagInput: debouncedMetaTagInput,
     },
     pageSize,
   );
@@ -606,150 +542,93 @@ export function SearchPage() {
           <Text weight="semibold" size={800}>
             搜索
           </Text>
-          <Text size={200} className={styles.muted}>
-            Bangumi 动画条目
+          <Text size={300} className={styles.headerSource}>
+            来源：Bangumi 动画条目
           </Text>
         </div>
 
-        <div className={styles.filterGrid}>
-          <Field label="关键词" className={styles.keywordField}>
-            <Input
-              value={form.keyword}
-              onChange={(_, data) => updateForm("keyword", data.value)}
-              placeholder="番名 / 别名 / 关键词"
-            />
-          </Field>
+        <div className={styles.filterRows}>
+          <div className={styles.primaryRow}>
+            <Field label="关键词">
+              <Input
+                value={form.keyword}
+                onChange={(_, data) => updateForm("keyword", data.value)}
+                placeholder="番名 / 别名 / 关键词"
+              />
+            </Field>
 
-          <Field label="排序">
-            <Select
-              value={form.sort}
-              onChange={(event) => updateForm("sort", event.target.value as SearchFormState["sort"])}
-            >
-              <option value="score">评分</option>
-              <option value="rank">排名</option>
-              <option value="heat">热度</option>
-              <option value="match">匹配度</option>
-            </Select>
-          </Field>
+            <Field label="排序">
+              <Select
+                value={form.sort}
+                onChange={(event) => updateForm("sort", event.target.value as SearchFormState["sort"])}
+              >
+                <option value="score">评分</option>
+                <option value="rank">排名</option>
+                <option value="heat">热度</option>
+                <option value="match">匹配度</option>
+              </Select>
+            </Field>
+          </div>
 
-          <Field label="年份">
-            <Input
-              type="number"
-              value={form.year}
-              onChange={(_, data) => updateForm("year", data.value)}
-              placeholder="例如 2026"
-            />
-          </Field>
+          <div className={styles.secondaryRow}>
+            <Field label="年份">
+              <Input
+                type="number"
+                value={form.year}
+                onChange={(_, data) => updateForm("year", data.value)}
+                placeholder="例如 2026"
+              />
+            </Field>
 
-          <Field label="季度">
-            <Select
-              value={form.season}
-              onChange={(event) =>
-                updateForm("season", event.target.value as SearchFormState["season"])
-              }
-            >
-              <option value="">全年</option>
-              <option value="winter">冬</option>
-              <option value="spring">春</option>
-              <option value="summer">夏</option>
-              <option value="fall">秋</option>
-            </Select>
-          </Field>
+            <Field label="季度">
+              <Select
+                value={form.season}
+                onChange={(event) =>
+                  updateForm("season", event.target.value as SearchFormState["season"])
+                }
+              >
+                <option value="">全年</option>
+                <option value="winter">冬</option>
+                <option value="spring">春</option>
+                <option value="summer">夏</option>
+                <option value="fall">秋</option>
+              </Select>
+            </Field>
 
-          <Field label="用户标签">
-            <Input
-              value={form.tagInput}
-              onChange={(_, data) => updateForm("tagInput", data.value)}
-              placeholder="逗号分隔"
-            />
-          </Field>
+            <Field label="起始日期">
+              <Input
+                type="date"
+                value={form.startDate}
+                onChange={(_, data) => updateForm("startDate", data.value)}
+              />
+            </Field>
 
-          <Field label="公共标签">
-            <Input
-              value={form.metaTagInput}
-              onChange={(_, data) => updateForm("metaTagInput", data.value)}
-              placeholder="支持 -标签 排除"
-            />
-          </Field>
+            <Field label="结束日期">
+              <Input
+                type="date"
+                value={form.endDate}
+                onChange={(_, data) => updateForm("endDate", data.value)}
+              />
+            </Field>
 
-          <Field label="起始日期">
-            <Input
-              type="date"
-              value={form.startDate}
-              onChange={(_, data) => updateForm("startDate", data.value)}
-            />
-          </Field>
+            <Field label="最低评分">
+              <Input
+                type="number"
+                step="0.1"
+                value={form.ratingMin}
+                onChange={(_, data) => updateForm("ratingMin", data.value)}
+              />
+            </Field>
 
-          <Field label="结束日期">
-            <Input
-              type="date"
-              value={form.endDate}
-              onChange={(_, data) => updateForm("endDate", data.value)}
-            />
-          </Field>
-
-          <Field label="最低评分">
-            <Input
-              type="number"
-              step="0.1"
-              value={form.ratingMin}
-              onChange={(_, data) => updateForm("ratingMin", data.value)}
-            />
-          </Field>
-
-          <Field label="最高评分">
-            <Input
-              type="number"
-              step="0.1"
-              value={form.ratingMax}
-              onChange={(_, data) => updateForm("ratingMax", data.value)}
-            />
-          </Field>
-
-          <Field label="最少评分人数">
-            <Input
-              type="number"
-              value={form.ratingCountMin}
-              onChange={(_, data) => updateForm("ratingCountMin", data.value)}
-            />
-          </Field>
-
-          <Field label="最多评分人数">
-            <Input
-              type="number"
-              value={form.ratingCountMax}
-              onChange={(_, data) => updateForm("ratingCountMax", data.value)}
-            />
-          </Field>
-
-          <Field label="排名下限">
-            <Input
-              type="number"
-              value={form.rankMin}
-              onChange={(_, data) => updateForm("rankMin", data.value)}
-            />
-          </Field>
-
-          <Field label="排名上限">
-            <Input
-              type="number"
-              value={form.rankMax}
-              onChange={(_, data) => updateForm("rankMax", data.value)}
-            />
-          </Field>
-
-          <Field label="R18">
-            <Select
-              value={form.nsfwMode}
-              onChange={(event) =>
-                updateForm("nsfwMode", event.target.value as SearchFormState["nsfwMode"])
-              }
-            >
-              <option value="safe">仅非 R18</option>
-              <option value="any">交给 Bangumi 默认处理</option>
-              <option value="only">仅 R18</option>
-            </Select>
-          </Field>
+            <Field label="最高评分">
+              <Input
+                type="number"
+                step="0.1"
+                value={form.ratingMax}
+                onChange={(_, data) => updateForm("ratingMax", data.value)}
+              />
+            </Field>
+          </div>
         </div>
 
         <div className={styles.footerRow}>
