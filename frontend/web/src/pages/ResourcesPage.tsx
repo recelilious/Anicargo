@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Card,
@@ -333,6 +333,7 @@ export function ResourcesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const activeDownloadKeysRef = useRef<string[]>([]);
   const visibleResourcePageSize = Math.min(page * PAGE_SIZE, 96);
   useLoadingStatus(
     isLoading ? "正在读取资源..." : isLoadingMore ? "正在加载更多资源..." : null,
@@ -343,6 +344,18 @@ export function ResourcesPage() {
       page: "1",
       pageSize: String(pageSize),
     });
+  }
+
+  function buildDownloadKey(download: ActiveDownload) {
+    return `${download.bangumiSubjectId}:${download.slotKey}`;
+  }
+
+  async function refreshResourceSnapshot(pageSize = visibleResourcePageSize) {
+    const resourceResponse = await fetchResources(buildResourceParams(pageSize), deviceId, userToken);
+    setItems(resourceResponse.items);
+    setTotal(resourceResponse.total);
+    setTotalSizeBytes(resourceResponse.totalSizeBytes);
+    setHasNextPage(resourceResponse.hasNextPage);
   }
 
   useEffect(() => {
@@ -364,6 +377,7 @@ export function ResourcesPage() {
         setPage(resourceResponse.page);
         setHasNextPage(resourceResponse.hasNextPage);
         setDownloads(downloadResponse.items);
+        activeDownloadKeysRef.current = downloadResponse.items.map(buildDownloadKey);
         setError(null);
       })
       .catch((nextError: Error) => {
@@ -388,16 +402,20 @@ export function ResourcesPage() {
 
     const poll = async () => {
       try {
-        const [downloadResponse, resourceResponse] = await Promise.all([
-          fetchActiveDownloads(deviceId, userToken),
-          fetchResources(buildResourceParams(), deviceId, userToken),
-        ]);
+        const downloadResponse = await fetchActiveDownloads(deviceId, userToken);
         if (isMounted) {
+          const previousKeys = activeDownloadKeysRef.current;
+          const nextKeys = downloadResponse.items.map(buildDownloadKey);
+          const nextKeySet = new Set(nextKeys);
+          const removedKeys = previousKeys.filter((key) => !nextKeySet.has(key));
+
           setDownloads(downloadResponse.items);
-          setItems(resourceResponse.items);
-          setTotal(resourceResponse.total);
-          setTotalSizeBytes(resourceResponse.totalSizeBytes);
-          setHasNextPage(resourceResponse.hasNextPage);
+          activeDownloadKeysRef.current = nextKeys;
+
+          if (removedKeys.length > 0) {
+            await refreshResourceSnapshot();
+          }
+
           setError(null);
         }
       } catch (nextError) {
@@ -434,17 +452,8 @@ export function ResourcesPage() {
 
     setIsLoadingMore(true);
     try {
-      const params = new URLSearchParams({
-        page: String(page + 1),
-        pageSize: String(PAGE_SIZE),
-      });
-
-      const response = await fetchResources(params, deviceId, userToken);
-      setItems((current) => [...current, ...response.items]);
-      setPage(response.page);
-      setHasNextPage(response.hasNextPage);
-      setTotal(response.total);
-      setTotalSizeBytes(response.totalSizeBytes);
+      await refreshResourceSnapshot(Math.min((page + 1) * PAGE_SIZE, 96));
+      setPage((current) => current + 1);
     } finally {
       setIsLoadingMore(false);
     }
