@@ -7,7 +7,7 @@ import {
   SearchRegular,
   SettingsRegular
 } from "@fluentui/react-icons";
-import { Badge, Button, Text, makeStyles, tokens } from "@fluentui/react-components";
+import { Button, Text, makeStyles, tokens } from "@fluentui/react-components";
 import { NavLink, useLocation, useOutlet } from "react-router-dom";
 
 import { fetchCatalogManifest } from "../api";
@@ -49,24 +49,12 @@ const useStyles = makeStyles({
   brandTitle: {
     minWidth: 0
   },
-  profileCard: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "10px",
-    padding: "14px",
-    borderRadius: tokens.borderRadiusXLarge,
-    backgroundColor: "var(--app-panel)",
-    border: "1px solid var(--app-border)",
-    boxShadow: "var(--app-card-shadow)"
-  },
-  profileMeta: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "2px",
-    minWidth: 0
-  },
-  profileSubtitle: {
-    color: "var(--app-muted)"
+  brandDivider: {
+    width: "100%",
+    height: "1px",
+    backgroundColor: "var(--app-border)",
+    marginTop: "-2px",
+    marginBottom: "4px"
   },
   nav: {
     display: "flex",
@@ -97,6 +85,9 @@ const useStyles = makeStyles({
     padding: "24px 28px 40px",
     overflowY: "auto",
     overflowX: "hidden"
+  },
+  contentContained: {
+    overflow: "hidden",
   }
 });
 
@@ -110,10 +101,12 @@ export function AppShell() {
   const styles = useStyles();
   const location = useLocation();
   const outlet = useOutlet();
-  const { deviceId, displayName, userToken, viewerModeLabel, viewerSubline } = useSession();
+  const { deviceId, userToken } = useSession();
   const [catalogManifest, setCatalogManifest] = useState({
     previewAvailable: false
   });
+  const usesContainedScroll =
+    location.pathname.startsWith("/resources") || location.pathname.startsWith("/history");
 
   useEffect(() => {
     let cancelled = false;
@@ -177,16 +170,7 @@ export function AppShell() {
             Anicargo
           </Text>
         </div>
-
-        <div className={`${styles.profileCard} app-motion-surface`} style={{ ["--motion-delay" as string]: "50ms" }}>
-          <div className={styles.profileMeta}>
-            <Text weight="semibold">{displayName}</Text>
-            <Text size={200} className={styles.profileSubtitle}>
-              {viewerSubline}
-            </Text>
-          </div>
-          <Badge appearance="tint">{viewerModeLabel}</Badge>
-        </div>
+        <div className={`${styles.brandDivider} app-motion-surface`} style={{ ["--motion-delay" as string]: "42ms" }} />
 
         <nav className={styles.nav}>
           {navItems.map((item, index) => (
@@ -206,7 +190,10 @@ export function AppShell() {
         </nav>
       </aside>
 
-      <main id="app-scroll-root" className={styles.content}>
+      <main
+        id="app-scroll-root"
+        className={`${styles.content} ${usesContainedScroll ? styles.contentContained : ""}`.trim()}
+      >
         <RoutedMotionOutlet routeKey={location.key} outlet={outlet} />
       </main>
     </div>

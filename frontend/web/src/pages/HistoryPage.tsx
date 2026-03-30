@@ -305,7 +305,7 @@ export function HistoryPage() {
             {items.map((item, index) => (
               <Link
                 key={`${item.bangumiSubjectId}-${item.bangumiEpisodeId}-${item.lastPlayedAt}`}
-                className={styles.link}
+                className={`${styles.link} app-motion-item`}
                 to={`/watch/${item.bangumiSubjectId}/${item.bangumiEpisodeId}`}
                 state={routeState}
                 onClick={rememberCurrentPosition}

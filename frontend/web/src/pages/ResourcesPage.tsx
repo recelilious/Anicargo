@@ -517,7 +517,7 @@ export function ResourcesPage() {
                 return (
                   <Link
                     key={`${download.bangumiSubjectId}-${download.slotKey}`}
-                    className={styles.link}
+                    className={`${styles.link} app-motion-item`}
                     to={`/title/${download.bangumiSubjectId}`}
                     style={motionDelayStyle(index, 32, 90)}
                   >
@@ -596,7 +596,7 @@ export function ResourcesPage() {
               {items.map((item, index) => (
                 <Link
                   key={item.id}
-                  className={styles.link}
+                  className={`${styles.link} app-motion-item`}
                   to={`/title/${item.bangumiSubjectId}`}
                   style={motionDelayStyle(index, 28, 120)}
                 >
