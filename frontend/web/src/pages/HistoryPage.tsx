@@ -132,6 +132,36 @@ function formatPlayedAt(value: string) {
   }).format(date);
 }
 
+function HistoryPoster({ imagePortrait }: { imagePortrait: string | null }) {
+  const styles = useStyles();
+  const [hasPosterError, setHasPosterError] = useState(false);
+  const shouldShowPoster = Boolean(imagePortrait) && !hasPosterError;
+
+  useEffect(() => {
+    setHasPosterError(false);
+  }, [imagePortrait]);
+
+  return (
+    <div className={styles.poster}>
+      {!shouldShowPoster ? <CardCoverFallback logoWidth="54%" logoMaxWidth={60} /> : null}
+      {shouldShowPoster ? (
+        <img
+          src={imagePortrait ?? undefined}
+          alt=""
+          loading="lazy"
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            display: "block",
+          }}
+          onError={() => setHasPosterError(true)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 export function HistoryPage() {
   const styles = useStyles();
   const location = useLocation();
@@ -250,16 +280,7 @@ export function HistoryPage() {
                 onClick={rememberCurrentPosition}
               >
                 <Card className={styles.historyCard}>
-                  <div
-                    className={styles.poster}
-                    style={{
-                      backgroundImage: item.imagePortrait ? `url(${item.imagePortrait})` : undefined,
-                    }}
-                  >
-                    {!item.imagePortrait ? (
-                      <CardCoverFallback logoWidth="42%" logoMaxWidth={44} />
-                    ) : null}
-                  </div>
+                  <HistoryPoster imagePortrait={item.imagePortrait} />
 
                   <div className={styles.body}>
                     <Text weight="semibold" className={styles.title}>

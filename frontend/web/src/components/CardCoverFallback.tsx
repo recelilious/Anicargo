@@ -9,8 +9,8 @@ type CardCoverFallbackProps = {
 };
 
 export function CardCoverFallback({
-  logoWidth = "30%",
-  logoMaxWidth = 84,
+  logoWidth = "42%",
+  logoMaxWidth = 116,
   style,
 }: CardCoverFallbackProps) {
   return (

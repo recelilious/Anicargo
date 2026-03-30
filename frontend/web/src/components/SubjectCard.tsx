@@ -42,8 +42,9 @@ const useStyles = makeStyles({
   poster: {
     position: "absolute",
     inset: 0,
-    backgroundSize: "cover",
-    backgroundPosition: "center center",
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
     transform: "scale(var(--poster-scale, 1))",
     transition: "transform 180ms ease",
   },
@@ -302,6 +303,7 @@ export function SubjectCard({
   const [tags, setTags] = useState(() => subject.tags.slice(0, 8));
   const [isHovering, setIsHovering] = useState(false);
   const [isTagRailReady, setIsTagRailReady] = useState(() => prefersReducedMotion());
+  const [hasPosterError, setHasPosterError] = useState(false);
   const primaryTitle = subject.titleCn || subject.title;
   const secondaryTitle = subject.titleCn && subject.titleCn !== subject.title ? subject.title : null;
   const displayedTags = tags.slice(0, 8);
@@ -309,6 +311,7 @@ export function SubjectCard({
   const meta = resolveMeta(subject, metaVariant);
   const fromPath = buildRoutePath(location);
   const isLinkedCard = subject.bangumiSubjectId > 0;
+  const shouldShowPoster = Boolean(subject.imagePortrait) && !hasPosterError;
 
   useEffect(() => {
     if (!isLinkedCard) {
@@ -372,6 +375,10 @@ export function SubjectCard({
       }
     };
   }, []);
+
+  useEffect(() => {
+    setHasPosterError(false);
+  }, [subject.bangumiSubjectId, subject.imagePortrait]);
 
   useEffect(() => {
     if (tagRevealFrameRef.current != null) {
@@ -492,13 +499,16 @@ export function SubjectCard({
   const cardContent = (
     <Card className={styles.card} appearance="filled-alternative">
       <div className={styles.posterWrap}>
-        {!subject.imagePortrait ? <CardCoverFallback /> : null}
-        <div
-          className={styles.poster}
-          style={{
-            backgroundImage: subject.imagePortrait ? `url(${subject.imagePortrait})` : undefined,
-          }}
-        />
+        {!shouldShowPoster ? <CardCoverFallback /> : null}
+        {shouldShowPoster ? (
+          <img
+            className={styles.poster}
+            src={subject.imagePortrait ?? undefined}
+            alt=""
+            loading="lazy"
+            onError={() => setHasPosterError(true)}
+          />
+        ) : null}
 
         <div className={styles.status}>
           <Badge appearance="filled">{formatStatus(subject.releaseStatus)}</Badge>
