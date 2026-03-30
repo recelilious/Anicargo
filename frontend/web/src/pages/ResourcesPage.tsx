@@ -130,7 +130,7 @@ const useStyles = makeStyles({
   },
   progressMeta: {
     display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
     gap: "8px",
   },
   titleBlock: {
@@ -203,6 +203,34 @@ function formatBytes(value: number) {
 
 function formatSpeed(value: number) {
   return value > 0 ? `${formatBytes(value)}/s` : "0 B/s";
+}
+
+function formatRemainingTime(download: ActiveDownload) {
+  const total = Math.max(download.totalBytes, download.downloadedBytes);
+  const remainingBytes = Math.max(0, total - download.downloadedBytes);
+
+  if (remainingBytes === 0 && total > 0) {
+    return "已完成";
+  }
+
+  if (download.downloadRateBytes <= 0) {
+    return "--";
+  }
+
+  const totalSeconds = Math.ceil(remainingBytes / download.downloadRateBytes);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}小时${minutes}分钟`;
+  }
+
+  if (minutes > 0) {
+    return `${minutes}分钟${seconds}秒`;
+  }
+
+  return `${seconds}秒`;
 }
 
 function formatResourceStatus(value: string) {
@@ -551,6 +579,14 @@ export function ResourcesPage() {
                             Peer
                           </Text>
                           <Text weight="semibold">{download.peerCount}</Text>
+                        </div>
+                        <div>
+                          <Text size={200} className={styles.muted}>
+                            剩余时间
+                          </Text>
+                          <Text weight="semibold" className={styles.progressText}>
+                            {formatRemainingTime(download)}
+                          </Text>
                         </div>
                         <div>
                           <Text size={200} className={styles.muted}>
