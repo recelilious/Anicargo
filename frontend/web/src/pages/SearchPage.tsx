@@ -1,5 +1,6 @@
 import { startTransition, useEffect, useRef, useState } from "react";
 import { Button, Card, Field, Input, Select, Spinner, Text, makeStyles } from "@fluentui/react-components";
+import { ArrowUpRegular } from "@fluentui/react-icons";
 
 import { searchSubjects } from "../api";
 import { SubjectCard } from "../components/SubjectCard";
@@ -71,10 +72,13 @@ const useStyles = makeStyles({
     gap: "18px",
     minHeight: "100%",
   },
-  searchBar: {
-    position: "sticky",
-    top: 0,
-    zIndex: 5,
+  titleCard: {
+    padding: "20px 22px 16px",
+    backgroundColor: "var(--app-surface-1)",
+    border: "1px solid var(--app-border)",
+    boxShadow: "var(--app-card-shadow)",
+  },
+  filterCard: {
     padding: "20px 22px 16px",
     backgroundColor: "var(--app-surface-1)",
     border: "1px solid var(--app-border)",
@@ -85,7 +89,6 @@ const useStyles = makeStyles({
     flexDirection: "column",
     alignItems: "flex-start",
     gap: "8px",
-    marginBottom: "14px",
   },
   headerSource: {
     color: "var(--app-muted)",
@@ -150,6 +153,18 @@ const useStyles = makeStyles({
   metaText: {
     color: "var(--app-muted)",
     fontVariantNumeric: "tabular-nums",
+  },
+  backToTopButton: {
+    position: "fixed",
+    top: "24px",
+    left: "248px",
+    zIndex: 8,
+    width: "46px",
+    height: "46px",
+    minWidth: "46px",
+    padding: 0,
+    borderRadius: "999px",
+    boxShadow: "var(--app-card-shadow-strong)",
   },
 });
 
@@ -276,6 +291,7 @@ export function SearchPage() {
   const cacheKey = createSearchCacheKey(deviceId, userToken);
   const cachedState = searchPageStateCache.get(cacheKey);
   const gridHostRef = useRef<HTMLDivElement | null>(null);
+  const filterCardRef = useRef<HTMLDivElement | null>(null);
   const loadLockRef = useRef(false);
   const [form, setForm] = useState<SearchFormState>(() => cachedState?.form ?? DEFAULT_FORM);
   const [pageSize, setPageSize] = useState(() => cachedState?.pageSize ?? 20);
@@ -291,6 +307,7 @@ export function SearchPage() {
   const [showLoadMoreButton, setShowLoadMoreButton] = useState(
     () => cachedState?.showLoadMoreButton ?? false,
   );
+  const [showBackToTop, setShowBackToTop] = useState(false);
 
   const debouncedKeyword = useDebouncedValue(form.keyword, 280);
   const requestModel = buildRequestModel(
@@ -332,6 +349,18 @@ export function SearchPage() {
     }
 
     requestNextPage();
+  }
+
+  function updateBackToTopVisibility(scrollRoot: HTMLElement) {
+    const filterCard = filterCardRef.current;
+    if (!filterCard) {
+      setShowBackToTop(false);
+      return;
+    }
+
+    const scrollBounds = scrollRoot.getBoundingClientRect();
+    const filterBounds = filterCard.getBoundingClientRect();
+    setShowBackToTop(filterBounds.bottom <= scrollBounds.top + 12);
   }
 
   useEffect(() => {
@@ -456,9 +485,11 @@ export function SearchPage() {
       window.requestAnimationFrame(() => {
         ticking = false;
         handleReachLoadThreshold(scrollRoot);
+        updateBackToTopVisibility(scrollRoot);
       });
     };
 
+    handleScroll();
     scrollRoot.addEventListener("scroll", handleScroll, { passive: true });
     return () => {
       scrollRoot.removeEventListener("scroll", handleScroll);
@@ -470,6 +501,8 @@ export function SearchPage() {
     if (!scrollRoot) {
       return;
     }
+
+    updateBackToTopVisibility(scrollRoot);
 
     if (isInitialLoading || isLoadingMore || !response.hasNextPage || error) {
       return;
@@ -512,6 +545,11 @@ export function SearchPage() {
     requestNextPage();
   }
 
+  function handleBackToTop() {
+    const scrollRoot = document.getElementById("app-scroll-root");
+    scrollRoot?.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   useEffect(() => {
     searchPageStateCache.set(cacheKey, {
       form,
@@ -537,7 +575,17 @@ export function SearchPage() {
 
   return (
     <section className={styles.page}>
-      <Card className={styles.searchBar}>
+      {showBackToTop ? (
+        <Button
+          appearance="secondary"
+          icon={<ArrowUpRegular />}
+          className={styles.backToTopButton}
+          onClick={handleBackToTop}
+          aria-label="回到顶部"
+        />
+      ) : null}
+
+      <Card className={styles.titleCard}>
         <div className={styles.headerRow}>
           <Text weight="semibold" size={800}>
             搜索
@@ -546,7 +594,9 @@ export function SearchPage() {
             来源：Bangumi 动画条目
           </Text>
         </div>
+      </Card>
 
+      <Card ref={filterCardRef} className={styles.filterCard}>
         <div className={styles.filterRows}>
           <div className={styles.primaryRow}>
             <Field label="关键词">
