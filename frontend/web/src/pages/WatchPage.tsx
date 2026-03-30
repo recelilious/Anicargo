@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeftRegular } from "@fluentui/react-icons";
-import { Badge, Button, Card, Spinner, Text, makeStyles, tokens } from "@fluentui/react-components";
+import { Badge, Button, Card, Text, makeStyles, tokens } from "@fluentui/react-components";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import {
@@ -10,6 +10,7 @@ import {
   recordPlaybackHistory,
 } from "../api";
 import { AnicargoPlayer } from "../components/AnicargoPlayer";
+import { useLoadingStatus } from "../loading-status";
 import { resolveReturnScrollTop, type RouteState } from "../navigation";
 import { useSession } from "../session";
 import type { Episode, EpisodePlaybackResponse, SubjectDetailResponse } from "../types";
@@ -259,6 +260,7 @@ export function WatchPage() {
   const [playback, setPlayback] = useState<EpisodePlaybackResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  useLoadingStatus(isLoading ? "正在准备播放..." : null);
   const routeState = (location.state as RouteState | null) ?? null;
 
   useEffect(() => {
@@ -356,7 +358,7 @@ export function WatchPage() {
   const updatedLabel = formatUpdatedAt(playback?.media?.updatedAt);
 
   if (isLoading) {
-    return <Spinner label="正在准备播放..." />;
+    return null;
   }
 
   return (

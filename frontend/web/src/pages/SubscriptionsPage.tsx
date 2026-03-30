@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Button, Card, Field, Input, Select, Spinner, Text, makeStyles } from "@fluentui/react-components";
+import { Button, Card, Field, Input, Select, Text, makeStyles } from "@fluentui/react-components";
 
 import { fetchSubscriptions } from "../api";
 import { SubjectCard } from "../components/SubjectCard";
+import { useLoadingStatus } from "../loading-status";
 import { useSession } from "../session";
 import type { SubjectCard as SubjectCardModel } from "../types";
 
@@ -85,6 +86,9 @@ export function SubscriptionsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useLoadingStatus(
+    isLoading ? "正在读取订阅..." : isLoadingMore ? "正在加载更多订阅..." : null,
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -163,7 +167,7 @@ export function SubscriptionsPage() {
             我的订阅
           </Text>
           <Text size={300} className={styles.headerSource}>
-            来源：当前设备与账号订阅状态
+            当前设备与账号订阅状态
           </Text>
         </div>
       </Card>
@@ -214,8 +218,6 @@ export function SubscriptionsPage() {
           </div>
         </div>
       </Card>
-
-      {isLoading ? <Spinner label="正在读取订阅..." /> : null}
       {error ? <Text>{error}</Text> : null}
 
       {!isLoading && items.length === 0 ? (
@@ -233,7 +235,7 @@ export function SubscriptionsPage() {
       {hasNextPage ? (
         <div className={styles.actions}>
           <Button appearance="primary" onClick={() => void loadMore()} disabled={isLoadingMore}>
-            {isLoadingMore ? "正在加载..." : "加载更多"}
+            加载更多
           </Button>
         </div>
       ) : null}

@@ -1,9 +1,10 @@
 import { startTransition, useEffect, useRef, useState } from "react";
-import { Button, Card, Field, Input, Select, Spinner, Text, makeStyles } from "@fluentui/react-components";
+import { Button, Card, Field, Input, Select, Text, makeStyles } from "@fluentui/react-components";
 import { ArrowUpRegular } from "@fluentui/react-icons";
 
 import { searchSubjects } from "../api";
 import { SubjectCard } from "../components/SubjectCard";
+import { useLoadingStatus } from "../loading-status";
 import { useSession } from "../session";
 import type { SearchResponse, SubjectCard as SubjectCardModel } from "../types";
 
@@ -310,6 +311,9 @@ export function SearchPage() {
     () => cachedState?.showLoadMoreButton ?? false,
   );
   const [showBackToTop, setShowBackToTop] = useState(false);
+  useLoadingStatus(
+    isInitialLoading ? "正在同步 Bangumi 条目..." : isLoadingMore ? "正在加载更多搜索结果..." : null,
+  );
 
   const debouncedKeyword = useDebouncedValue(form.keyword, 280);
   const requestModel = buildRequestModel(
@@ -593,7 +597,7 @@ export function SearchPage() {
             搜索
           </Text>
           <Text size={300} className={styles.headerSource}>
-            来源：Bangumi 动画条目
+            Bangumi 动画条目
           </Text>
         </div>
       </Card>
@@ -698,7 +702,6 @@ export function SearchPage() {
 
       <div className={styles.results}>
         {error ? <Text>{error}</Text> : null}
-        {isInitialLoading ? <Spinner label="正在同步 Bangumi 条目..." /> : null}
         {!isInitialLoading && !error && items.length === 0 ? <Text>没有匹配的条目。</Text> : null}
 
         <div ref={gridHostRef} className={styles.gridHost}>
@@ -716,8 +719,6 @@ export function SearchPage() {
             </Button>
           </div>
         ) : null}
-
-        {isLoadingMore ? <Spinner label="正在加载更多..." /> : null}
         {!isInitialLoading && !isLoadingMore && !response.hasNextPage && items.length > 0 ? (
           <div className={styles.statusRow}>
             <Text size={200} className={styles.muted}>

@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Card, Spinner, Text, makeStyles } from "@fluentui/react-components";
+import { Card, Text, makeStyles } from "@fluentui/react-components";
 import { Link, useLocation } from "react-router-dom";
 
 import { fetchPlaybackHistory } from "../api";
 import { CardCoverFallback } from "../components/CardCoverFallback";
+import { useLoadingStatus } from "../loading-status";
 import { buildRoutePath, rememberReturnTarget, type RouteState } from "../navigation";
 import { useSession } from "../session";
 import type { PlaybackHistoryItem } from "../types";
@@ -199,6 +200,9 @@ export function HistoryPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useLoadingStatus(
+    isLoading ? "正在读取历史记录..." : isLoadingMore ? "正在加载更多历史记录..." : null,
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -284,8 +288,6 @@ export function HistoryPage() {
           </div>
         </div>
       </Card>
-
-      {isLoading ? <Spinner label="正在读取历史记录..." /> : null}
       {error ? <Text>{error}</Text> : null}
 
       {!isLoading && items.length === 0 ? (
@@ -342,7 +344,7 @@ export function HistoryPage() {
         {hasNextPage ? (
           <div className={styles.actions}>
             <Card className={styles.loadMoreCard} onClick={() => void loadMore()}>
-              <Text weight="semibold">{isLoadingMore ? "正在加载..." : "加载更多"}</Text>
+              <Text weight="semibold">加载更多</Text>
             </Card>
           </div>
         ) : null}

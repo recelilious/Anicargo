@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Card, Spinner, Text, makeStyles, tokens } from "@fluentui/react-components";
+import { Card, Text, makeStyles, tokens } from "@fluentui/react-components";
 
 import { fetchCalendar } from "../api";
 import { SubjectCard } from "../components/SubjectCard";
+import { useLoadingStatus } from "../loading-status";
 import { useSession } from "../session";
 import type { CalendarDay } from "../types";
 
@@ -193,6 +194,7 @@ export function SeasonPage() {
   const [slideDurationMs, setSlideDurationMs] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  useLoadingStatus(isLoading ? "正在同步时间表..." : null);
 
   useEffect(() => {
     return () => {
@@ -325,11 +327,9 @@ export function SeasonPage() {
           新番时间表
         </Text>
         <Text size={300} className={styles.headerSource}>
-          来源：Yuc 新番时间表 · Bangumi 元数据与状态补全
+          Yuc 新番时间表 · Bangumi 元数据与状态补全
         </Text>
       </Card>
-
-      {isLoading ? <Spinner label="正在同步时间表..." /> : null}
       {error ? <Text>{error}</Text> : null}
 
       {days.length > 0 ? (

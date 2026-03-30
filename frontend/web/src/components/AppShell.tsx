@@ -85,14 +85,10 @@ const useStyles = makeStyles({
     color: "var(--app-selected-fg)"
   },
   footer: {
-    marginTop: "auto",
-    display: "flex",
-    flexDirection: "column",
-    gap: "8px",
-    padding: "0 6px"
+    display: "none"
   },
   adminHint: {
-    color: "var(--app-muted)"
+    display: "none"
   },
   content: {
     minWidth: 0,
@@ -205,12 +201,6 @@ export function AppShell() {
             </NavLink>
           ))}
         </nav>
-
-        <div className={styles.footer}>
-          <Text size={200} className={styles.adminHint}>
-            管理入口：/admin
-          </Text>
-        </div>
       </aside>
 
       <main id="app-scroll-root" className={styles.content}>

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { ArrowLeftRegular } from "@fluentui/react-icons";
-import { Badge, Button, Card, Spinner, Text, makeStyles, tokens } from "@fluentui/react-components";
+import { Badge, Button, Card, Text, makeStyles, tokens } from "@fluentui/react-components";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { fetchSubjectDetail, toggleSubscription } from "../api";
 import { EpisodeCard } from "../components/EpisodeCard";
+import { useLoadingStatus } from "../loading-status";
 import { resolveReturnScrollTop, type RouteState } from "../navigation";
 import { useSession } from "../session";
 import type { SubjectDetailResponse } from "../types";
@@ -196,6 +197,7 @@ export function SubjectPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSubscribing, setIsSubscribing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useLoadingStatus(isLoading ? "正在加载条目..." : isSubscribing ? "正在更新订阅..." : null);
   const routeState = (location.state as RouteState | null) ?? null;
 
   useEffect(() => {
@@ -294,7 +296,7 @@ export function SubjectPage() {
   }
 
   if (isLoading) {
-    return <Spinner label="正在加载条目..." />;
+    return null;
   }
 
   if (!detail) {

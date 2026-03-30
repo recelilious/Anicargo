@@ -8,6 +8,7 @@ import "@chinese-fonts/maple-mono-cn/dist/MapleMono-CN-SemiBold/result.css";
 
 import App from "./App";
 import { AppearanceProvider, useAppearance } from "./appearance";
+import { LoadingStatusProvider } from "./loading-status";
 import { SessionProvider } from "./session";
 import "./styles.css";
 
@@ -17,9 +18,11 @@ function AppRoot() {
   return (
     <FluentProvider theme={fluentTheme} style={{ minHeight: "100vh" }}>
       <SessionProvider>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
+        <LoadingStatusProvider>
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </LoadingStatusProvider>
       </SessionProvider>
     </FluentProvider>
   );

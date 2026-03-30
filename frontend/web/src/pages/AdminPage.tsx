@@ -5,7 +5,6 @@ import {
   Card,
   Field,
   Input,
-  Spinner,
   Switch,
   Text,
   makeStyles
@@ -25,6 +24,7 @@ import {
   forceAdminDownload,
   updatePolicy
 } from "../api";
+import { useLoadingStatus } from "../loading-status";
 import { useSession } from "../session";
 import type {
   AdminDashboardResponse,
@@ -177,6 +177,7 @@ export function AdminPage() {
   const [selectedExecutionId, setSelectedExecutionId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  useLoadingStatus(isLoading ? "正在同步管理状态..." : null);
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [forceSubjectId, setForceSubjectId] = useState("");
   const [ruleForm, setRuleForm] = useState({
@@ -423,8 +424,6 @@ export function AdminPage() {
           </Button>
         </div>
       </Card>
-
-      {isLoading ? <Spinner label="正在同步管理状态..." /> : null}
       {error ? <Text>{error}</Text> : null}
 
       {runtime ? (

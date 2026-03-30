@@ -3,13 +3,13 @@ import {
   Button,
   Card,
   ProgressBar,
-  Spinner,
   Text,
   makeStyles,
 } from "@fluentui/react-components";
 import { Link } from "react-router-dom";
 
 import { fetchActiveDownloads, fetchResources } from "../api";
+import { useLoadingStatus } from "../loading-status";
 import { useSession } from "../session";
 import type { ActiveDownload, ResourceLibraryItem } from "../types";
 
@@ -38,6 +38,9 @@ const useStyles = makeStyles({
     gap: "16px",
     alignItems: "flex-start",
     flexWrap: "wrap",
+  },
+  headerSource: {
+    color: "var(--app-muted)",
   },
   contentGrid: {
     display: "grid",
@@ -292,6 +295,9 @@ export function ResourcesPage() {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const visibleResourcePageSize = Math.min(page * PAGE_SIZE, 96);
+  useLoadingStatus(
+    isLoading ? "正在读取资源..." : isLoadingMore ? "正在加载更多资源..." : null,
+  );
 
   function buildResourceParams(pageSize = visibleResourcePageSize) {
     return new URLSearchParams({
@@ -454,14 +460,16 @@ export function ResourcesPage() {
     <section className={styles.page}>
       <Card className={styles.surfaceCard}>
         <div className={styles.headerRow}>
-          <Text weight="semibold" size={800}>
-            资源
-          </Text>
-
+          <div>
+            <Text weight="semibold" size={800}>
+              资源
+            </Text>
+            <Text size={300} className={styles.headerSource}>
+              下载进度与已完成资源会在这里自动同步
+            </Text>
+          </div>
         </div>
       </Card>
-
-      {isLoading ? <Spinner label="正在读取资源..." /> : null}
       {error ? <Text>{error}</Text> : null}
 
       <div className={styles.contentGrid}>
@@ -594,7 +602,7 @@ export function ResourcesPage() {
           {hasNextPage ? (
             <div className={styles.actions}>
               <Button appearance="primary" onClick={() => void loadMore()} disabled={isLoadingMore}>
-                {isLoadingMore ? "正在加载..." : "加载更多"}
+                加载更多
               </Button>
             </div>
           ) : null}
