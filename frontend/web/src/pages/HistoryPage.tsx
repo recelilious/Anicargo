@@ -120,7 +120,7 @@ const useStyles = makeStyles({
   },
   metaRow: {
     display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
     gap: "10px",
     alignItems: "end",
   },
@@ -316,20 +316,9 @@ export function HistoryPage() {
                       <Text className={styles.title}>
                         第 {item.episodeNumber ?? "?"} 集 · {item.episodeTitleCn || item.episodeTitle || "未命名"}
                       </Text>
-                      <Text className={`${styles.muted} ${styles.singleLine}`.trim()}>
-                        {item.fileName ?? "资源文件待确认"}
-                      </Text>
                     </div>
 
                     <div className={styles.metaRow}>
-                      <div className={styles.metaCell}>
-                        <Text size={200} className={styles.muted}>
-                          来源
-                        </Text>
-                        <Text className={styles.singleLine}>
-                          {item.sourceFansubName ?? "未标注字幕组"}
-                        </Text>
-                      </div>
                       <div className={styles.metaCell}>
                         <Text size={200} className={styles.muted}>
                           最近播放
