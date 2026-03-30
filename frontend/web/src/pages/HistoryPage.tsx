@@ -3,6 +3,7 @@ import { Card, Spinner, Text, makeStyles } from "@fluentui/react-components";
 import { Link, useLocation } from "react-router-dom";
 
 import { fetchPlaybackHistory } from "../api";
+import { CardCoverFallback } from "../components/CardCoverFallback";
 import { buildRoutePath, rememberReturnTarget, type RouteState } from "../navigation";
 import { useSession } from "../session";
 import type { PlaybackHistoryItem } from "../types";
@@ -74,12 +75,14 @@ const useStyles = makeStyles({
     boxShadow: "var(--app-card-shadow)",
   },
   poster: {
+    position: "relative",
     width: "92px",
     height: "100%",
     borderRadius: "16px",
     backgroundColor: "var(--app-fallback-hero)",
     backgroundSize: "cover",
     backgroundPosition: "center center",
+    overflow: "hidden",
   },
   body: {
     display: "flex",
@@ -252,7 +255,11 @@ export function HistoryPage() {
                     style={{
                       backgroundImage: item.imagePortrait ? `url(${item.imagePortrait})` : undefined,
                     }}
-                  />
+                  >
+                    {!item.imagePortrait ? (
+                      <CardCoverFallback logoWidth="42%" logoMaxWidth={44} />
+                    ) : null}
+                  </div>
 
                   <div className={styles.body}>
                     <Text weight="semibold" className={styles.title}>

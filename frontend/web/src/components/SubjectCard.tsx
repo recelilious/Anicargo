@@ -6,6 +6,7 @@ import { fetchSubjectDetail } from "../api";
 import { buildRoutePath, rememberReturnTarget, type RouteState } from "../navigation";
 import { useSession } from "../session";
 import type { SubjectCard as SubjectCardModel } from "../types";
+import { CardCoverFallback } from "./CardCoverFallback";
 
 type SubjectCardMetaVariant = "schedule" | "catalog" | "preview";
 
@@ -491,6 +492,7 @@ export function SubjectCard({
   const cardContent = (
     <Card className={styles.card} appearance="filled-alternative">
       <div className={styles.posterWrap}>
+        {!subject.imagePortrait ? <CardCoverFallback /> : null}
         <div
           className={styles.poster}
           style={{
