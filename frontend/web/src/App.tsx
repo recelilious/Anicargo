@@ -10,7 +10,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { SubscriptionsPage } from "./pages/SubscriptionsPage";
 import { SubjectPage } from "./pages/SubjectPage";
 import { WatchPage } from "./pages/WatchPage";
-import { PreviewPage, SpecialPage } from "./pages/YucCatalogPage";
+import { PreviewPage } from "./pages/YucCatalogPage";
 
 export default function App() {
   return (
@@ -21,7 +21,6 @@ export default function App() {
         <Route path="/search" element={<SearchPage />} />
         <Route path="/subscriptions" element={<SubscriptionsPage />} />
         <Route path="/preview" element={<PreviewPage />} />
-        <Route path="/special" element={<SpecialPage />} />
         <Route path="/resources" element={<ResourcesPage />} />
         <Route path="/history" element={<HistoryPage />} />
         <Route path="/settings" element={<SettingsPage />} />

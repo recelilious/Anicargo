@@ -68,37 +68,19 @@ const useStyles = makeStyles({
   },
 });
 
-type CatalogPageKind = "preview" | "special";
-
-type PageCopy = {
-  title: string;
-  source: string;
-  emptyTitle: string;
-  emptyNote: string;
-};
-
-function pageCopy(kind: CatalogPageKind): PageCopy {
-  if (kind === "preview") {
-    return {
-      title: "新季度前瞻",
-      source: "来源：新番卫星观测站 | 長門番堂",
-      emptyTitle: "暂时还没有新的前瞻条目",
-      emptyNote: "如果 Yuc 还没有放出下一个季度页面或前瞻内容，这里会暂时保持为空。",
-    };
-  }
-
+function pageCopy() {
   return {
-    title: "特别放送",
-    source: "来源：Movie / OVA / OAD / SP etc. | 長門番堂",
-    emptyTitle: "暂时还没有特别放送条目",
-    emptyNote: "等 Yuc 更新特别放送页面后，这里会自动显示新的内容。",
+    title: "新季度前瞻",
+    source: "来源：新番卫星观测站 | 長門番堂",
+    emptyTitle: "暂时还没有新的前瞻条目",
+    emptyNote: "如果 Yuc 还没放出下一个季度页面或前瞻内容，这里会暂时保持为空。",
   };
 }
 
-function CatalogPageView({ kind }: { kind: CatalogPageKind }) {
+function CatalogPageView() {
   const styles = useStyles();
   const { deviceId, userToken } = useSession();
-  const copy = useMemo(() => pageCopy(kind), [kind]);
+  const copy = useMemo(() => pageCopy(), []);
   const [page, setPage] = useState<CatalogPageResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -106,7 +88,7 @@ function CatalogPageView({ kind }: { kind: CatalogPageKind }) {
     let cancelled = false;
     setError(null);
 
-    void fetchCatalogPage(kind, deviceId, userToken)
+    void fetchCatalogPage("preview", deviceId, userToken)
       .then((response) => {
         if (!cancelled) {
           setPage(response);
@@ -121,7 +103,7 @@ function CatalogPageView({ kind }: { kind: CatalogPageKind }) {
     return () => {
       cancelled = true;
     };
-  }, [deviceId, kind, userToken]);
+  }, [deviceId, userToken]);
 
   return (
     <section className={styles.page}>
@@ -175,9 +157,5 @@ function CatalogPageView({ kind }: { kind: CatalogPageKind }) {
 }
 
 export function PreviewPage() {
-  return <CatalogPageView kind="preview" />;
-}
-
-export function SpecialPage() {
-  return <CatalogPageView kind="special" />;
+  return <CatalogPageView />;
 }

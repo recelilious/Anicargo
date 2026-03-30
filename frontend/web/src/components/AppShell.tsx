@@ -114,8 +114,7 @@ export function AppShell() {
   const location = useLocation();
   const { deviceId, displayName, userToken, viewerModeLabel, viewerSubline } = useSession();
   const [catalogManifest, setCatalogManifest] = useState({
-    previewAvailable: false,
-    specialAvailable: false
+    previewAvailable: false
   });
 
   useEffect(() => {
@@ -124,12 +123,12 @@ export function AppShell() {
     void fetchCatalogManifest(deviceId, userToken)
       .then((response) => {
         if (!cancelled) {
-          setCatalogManifest(response);
+          setCatalogManifest({ previewAvailable: response.previewAvailable });
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setCatalogManifest({ previewAvailable: false, specialAvailable: false });
+          setCatalogManifest({ previewAvailable: false });
         }
       });
 
@@ -161,10 +160,6 @@ export function AppShell() {
       items.push({ to: "/preview", label: "新季度前瞻", icon: CalendarLtrRegular });
     }
 
-    if (catalogManifest.specialAvailable) {
-      items.push({ to: "/special", label: "特别放送", icon: BoxRegular });
-    }
-
     items.push(
       { to: "/subscriptions", label: "订阅", icon: BookmarkRegular },
       { to: "/resources", label: "资源", icon: BoxRegular },
@@ -173,7 +168,7 @@ export function AppShell() {
     );
 
     return items;
-  }, [catalogManifest.previewAvailable, catalogManifest.specialAvailable]);
+  }, [catalogManifest.previewAvailable]);
 
   return (
     <div className={styles.layout}>

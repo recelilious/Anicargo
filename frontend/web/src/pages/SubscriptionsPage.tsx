@@ -22,15 +22,26 @@ const useStyles = makeStyles({
   },
   headerRow: {
     display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-start",
+    gap: "8px",
+  },
+  headerSource: {
+    color: "var(--app-muted)",
+  },
+  toolbarRow: {
+    display: "flex",
     justifyContent: "space-between",
     gap: "16px",
     alignItems: "flex-start",
     flexWrap: "wrap",
   },
-  titleBlock: {
-    display: "flex",
-    flexDirection: "column",
+  controls: {
+    display: "grid",
+    gridTemplateColumns: "minmax(220px, 1fr) 180px",
     gap: "12px",
+    alignItems: "end",
+    width: "min(560px, 100%)",
   },
   headerStats: {
     display: "grid",
@@ -46,13 +57,6 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: "4px",
-  },
-  controls: {
-    display: "grid",
-    gridTemplateColumns: "minmax(220px, 1fr) 180px",
-    gap: "12px",
-    alignItems: "end",
-    width: "min(560px, 100%)",
   },
   grid: {
     display: "grid",
@@ -155,27 +159,17 @@ export function SubscriptionsPage() {
     <section className={styles.page}>
       <Card className={styles.surfaceCard}>
         <div className={styles.headerRow}>
-          <div className={styles.titleBlock}>
-            <Text weight="semibold" size={800}>
-              我的订阅
-            </Text>
+          <Text weight="semibold" size={800}>
+            我的订阅
+          </Text>
+          <Text size={300} className={styles.headerSource}>
+            来源：当前设备与账号订阅状态
+          </Text>
+        </div>
+      </Card>
 
-            <div className={styles.headerStats}>
-              <div className={styles.statBox}>
-                <Text size={200} className={styles.muted}>
-                  当前已加载
-                </Text>
-                <Text weight="semibold">{items.length}</Text>
-              </div>
-              <div className={styles.statBox}>
-                <Text size={200} className={styles.muted}>
-                  订阅总数
-                </Text>
-                <Text weight="semibold">{total}</Text>
-              </div>
-            </div>
-          </div>
-
+      <Card className={styles.surfaceCard}>
+        <div className={styles.toolbarRow}>
           <div className={styles.controls}>
             <Field label="搜索">
               <Input
@@ -202,6 +196,21 @@ export function SubscriptionsPage() {
                 <option value="title">按标题</option>
               </Select>
             </Field>
+          </div>
+
+          <div className={styles.headerStats}>
+            <div className={styles.statBox}>
+              <Text size={200} className={styles.muted}>
+                当前已加载
+              </Text>
+              <Text weight="semibold">{items.length}</Text>
+            </div>
+            <div className={styles.statBox}>
+              <Text size={200} className={styles.muted}>
+                订阅总数
+              </Text>
+              <Text weight="semibold">{total}</Text>
+            </div>
           </div>
         </div>
       </Card>
