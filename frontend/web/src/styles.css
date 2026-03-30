@@ -56,8 +56,9 @@
 html,
 body,
 #root {
-  min-height: 100%;
+  height: 100%;
   margin: 0;
+  overflow: hidden;
 }
 
 body,
@@ -158,15 +159,24 @@ a {
 
 .app-route-stack {
   position: relative;
-  min-height: 100%;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
 }
 
 .app-route-page {
-  min-height: 100%;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
 }
 
 .app-route-layer {
-  min-height: 100%;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
 }
 
 .app-route-layer--entering,

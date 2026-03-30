@@ -80,14 +80,18 @@ const useStyles = makeStyles({
     display: "none"
   },
   content: {
+    display: "flex",
+    flexDirection: "column",
     minWidth: 0,
     height: "100vh",
     padding: "24px 28px 40px",
+    minHeight: 0,
     overflowY: "auto",
     overflowX: "hidden"
   },
   contentContained: {
     overflow: "hidden",
+    minHeight: 0,
   }
 });
 
