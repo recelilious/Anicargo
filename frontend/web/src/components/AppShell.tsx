@@ -91,10 +91,6 @@ const useStyles = makeStyles({
     flexDirection: "column",
     overflow: "hidden",
     minHeight: 0,
-    "& > *": {
-      flex: 1,
-      minHeight: 0,
-    },
   }
 });
 
@@ -201,7 +197,7 @@ export function AppShell() {
         id="app-scroll-root"
         className={`${styles.content} ${usesContainedScroll ? styles.contentContained : ""}`.trim()}
       >
-        <RoutedMotionOutlet routeKey={location.key} outlet={outlet} />
+        <RoutedMotionOutlet routeKey={location.key} outlet={outlet} contained={usesContainedScroll} />
       </main>
     </div>
   );

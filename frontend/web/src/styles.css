@@ -161,12 +161,27 @@ a {
   min-height: 100%;
 }
 
+.app-route-stack--contained {
+  height: 100%;
+  min-height: 0;
+}
+
 .app-route-page {
   min-height: 100%;
 }
 
+.app-route-page--contained {
+  height: 100%;
+  min-height: 0;
+}
+
 .app-route-layer {
   min-height: 100%;
+}
+
+.app-route-layer--contained {
+  height: 100%;
+  min-height: 0;
 }
 
 .app-route-layer--entering,

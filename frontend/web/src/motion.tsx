@@ -169,9 +169,11 @@ function enhanceRouteNode(node: ReactNode, className: string) {
 export function RoutedMotionOutlet({
   routeKey,
   outlet,
+  contained = false,
 }: {
   routeKey: string;
   outlet: ReactNode;
+  contained?: boolean;
 }) {
   const reduced = prefersReducedMotion();
   const [layers, setLayers] = useState<RouteLayer[]>(() => [
@@ -234,17 +236,10 @@ export function RoutedMotionOutlet({
     };
   }, [outlet, reduced, routeKey]);
 
-  const renderedLayers = useMemo(
-    () =>
-      layers.map((layer) => ({
-        ...layer,
-        node: enhanceRouteNode(layer.node, "app-route-page"),
-      })),
-    [layers],
-  );
+  const renderedLayers = useMemo(() => layers, [layers]);
 
   return (
-    <div className="app-route-stack">
+    <div className={["app-route-stack", contained ? "app-route-stack--contained" : ""].filter(Boolean).join(" ")}>
       {renderedLayers.map((layer, index) => {
         const isOverlay = layer.state === "exiting" && index !== renderedLayers.length - 1;
 
@@ -253,6 +248,7 @@ export function RoutedMotionOutlet({
             key={layer.key}
             className={[
               "app-route-layer",
+              contained ? "app-route-layer--contained" : "",
               `app-route-layer--${layer.state}`,
               isOverlay ? "app-route-layer--overlay" : "",
             ]
@@ -260,7 +256,7 @@ export function RoutedMotionOutlet({
               .join(" ")}
             style={{ "--route-duration": `${ROUTE_TRANSITION_MS}ms` } as CSSProperties}
           >
-            {layer.node}
+            {enhanceRouteNode(layer.node, contained ? "app-route-page app-route-page--contained" : "app-route-page")}
           </div>
         );
       })}
