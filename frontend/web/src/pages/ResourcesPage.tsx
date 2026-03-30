@@ -34,13 +34,22 @@ const useStyles = makeStyles({
   },
   headerRow: {
     display: "flex",
-    justifyContent: "space-between",
-    gap: "16px",
+    flexDirection: "column",
+    gap: "8px",
     alignItems: "flex-start",
-    flexWrap: "wrap",
+    minHeight: "72px",
+  },
+  headerTitleGroup: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+    alignItems: "flex-start",
+    minHeight: "72px",
   },
   headerSource: {
+    display: "block",
     color: "var(--app-muted)",
+    lineHeight: "1.5",
   },
   contentGrid: {
     display: "grid",
@@ -460,7 +469,7 @@ export function ResourcesPage() {
     <section className={styles.page}>
       <Card className={styles.surfaceCard}>
         <div className={styles.headerRow}>
-          <div>
+          <div className={styles.headerTitleGroup}>
             <Text weight="semibold" size={800}>
               资源
             </Text>
