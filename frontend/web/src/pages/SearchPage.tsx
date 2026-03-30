@@ -165,6 +165,7 @@ const useStyles = makeStyles({
     minWidth: "58px",
     padding: 0,
     borderRadius: "999px",
+    border: "2px solid var(--app-border-strong)",
     boxShadow: "var(--app-card-shadow-strong)",
   },
 });
