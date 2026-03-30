@@ -12,6 +12,7 @@ import {
 } from "@fluentui/react-components";
 
 import { useAppearance } from "../appearance";
+import { MotionPage, MotionPresence } from "../motion";
 import { useSession } from "../session";
 
 const useStyles = makeStyles({
@@ -83,11 +84,13 @@ export function SettingsPage() {
   }
 
   return (
-    <section className={styles.page}>
-      {error ? <Text>{error}</Text> : null}
+    <MotionPage className={styles.page}>
+      <MotionPresence show={Boolean(error)} mode="soft">
+        {error ? <Text>{error}</Text> : null}
+      </MotionPresence>
 
       <div className={styles.cards}>
-        <Card className={styles.card}>
+        <Card className={`${styles.card} app-motion-surface`}>
           <Text weight="semibold">身份</Text>
           <Text>{isGuestViewer ? `游客：${displayName}` : `账号：${displayName}`}</Text>
           <Text className={styles.muted}>{bootstrap?.deviceId}</Text>
@@ -98,7 +101,7 @@ export function SettingsPage() {
           ) : null}
         </Card>
 
-        <Card className={styles.card}>
+        <Card className={`${styles.card} app-motion-surface`} style={{ ["--motion-delay" as string]: "44ms" }}>
           <Text weight="semibold">外观</Text>
           <RadioGroup
             value={themePreference}
@@ -113,7 +116,7 @@ export function SettingsPage() {
           </Text>
         </Card>
 
-        <Card className={styles.card}>
+        <Card className={`${styles.card} app-motion-surface`} style={{ ["--motion-delay" as string]: "88ms" }}>
           <Text weight="semibold">时间显示</Text>
           <Switch
             checked={deepNightMode}
@@ -129,10 +132,10 @@ export function SettingsPage() {
         </Card>
       </div>
 
-      {isGuestViewer ? (
+      <MotionPresence show={isGuestViewer}>
         <div className={styles.cards}>
           <form onSubmit={(event) => void onRegisterSubmit(event)}>
-            <Card className={`${styles.card} ${styles.form}`}>
+            <Card className={`${styles.card} ${styles.form} app-motion-surface`}>
               <Text weight="semibold">注册账号</Text>
               <Field label="用户名">
                 <Input
@@ -158,7 +161,7 @@ export function SettingsPage() {
           </form>
 
           <form onSubmit={(event) => void onLoginSubmit(event)}>
-            <Card className={`${styles.card} ${styles.form}`}>
+            <Card className={`${styles.card} ${styles.form} app-motion-surface`} style={{ ["--motion-delay" as string]: "44ms" }}>
               <Text weight="semibold">登录账号</Text>
               <Field label="用户名">
                 <Input
@@ -183,7 +186,7 @@ export function SettingsPage() {
             </Card>
           </form>
         </div>
-      ) : null}
-    </section>
+      </MotionPresence>
+    </MotionPage>
   );
 }

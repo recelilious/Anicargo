@@ -98,6 +98,137 @@ a {
   background: #324355;
 }
 
+:root {
+  --motion-duration-page: 320ms;
+  --motion-duration-surface: 340ms;
+  --motion-duration-item: 360ms;
+  --motion-duration-presence: 220ms;
+  --motion-ease-standard: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes appPageReveal {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes appSurfaceReveal {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes appItemReveal {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.app-motion-page {
+  animation: appPageReveal var(--motion-duration-page) var(--motion-ease-standard) both;
+}
+
+.app-motion-surface {
+  animation: appSurfaceReveal var(--motion-duration-surface) var(--motion-ease-standard) both;
+  animation-delay: var(--motion-delay, 0ms);
+}
+
+.app-motion-item {
+  animation: appItemReveal var(--motion-duration-item) var(--motion-ease-standard) both;
+  animation-delay: var(--motion-delay, 0ms);
+}
+
+.app-route-stack {
+  position: relative;
+  min-height: 100%;
+}
+
+.app-route-page {
+  min-height: 100%;
+}
+
+.app-route-layer {
+  min-height: 100%;
+}
+
+.app-route-layer--entering,
+.app-route-layer--entered {
+  animation: appPageReveal var(--route-duration, 280ms) var(--motion-ease-standard) both;
+}
+
+.app-route-layer--overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.app-route-layer--exiting {
+  opacity: 0;
+  transform: translateY(-10px);
+  transition:
+    opacity var(--route-duration, 280ms) ease,
+    transform var(--route-duration, 280ms) ease;
+}
+
+.app-motion-presence {
+  opacity: 0;
+  transition:
+    opacity var(--presence-duration, var(--motion-duration-presence)) ease,
+    transform var(--presence-duration, var(--motion-duration-presence)) var(--motion-ease-standard);
+}
+
+.app-motion-presence--float {
+  transform: translateY(14px) scale(0.985);
+}
+
+.app-motion-presence--soft {
+  transform: translateY(8px);
+}
+
+.app-motion-presence[data-state="entering"],
+.app-motion-presence[data-state="entered"] {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.app-motion-presence[data-state="exiting"] {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-motion-page,
+  .app-motion-surface,
+  .app-motion-item,
+  .app-route-layer--entering,
+  .app-route-layer--entered {
+    animation: none !important;
+  }
+
+  .app-route-layer--exiting,
+  .app-motion-presence {
+    transition: none !important;
+    transform: none !important;
+  }
+}
+
 .anicargo-player {
   width: 100%;
   height: 100%;

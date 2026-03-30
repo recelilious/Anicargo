@@ -6,6 +6,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { fetchSubjectDetail, toggleSubscription } from "../api";
 import { EpisodeCard } from "../components/EpisodeCard";
 import { useLoadingStatus } from "../loading-status";
+import { MotionPage, MotionPresence } from "../motion";
 import { resolveReturnScrollTop, type RouteState } from "../navigation";
 import { useSession } from "../session";
 import type { SubjectDetailResponse } from "../types";
@@ -306,8 +307,8 @@ export function SubjectPage() {
   const subscriptionAction = resolveSubscriptionAction(detail);
 
   return (
-    <section className={styles.page}>
-      <Card className={styles.hero}>
+    <MotionPage className={styles.page}>
+      <Card className={`${styles.hero} app-motion-surface`}>
         <div
           className={styles.heroBackdrop}
           style={{
@@ -416,19 +417,26 @@ export function SubjectPage() {
         </div>
       </Card>
 
-      {error ? <Text>{error}</Text> : null}
+      <MotionPresence show={Boolean(error)} mode="soft">
+        {error ? <Text>{error}</Text> : null}
+      </MotionPresence>
 
-      <div className={styles.episodesSection}>
+      <div className={`${styles.episodesSection} app-motion-surface`} style={{ ["--motion-delay" as string]: "56ms" }}>
         <Text weight="semibold" size={700}>
           剧集
         </Text>
 
         <div className={styles.episodesGrid}>
-          {detail.episodes.map((episode) => (
-            <EpisodeCard key={episode.bangumiEpisodeId} subjectId={detail.subject.bangumiSubjectId} episode={episode} />
+          {detail.episodes.map((episode, index) => (
+            <EpisodeCard
+              key={episode.bangumiEpisodeId}
+              subjectId={detail.subject.bangumiSubjectId}
+              episode={episode}
+              motionIndex={index}
+            />
           ))}
         </div>
       </div>
-    </section>
+    </MotionPage>
   );
 }

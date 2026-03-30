@@ -8,9 +8,10 @@ import {
   SettingsRegular
 } from "@fluentui/react-icons";
 import { Badge, Button, Text, makeStyles, tokens } from "@fluentui/react-components";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { NavLink, useLocation, useOutlet } from "react-router-dom";
 
 import { fetchCatalogManifest } from "../api";
+import { RoutedMotionOutlet } from "../motion";
 import type { RouteState } from "../navigation";
 import { useSession } from "../session";
 import { BrandLogo } from "./BrandLogo";
@@ -108,6 +109,7 @@ type NavItem = {
 export function AppShell() {
   const styles = useStyles();
   const location = useLocation();
+  const outlet = useOutlet();
   const { deviceId, displayName, userToken, viewerModeLabel, viewerSubline } = useSession();
   const [catalogManifest, setCatalogManifest] = useState({
     previewAvailable: false
@@ -169,14 +171,14 @@ export function AppShell() {
   return (
     <div className={styles.layout}>
       <aside className={styles.rail}>
-        <div className={styles.brand}>
+        <div className={`${styles.brand} app-motion-surface`} style={{ ["--motion-delay" as string]: "0ms" }}>
           <BrandLogo className={styles.brandLogo} aria-hidden="true" />
           <Text weight="semibold" size={700} className={styles.brandTitle}>
             Anicargo
           </Text>
         </div>
 
-        <div className={styles.profileCard}>
+        <div className={`${styles.profileCard} app-motion-surface`} style={{ ["--motion-delay" as string]: "50ms" }}>
           <div className={styles.profileMeta}>
             <Text weight="semibold">{displayName}</Text>
             <Text size={200} className={styles.profileSubtitle}>
@@ -187,12 +189,13 @@ export function AppShell() {
         </div>
 
         <nav className={styles.nav}>
-          {navItems.map((item) => (
+          {navItems.map((item, index) => (
             <NavLink key={item.to} to={item.to} end={item.to === "/"} className={styles.navLink}>
               {({ isActive }) => (
                 <Button
                   appearance={isActive ? "secondary" : "subtle"}
-                  className={`${styles.navButton} ${isActive ? styles.active : ""}`.trim()}
+                  className={`${styles.navButton} ${isActive ? styles.active : ""} app-motion-surface`.trim()}
+                  style={{ ["--motion-delay" as string]: `${90 + index * 34}ms` }}
                   icon={<item.icon />}
                 >
                   {item.label}
@@ -204,7 +207,7 @@ export function AppShell() {
       </aside>
 
       <main id="app-scroll-root" className={styles.content}>
-        <Outlet />
+        <RoutedMotionOutlet routeKey={location.key} outlet={outlet} />
       </main>
     </div>
   );

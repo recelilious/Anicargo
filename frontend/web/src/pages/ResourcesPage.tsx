@@ -10,6 +10,7 @@ import { Link } from "react-router-dom";
 
 import { fetchActiveDownloads, fetchResources } from "../api";
 import { useLoadingStatus } from "../loading-status";
+import { MotionPage, MotionPresence, motionDelayStyle } from "../motion";
 import { useSession } from "../session";
 import type { ActiveDownload, ResourceLibraryItem } from "../types";
 
@@ -467,8 +468,8 @@ export function ResourcesPage() {
   );
 
   return (
-    <section className={styles.page}>
-      <Card className={styles.surfaceCard}>
+    <MotionPage className={styles.page}>
+      <Card className={`${styles.surfaceCard} app-motion-surface`}>
         <div className={styles.headerRow}>
           <div className={styles.headerTitleGroup}>
             <Text weight="semibold" size={800}>
@@ -480,10 +481,12 @@ export function ResourcesPage() {
           </div>
         </div>
       </Card>
-      {error ? <Text>{error}</Text> : null}
+      <MotionPresence show={Boolean(error)} mode="soft">
+        {error ? <Text>{error}</Text> : null}
+      </MotionPresence>
 
       <div className={styles.contentGrid}>
-        <section className={styles.panel}>
+        <section className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "48ms" }}>
           <div className={styles.panelHeader}>
             <Text weight="semibold" size={700}>
               下载进度
@@ -507,7 +510,7 @@ export function ResourcesPage() {
 
           <div className={styles.listViewport}>
             <div className={styles.progressGrid}>
-              {sortedDownloads.map((download) => {
+              {sortedDownloads.map((download, index) => {
                 const total = Math.max(download.totalBytes, download.downloadedBytes);
                 const progressValue = total > 0 ? download.downloadedBytes / total : 0;
 
@@ -516,6 +519,7 @@ export function ResourcesPage() {
                     key={`${download.bangumiSubjectId}-${download.slotKey}`}
                     className={styles.link}
                     to={`/title/${download.bangumiSubjectId}`}
+                    style={motionDelayStyle(index, 32, 90)}
                   >
                     <Card className={styles.progressCard}>
                       <div className={styles.progressHeader}>
@@ -565,7 +569,7 @@ export function ResourcesPage() {
           </div>
         </section>
 
-        <section className={styles.panel}>
+        <section className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "92ms" }}>
           <div className={styles.panelHeader}>
             <Text weight="semibold" size={700}>
               已下载资源
@@ -589,8 +593,13 @@ export function ResourcesPage() {
 
           <div className={styles.listViewport}>
             <div className={styles.list}>
-              {items.map((item) => (
-                <Link key={item.id} className={styles.link} to={`/title/${item.bangumiSubjectId}`}>
+              {items.map((item, index) => (
+                <Link
+                  key={item.id}
+                  className={styles.link}
+                  to={`/title/${item.bangumiSubjectId}`}
+                  style={motionDelayStyle(index, 28, 120)}
+                >
                   <Card className={styles.itemCard}>
                     <Text weight="semibold" className={styles.titleLine}>
                       {item.fileName}
@@ -618,6 +627,6 @@ export function ResourcesPage() {
           ) : null}
         </section>
       </div>
-    </section>
+    </MotionPage>
   );
 }

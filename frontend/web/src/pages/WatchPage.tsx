@@ -11,6 +11,7 @@ import {
 } from "../api";
 import { AnicargoPlayer } from "../components/AnicargoPlayer";
 import { useLoadingStatus } from "../loading-status";
+import { MotionPage, motionDelayStyle } from "../motion";
 import { resolveReturnScrollTop, type RouteState } from "../navigation";
 import { useSession } from "../session";
 import type { Episode, EpisodePlaybackResponse, SubjectDetailResponse } from "../types";
@@ -362,8 +363,8 @@ export function WatchPage() {
   }
 
   return (
-    <section className={styles.page}>
-      <Card className={styles.topBar}>
+    <MotionPage className={styles.page}>
+      <Card className={`${styles.topBar} app-motion-surface`}>
         <Button appearance="primary" className={styles.backButton} icon={<ArrowLeftRegular />} onClick={handleBack}>
           返回
         </Button>
@@ -382,7 +383,7 @@ export function WatchPage() {
       </Card>
 
       <div className={styles.contentGrid}>
-        <Card className={styles.playerPanel}>
+        <Card className={`${styles.playerPanel} app-motion-surface`} style={{ ["--motion-delay" as string]: "48ms" }}>
           <div className={styles.playerViewport}>
             <div className={styles.playerFrame}>
               {streamUrl ? (
@@ -403,7 +404,7 @@ export function WatchPage() {
           </div>
         </Card>
 
-        <aside className={styles.sidebar}>
+        <aside className={`${styles.sidebar} app-motion-surface`} style={{ ["--motion-delay" as string]: "88ms" }}>
           <div className={styles.sidebarHeader}>
             <Text weight="semibold" size={700}>
               剧集
@@ -412,7 +413,7 @@ export function WatchPage() {
           </div>
 
           <div className={styles.episodeList}>
-            {detail?.episodes.map((item) => {
+            {detail?.episodes.map((item, index) => {
               const isCurrentEpisode = item.bangumiEpisodeId === Number(episodeId);
 
               return (
@@ -421,6 +422,7 @@ export function WatchPage() {
                   to={`/watch/${subjectId}/${item.bangumiEpisodeId}`}
                   state={watchRouteState}
                   className={styles.episodeLink}
+                  style={motionDelayStyle(index, 26, 120)}
                 >
                   <Card
                     className={`${styles.episodeCard} ${isCurrentEpisode ? styles.episodeCardActive : ""}`.trim()}
@@ -452,6 +454,6 @@ export function WatchPage() {
           </div>
         </aside>
       </div>
-    </section>
+    </MotionPage>
   );
 }

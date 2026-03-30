@@ -4,6 +4,7 @@ import { Card, Text, makeStyles, tokens } from "@fluentui/react-components";
 import { fetchCalendar } from "../api";
 import { SubjectCard } from "../components/SubjectCard";
 import { useLoadingStatus } from "../loading-status";
+import { MotionPage } from "../motion";
 import { useSession } from "../session";
 import type { CalendarDay } from "../types";
 
@@ -321,8 +322,8 @@ export function SeasonPage() {
   }
 
   return (
-    <section className={styles.page}>
-      <Card className={styles.header}>
+    <MotionPage className={styles.page}>
+      <Card className={`${styles.header} app-motion-surface`}>
         <Text weight="semibold" size={800}>
           新番时间表
         </Text>
@@ -365,11 +366,12 @@ export function SeasonPage() {
                 <div key={day.weekday.id} className={styles.panel}>
                   {mountedDaySet.has(day.weekday.id) ? (
                     <div className={styles.grid}>
-                      {day.items.map((subject) => (
+                      {day.items.map((subject, index) => (
                         <SubjectCard
                           key={subject.bangumiSubjectId}
                           subject={subject}
                           metaVariant="schedule"
+                          motionIndex={index}
                         />
                       ))}
                     </div>
@@ -382,6 +384,6 @@ export function SeasonPage() {
           </div>
         </>
       ) : null}
-    </section>
+    </MotionPage>
   );
 }

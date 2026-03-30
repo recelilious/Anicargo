@@ -3,6 +3,7 @@ import { Badge, Card, Text, makeStyles, tokens } from "@fluentui/react-component
 import { Link, useLocation } from "react-router-dom";
 
 import { fetchSubjectDetail } from "../api";
+import { motionDelayStyle } from "../motion";
 import { buildRoutePath, rememberReturnTarget, type RouteState } from "../navigation";
 import { useSession } from "../session";
 import type { SubjectCard as SubjectCardModel } from "../types";
@@ -289,9 +290,11 @@ function resolveMeta(subject: SubjectCardModel, variant: SubjectCardMetaVariant)
 export function SubjectCard({
   subject,
   metaVariant = "schedule",
+  motionIndex = 0,
 }: {
   subject: SubjectCardModel;
   metaVariant?: SubjectCardMetaVariant;
+  motionIndex?: number;
 }) {
   const styles = useStyles();
   const location = useLocation();
@@ -559,22 +562,28 @@ export function SubjectCard({
   );
 
   if (!isLinkedCard) {
-    return <div className={styles.link}>{cardContent}</div>;
+    return (
+      <div className="app-motion-item" style={motionDelayStyle(motionIndex)}>
+        <div className={styles.link}>{cardContent}</div>
+      </div>
+    );
   }
 
   return (
-    <Link
-      ref={linkRef}
-      to={`/title/${subject.bangumiSubjectId}`}
-      state={{ fromPath } satisfies RouteState}
-      className={styles.link}
-      onClick={handleCardClick}
-      onMouseEnter={handleMouseEnter}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={resetHoverMotion}
-      onBlur={resetHoverMotion}
-    >
-      {cardContent}
-    </Link>
+    <div className="app-motion-item" style={motionDelayStyle(motionIndex)}>
+      <Link
+        ref={linkRef}
+        to={`/title/${subject.bangumiSubjectId}`}
+        state={{ fromPath } satisfies RouteState}
+        className={styles.link}
+        onClick={handleCardClick}
+        onMouseEnter={handleMouseEnter}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={resetHoverMotion}
+        onBlur={resetHoverMotion}
+      >
+        {cardContent}
+      </Link>
+    </div>
   );
 }

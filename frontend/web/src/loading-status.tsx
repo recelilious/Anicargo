@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { Spinner, Text, makeStyles } from "@fluentui/react-components";
+import { MotionPresence } from "./motion";
 
 type StatusEntry = {
   id: number;
@@ -103,14 +104,14 @@ function LoadingStatusViewport() {
   }
 
   return (
-    <div className={styles.viewport}>
-      <div className={styles.statusCard}>
+    <MotionPresence show={Boolean(currentStatus)} className={styles.viewport} mode="soft">
+      <div className={`${styles.statusCard} app-motion-surface`}>
         <Spinner size="tiny" />
         <Text size={200} className={styles.statusText} title={currentStatus.message}>
           {currentStatus.message}
         </Text>
       </div>
-    </div>
+    </MotionPresence>
   );
 }
 

@@ -5,6 +5,7 @@ import { ArrowUpRegular } from "@fluentui/react-icons";
 import { searchSubjects } from "../api";
 import { SubjectCard } from "../components/SubjectCard";
 import { useLoadingStatus } from "../loading-status";
+import { MotionPage, MotionPresence } from "../motion";
 import { useSession } from "../session";
 import type { SearchResponse, SubjectCard as SubjectCardModel } from "../types";
 
@@ -580,8 +581,8 @@ export function SearchPage() {
   ]);
 
   return (
-    <section className={styles.page}>
-      {showBackToTop ? (
+    <MotionPage className={styles.page}>
+      <MotionPresence show={showBackToTop}>
         <Button
           appearance="secondary"
           icon={<ArrowUpRegular />}
@@ -589,9 +590,9 @@ export function SearchPage() {
           onClick={handleBackToTop}
           aria-label="回到顶部"
         />
-      ) : null}
+      </MotionPresence>
 
-      <Card className={styles.titleCard}>
+      <Card className={`${styles.titleCard} app-motion-surface`}>
         <div className={styles.headerRow}>
           <Text weight="semibold" size={800}>
             搜索
@@ -602,7 +603,11 @@ export function SearchPage() {
         </div>
       </Card>
 
-      <Card ref={filterCardRef} className={styles.filterCard}>
+      <Card
+        ref={filterCardRef}
+        className={`${styles.filterCard} app-motion-surface`}
+        style={{ ["--motion-delay" as string]: "48ms" }}
+      >
         <div className={styles.filterRows}>
           <div className={styles.primaryRow}>
             <Field label="关键词">
@@ -701,13 +706,20 @@ export function SearchPage() {
       </Card>
 
       <div className={styles.results}>
-        {error ? <Text>{error}</Text> : null}
+        <MotionPresence show={Boolean(error)} mode="soft">
+          {error ? <Text>{error}</Text> : null}
+        </MotionPresence>
         {!isInitialLoading && !error && items.length === 0 ? <Text>没有匹配的条目。</Text> : null}
 
         <div ref={gridHostRef} className={styles.gridHost}>
           <div className={styles.grid}>
-            {items.map((subject) => (
-              <SubjectCard key={subject.bangumiSubjectId} subject={subject} metaVariant="catalog" />
+            {items.map((subject, index) => (
+              <SubjectCard
+                key={subject.bangumiSubjectId}
+                subject={subject}
+                metaVariant="catalog"
+                motionIndex={index}
+              />
             ))}
           </div>
         </div>
@@ -727,6 +739,6 @@ export function SearchPage() {
           </div>
         ) : null}
       </div>
-    </section>
+    </MotionPage>
   );
 }

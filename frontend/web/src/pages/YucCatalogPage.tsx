@@ -4,6 +4,7 @@ import { Card, Text, makeStyles } from "@fluentui/react-components";
 import { fetchCatalogPage } from "../api";
 import { SubjectCard } from "../components/SubjectCard";
 import { useLoadingStatus } from "../loading-status";
+import { MotionPage, MotionPresence } from "../motion";
 import { useSession } from "../session";
 import type { CatalogPageResponse } from "../types";
 
@@ -114,8 +115,8 @@ function CatalogPageView() {
   }, [deviceId, userToken]);
 
   return (
-    <section className={styles.page}>
-      <Card className={styles.header}>
+    <MotionPage className={styles.page}>
+      <Card className={`${styles.header} app-motion-surface`}>
         <Text weight="semibold" size={800}>
           {copy.title}
         </Text>
@@ -123,21 +124,26 @@ function CatalogPageView() {
           {copy.source}
         </Text>
       </Card>
-      {error ? <Text>{error}</Text> : null}
+      <MotionPresence show={Boolean(error)} mode="soft">
+        {error ? <Text>{error}</Text> : null}
+      </MotionPresence>
 
-      {page && page.sections.length === 0 ? (
+      <MotionPresence show={Boolean(page && page.sections.length === 0)} mode="soft">
         <Card className={styles.emptyCard}>
           <Text weight="semibold">{copy.emptyTitle}</Text>
           <Text size={300} className={styles.muted}>
             {copy.emptyNote}
           </Text>
         </Card>
-      ) : null}
+      </MotionPresence>
       {page?.sections.length ? (
         <div className={styles.stack}>
-          {page.sections.map((section) => (
+          {page.sections.map((section, sectionIndex) => (
             <section key={section.key} className={styles.sectionGroup}>
-              <Card className={styles.sectionTitleCard}>
+              <Card
+                className={`${styles.sectionTitleCard} app-motion-surface`}
+                style={{ ["--motion-delay" as string]: `${40 + sectionIndex * 46}ms` }}
+              >
                 <div className={styles.sectionHeader}>
                   <Text weight="semibold">{section.title}</Text>
                   <Text size={200} className={styles.sectionCount}>
@@ -148,11 +154,12 @@ function CatalogPageView() {
 
               <div className={styles.sectionBody}>
                 <div className={styles.grid}>
-                  {section.items.map((subject) => (
+                  {section.items.map((subject, index) => (
                     <SubjectCard
                       key={`${section.key}-${subject.bangumiSubjectId}`}
                       subject={subject}
                       metaVariant="preview"
+                      motionIndex={index}
                     />
                   ))}
                 </div>
@@ -161,7 +168,7 @@ function CatalogPageView() {
           ))}
         </div>
       ) : null}
-    </section>
+    </MotionPage>
   );
 }
 

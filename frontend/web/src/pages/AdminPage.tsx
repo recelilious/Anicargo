@@ -25,6 +25,7 @@ import {
   updatePolicy
 } from "../api";
 import { useLoadingStatus } from "../loading-status";
+import { MotionPage, MotionPresence, motionDelayStyle } from "../motion";
 import { useSession } from "../session";
 import type {
   AdminDashboardResponse,
@@ -376,9 +377,9 @@ export function AdminPage() {
 
   if (!token) {
     return (
-      <section className={styles.page}>
+      <MotionPage className={styles.page}>
         <form onSubmit={(event) => void onAdminLogin(event)}>
-          <Card className={styles.panel}>
+          <Card className={`${styles.panel} app-motion-surface`}>
             <Text weight="semibold" size={800}>
               管理员登录
             </Text>
@@ -401,7 +402,7 @@ export function AdminPage() {
             {error ? <Text>{error}</Text> : null}
           </Card>
         </form>
-      </section>
+      </MotionPage>
     );
   }
 
@@ -409,8 +410,8 @@ export function AdminPage() {
   const selectedExecution = executions.find((execution) => execution.id === selectedExecutionId) ?? executions[0] ?? null;
 
   return (
-    <section className={styles.page}>
-      <Card className={styles.header}>
+    <MotionPage className={styles.page}>
+      <Card className={`${styles.header} app-motion-surface`}>
         <div>
           <Text weight="semibold" size={800}>
             管理面板
@@ -424,26 +425,28 @@ export function AdminPage() {
           </Button>
         </div>
       </Card>
-      {error ? <Text>{error}</Text> : null}
+      <MotionPresence show={Boolean(error)} mode="soft">
+        {error ? <Text>{error}</Text> : null}
+      </MotionPresence>
 
       {runtime ? (
         <div className={styles.grid}>
-          <Card className={styles.panel}>
+          <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "38ms" }}>
             <Text weight="semibold">服务地址</Text>
             <Text>{runtime.serverAddress}</Text>
             <Text className={styles.muted}>运行 {runtime.uptimeLabel}</Text>
           </Card>
-          <Card className={styles.panel}>
+          <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "74ms" }}>
             <Text weight="semibold">活跃下载</Text>
             <Text>{runtime.runtime.activeExecutions}</Text>
             <Text className={styles.muted}>{formatSpeed(runtime.runtime.downloadRateBytes)}</Text>
           </Card>
-          <Card className={styles.panel}>
+          <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "110ms" }}>
             <Text weight="semibold">下载任务</Text>
             <Text>{runtime.runtime.openDownloadJobs}</Text>
             <Text className={styles.muted}>已选资源 {runtime.runtime.jobsWithSelection}</Text>
           </Card>
-          <Card className={styles.panel}>
+          <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "146ms" }}>
             <Text weight="semibold">HTTP 请求</Text>
             <Text>{runtime.http.totalRequests}</Text>
             <Text className={styles.muted}>失败 {runtime.http.failedRequests}</Text>
@@ -453,7 +456,7 @@ export function AdminPage() {
 
       <div className={styles.layout}>
         <div className={styles.column}>
-          <Card className={styles.panel}>
+          <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "48ms" }}>
             <Text weight="semibold">手动触发下载</Text>
             <div className={styles.actions}>
               <Field label="Bangumi Subject ID" style={{ flex: 1 }}>
@@ -465,13 +468,14 @@ export function AdminPage() {
             </div>
           </Card>
 
-          <Card className={styles.panel}>
+          <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "86ms" }}>
             <Text weight="semibold">下载队列</Text>
             <div className={styles.downloadsList}>
               {downloads.map((job) => (
                 <Card
                   key={job.id}
-                  className={`${styles.downloadCard} ${selectedJobId === job.id ? styles.activeDownloadCard : ""}`}
+                  className={`${styles.downloadCard} ${selectedJobId === job.id ? styles.activeDownloadCard : ""} app-motion-item`}
+                  style={motionDelayStyle(downloads.indexOf(job), 24, 120)}
                   onClick={() => setSelectedJobId(job.id)}
                 >
                   <div className={styles.cardRow}>
@@ -497,11 +501,11 @@ export function AdminPage() {
 
           {selectedJob ? (
             <>
-              <Card className={styles.panel}>
+              <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "124ms" }}>
                 <Text weight="semibold">候选资源</Text>
                 <div className={styles.stack}>
                   {candidates.map((candidate) => (
-                    <Card key={candidate.id} className={styles.downloadCard}>
+                    <Card key={candidate.id} className={`${styles.downloadCard} app-motion-item`} style={motionDelayStyle(candidates.indexOf(candidate), 24, 150)}>
                       <div className={styles.cardRow}>
                         <Text weight="semibold">{candidate.fansubName ?? candidate.publisherName}</Text>
                         <Badge appearance={candidate.rejectedReason ? "outline" : "filled"}>{candidate.slotKey}</Badge>
@@ -516,13 +520,14 @@ export function AdminPage() {
                 </div>
               </Card>
 
-              <Card className={styles.panel}>
+              <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "162ms" }}>
                 <Text weight="semibold">执行实例</Text>
                 <div className={styles.stack}>
                   {executions.map((execution) => (
                     <Card
                       key={execution.id}
-                      className={`${styles.downloadCard} ${selectedExecutionId === execution.id ? styles.activeDownloadCard : ""}`}
+                      className={`${styles.downloadCard} ${selectedExecutionId === execution.id ? styles.activeDownloadCard : ""} app-motion-item`}
+                      style={motionDelayStyle(executions.indexOf(execution), 24, 170)}
                       onClick={() => setSelectedExecutionId(execution.id)}
                     >
                       <div className={styles.cardRow}>
@@ -544,7 +549,7 @@ export function AdminPage() {
 
         <div className={styles.column}>
           {selectedExecution ? (
-            <Card className={styles.panel}>
+            <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "96ms" }}>
               <Text weight="semibold">当前执行详情</Text>
               <div className={styles.compactGrid}>
                 <Card className={styles.downloadCard}>
@@ -567,11 +572,11 @@ export function AdminPage() {
             </Card>
           ) : null}
 
-          <Card className={styles.panel}>
+          <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "134ms" }}>
             <Text weight="semibold">执行事件</Text>
             <div className={styles.stack}>
               {events.map((event) => (
-                <Card key={event.id} className={styles.downloadCard}>
+                <Card key={event.id} className={`${styles.downloadCard} app-motion-item`} style={motionDelayStyle(events.indexOf(event), 20, 160)}>
                   <div className={styles.cardRow}>
                     <Text weight="semibold">{event.eventKind}</Text>
                     <Badge appearance={event.level === "error" ? "filled" : "outline"}>{event.level}</Badge>
@@ -587,7 +592,7 @@ export function AdminPage() {
           {dashboard ? (
             <>
               <form onSubmit={(event) => void onPolicySave(event)}>
-                <Card className={styles.panel}>
+                <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "172ms" }}>
                   <Text weight="semibold">下载策略</Text>
                   <Field label="订阅阈值">
                     <Input
@@ -708,7 +713,7 @@ export function AdminPage() {
               </form>
 
               <form onSubmit={(event) => void onRuleCreate(event)}>
-                <Card className={styles.panel}>
+                <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "208ms" }}>
                   <Text weight="semibold">新增字幕组规则</Text>
                   <Field label="字幕组">
                     <Input
@@ -743,6 +748,6 @@ export function AdminPage() {
           ) : null}
         </div>
       </div>
-    </section>
+    </MotionPage>
   );
 }

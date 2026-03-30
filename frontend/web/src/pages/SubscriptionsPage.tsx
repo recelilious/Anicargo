@@ -4,6 +4,7 @@ import { Button, Card, Field, Input, Select, Text, makeStyles } from "@fluentui/
 import { fetchSubscriptions } from "../api";
 import { SubjectCard } from "../components/SubjectCard";
 import { useLoadingStatus } from "../loading-status";
+import { MotionPage, MotionPresence } from "../motion";
 import { useSession } from "../session";
 import type { SubjectCard as SubjectCardModel } from "../types";
 
@@ -160,8 +161,8 @@ export function SubscriptionsPage() {
   }
 
   return (
-    <section className={styles.page}>
-      <Card className={styles.surfaceCard}>
+    <MotionPage className={styles.page}>
+      <Card className={`${styles.surfaceCard} app-motion-surface`}>
         <div className={styles.headerRow}>
           <Text weight="semibold" size={800}>
             我的订阅
@@ -172,7 +173,7 @@ export function SubscriptionsPage() {
         </div>
       </Card>
 
-      <Card className={styles.surfaceCard}>
+      <Card className={`${styles.surfaceCard} app-motion-surface`} style={{ ["--motion-delay" as string]: "46ms" }}>
         <div className={styles.toolbarRow}>
           <div className={styles.controls}>
             <Field label="搜索">
@@ -218,7 +219,9 @@ export function SubscriptionsPage() {
           </div>
         </div>
       </Card>
-      {error ? <Text>{error}</Text> : null}
+      <MotionPresence show={Boolean(error)} mode="soft">
+        {error ? <Text>{error}</Text> : null}
+      </MotionPresence>
 
       {!isLoading && items.length === 0 ? (
         <Card className={styles.surfaceCard}>
@@ -227,8 +230,13 @@ export function SubscriptionsPage() {
       ) : null}
 
       <div className={styles.grid}>
-        {items.map((item) => (
-          <SubjectCard key={item.bangumiSubjectId} subject={item} metaVariant="catalog" />
+        {items.map((item, index) => (
+          <SubjectCard
+            key={item.bangumiSubjectId}
+            subject={item}
+            metaVariant="catalog"
+            motionIndex={index}
+          />
         ))}
       </div>
 
@@ -239,6 +247,6 @@ export function SubscriptionsPage() {
           </Button>
         </div>
       ) : null}
-    </section>
+    </MotionPage>
   );
 }

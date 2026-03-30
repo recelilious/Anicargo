@@ -5,6 +5,7 @@ import { Link, useLocation } from "react-router-dom";
 import { fetchPlaybackHistory } from "../api";
 import { CardCoverFallback } from "../components/CardCoverFallback";
 import { useLoadingStatus } from "../loading-status";
+import { MotionPage, MotionPresence, motionDelayStyle } from "../motion";
 import { buildRoutePath, rememberReturnTarget, type RouteState } from "../navigation";
 import { useSession } from "../session";
 import type { PlaybackHistoryItem } from "../types";
@@ -273,8 +274,8 @@ export function HistoryPage() {
   };
 
   return (
-    <section className={styles.page}>
-      <Card className={styles.surfaceCard}>
+    <MotionPage className={styles.page}>
+      <Card className={`${styles.surfaceCard} app-motion-surface`}>
         <div className={styles.headerRow}>
           <Text weight="semibold" size={800}>
             历史记录
@@ -288,7 +289,9 @@ export function HistoryPage() {
           </div>
         </div>
       </Card>
-      {error ? <Text>{error}</Text> : null}
+      <MotionPresence show={Boolean(error)} mode="soft">
+        {error ? <Text>{error}</Text> : null}
+      </MotionPresence>
 
       {!isLoading && items.length === 0 ? (
         <Card className={styles.surfaceCard}>
@@ -296,16 +299,17 @@ export function HistoryPage() {
         </Card>
       ) : null}
 
-      <section className={styles.historyPanel}>
+      <section className={`${styles.historyPanel} app-motion-surface`} style={{ ["--motion-delay" as string]: "48ms" }}>
         <div className={styles.listViewport}>
           <div className={styles.list}>
-            {items.map((item) => (
+            {items.map((item, index) => (
               <Link
                 key={`${item.bangumiSubjectId}-${item.bangumiEpisodeId}-${item.lastPlayedAt}`}
                 className={styles.link}
                 to={`/watch/${item.bangumiSubjectId}/${item.bangumiEpisodeId}`}
                 state={routeState}
                 onClick={rememberCurrentPosition}
+                style={motionDelayStyle(index, 30, 90)}
               >
                 <Card className={styles.historyCard}>
                   <HistoryPoster imagePortrait={item.imagePortrait} />
@@ -349,6 +353,6 @@ export function HistoryPage() {
           </div>
         ) : null}
       </section>
-    </section>
+    </MotionPage>
   );
 }
