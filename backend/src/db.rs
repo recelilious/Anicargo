@@ -2487,14 +2487,70 @@ pub async fn list_resource_library_items(
         .map(|value| format!("%{value}%"));
 
     let total = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*)
-         FROM media_inventory
-         INNER JOIN download_executions ON download_executions.id = media_inventory.download_execution_id
-         WHERE media_inventory.status = 'ready'
-           AND (?1 IS NULL
-                OR media_inventory.file_name LIKE ?1
-                OR download_executions.source_title LIKE ?1
-                OR CAST(media_inventory.bangumi_subject_id AS TEXT) LIKE ?1)",
+        "WITH resource_rows AS (
+            SELECT
+                media_inventory.id AS id,
+                media_inventory.bangumi_subject_id,
+                media_inventory.download_job_id,
+                media_inventory.download_execution_id,
+                media_inventory.resource_candidate_id,
+                media_inventory.slot_key,
+                download_executions.source_title,
+                download_executions.source_fansub_name,
+                download_executions.state AS execution_state,
+                media_inventory.relative_path,
+                media_inventory.absolute_path,
+                media_inventory.file_name,
+                media_inventory.file_ext,
+                media_inventory.size_bytes,
+                media_inventory.episode_index,
+                media_inventory.episode_end_index,
+                media_inventory.is_collection,
+                media_inventory.status,
+                media_inventory.updated_at
+            FROM media_inventory
+            INNER JOIN download_executions
+                ON download_executions.id = media_inventory.download_execution_id
+            WHERE media_inventory.status = 'ready'
+
+            UNION ALL
+
+            SELECT
+                -download_executions.id AS id,
+                download_executions.bangumi_subject_id,
+                download_executions.download_job_id,
+                download_executions.id AS download_execution_id,
+                download_executions.resource_candidate_id,
+                download_executions.slot_key,
+                download_executions.source_title,
+                download_executions.source_fansub_name,
+                download_executions.state AS execution_state,
+                '' AS relative_path,
+                download_executions.target_path AS absolute_path,
+                download_executions.source_title AS file_name,
+                '' AS file_ext,
+                MAX(download_executions.source_size_bytes, download_executions.downloaded_bytes) AS size_bytes,
+                download_executions.episode_index,
+                download_executions.episode_end_index,
+                download_executions.is_collection,
+                'downloaded' AS status,
+                download_executions.updated_at
+            FROM download_executions
+            WHERE download_executions.state IN ('completed', 'seeding')
+              AND download_executions.downloaded_bytes > 0
+              AND NOT EXISTS (
+                    SELECT 1
+                    FROM media_inventory
+                    WHERE media_inventory.download_execution_id = download_executions.id
+                      AND media_inventory.status = 'ready'
+              )
+         )
+         SELECT COUNT(*)
+         FROM resource_rows
+         WHERE (?1 IS NULL
+                OR file_name LIKE ?1
+                OR source_title LIKE ?1
+                OR CAST(bangumi_subject_id AS TEXT) LIKE ?1)",
     )
     .bind(keyword.as_deref())
     .fetch_one(pool)
@@ -2502,14 +2558,70 @@ pub async fn list_resource_library_items(
     .map_err(|_| AppError::internal("failed to count resource library rows"))?;
 
     let total_size_bytes = sqlx::query_scalar::<_, Option<i64>>(
-        "SELECT SUM(media_inventory.size_bytes)
-         FROM media_inventory
-         INNER JOIN download_executions ON download_executions.id = media_inventory.download_execution_id
-         WHERE media_inventory.status = 'ready'
-           AND (?1 IS NULL
-                OR media_inventory.file_name LIKE ?1
-                OR download_executions.source_title LIKE ?1
-                OR CAST(media_inventory.bangumi_subject_id AS TEXT) LIKE ?1)",
+        "WITH resource_rows AS (
+            SELECT
+                media_inventory.id AS id,
+                media_inventory.bangumi_subject_id,
+                media_inventory.download_job_id,
+                media_inventory.download_execution_id,
+                media_inventory.resource_candidate_id,
+                media_inventory.slot_key,
+                download_executions.source_title,
+                download_executions.source_fansub_name,
+                download_executions.state AS execution_state,
+                media_inventory.relative_path,
+                media_inventory.absolute_path,
+                media_inventory.file_name,
+                media_inventory.file_ext,
+                media_inventory.size_bytes,
+                media_inventory.episode_index,
+                media_inventory.episode_end_index,
+                media_inventory.is_collection,
+                media_inventory.status,
+                media_inventory.updated_at
+            FROM media_inventory
+            INNER JOIN download_executions
+                ON download_executions.id = media_inventory.download_execution_id
+            WHERE media_inventory.status = 'ready'
+
+            UNION ALL
+
+            SELECT
+                -download_executions.id AS id,
+                download_executions.bangumi_subject_id,
+                download_executions.download_job_id,
+                download_executions.id AS download_execution_id,
+                download_executions.resource_candidate_id,
+                download_executions.slot_key,
+                download_executions.source_title,
+                download_executions.source_fansub_name,
+                download_executions.state AS execution_state,
+                '' AS relative_path,
+                download_executions.target_path AS absolute_path,
+                download_executions.source_title AS file_name,
+                '' AS file_ext,
+                MAX(download_executions.source_size_bytes, download_executions.downloaded_bytes) AS size_bytes,
+                download_executions.episode_index,
+                download_executions.episode_end_index,
+                download_executions.is_collection,
+                'downloaded' AS status,
+                download_executions.updated_at
+            FROM download_executions
+            WHERE download_executions.state IN ('completed', 'seeding')
+              AND download_executions.downloaded_bytes > 0
+              AND NOT EXISTS (
+                    SELECT 1
+                    FROM media_inventory
+                    WHERE media_inventory.download_execution_id = download_executions.id
+                      AND media_inventory.status = 'ready'
+              )
+         )
+         SELECT SUM(size_bytes)
+         FROM resource_rows
+         WHERE (?1 IS NULL
+                OR file_name LIKE ?1
+                OR source_title LIKE ?1
+                OR CAST(bangumi_subject_id AS TEXT) LIKE ?1)",
     )
     .bind(keyword.as_deref())
     .fetch_one(pool)
@@ -2518,34 +2630,90 @@ pub async fn list_resource_library_items(
     .unwrap_or(0);
 
     let rows = sqlx::query_as::<_, ResourceLibraryRow>(
-        "SELECT
-            media_inventory.id,
-            media_inventory.bangumi_subject_id,
-            media_inventory.download_job_id,
-            media_inventory.download_execution_id,
-            media_inventory.resource_candidate_id,
-            media_inventory.slot_key,
-            download_executions.source_title,
-            download_executions.source_fansub_name,
-            download_executions.state AS execution_state,
-            media_inventory.relative_path,
-            media_inventory.absolute_path,
-            media_inventory.file_name,
-            media_inventory.file_ext,
-            media_inventory.size_bytes,
-            media_inventory.episode_index,
-            media_inventory.episode_end_index,
-            media_inventory.is_collection,
-            media_inventory.status,
-            media_inventory.updated_at
-         FROM media_inventory
-         INNER JOIN download_executions ON download_executions.id = media_inventory.download_execution_id
-         WHERE media_inventory.status = 'ready'
-           AND (?1 IS NULL
-                OR media_inventory.file_name LIKE ?1
-                OR download_executions.source_title LIKE ?1
-                OR CAST(media_inventory.bangumi_subject_id AS TEXT) LIKE ?1)
-         ORDER BY media_inventory.updated_at DESC, media_inventory.id DESC
+        "WITH resource_rows AS (
+            SELECT
+                media_inventory.id AS id,
+                media_inventory.bangumi_subject_id,
+                media_inventory.download_job_id,
+                media_inventory.download_execution_id,
+                media_inventory.resource_candidate_id,
+                media_inventory.slot_key,
+                download_executions.source_title,
+                download_executions.source_fansub_name,
+                download_executions.state AS execution_state,
+                media_inventory.relative_path,
+                media_inventory.absolute_path,
+                media_inventory.file_name,
+                media_inventory.file_ext,
+                media_inventory.size_bytes,
+                media_inventory.episode_index,
+                media_inventory.episode_end_index,
+                media_inventory.is_collection,
+                media_inventory.status,
+                media_inventory.updated_at
+            FROM media_inventory
+            INNER JOIN download_executions
+                ON download_executions.id = media_inventory.download_execution_id
+            WHERE media_inventory.status = 'ready'
+
+            UNION ALL
+
+            SELECT
+                -download_executions.id AS id,
+                download_executions.bangumi_subject_id,
+                download_executions.download_job_id,
+                download_executions.id AS download_execution_id,
+                download_executions.resource_candidate_id,
+                download_executions.slot_key,
+                download_executions.source_title,
+                download_executions.source_fansub_name,
+                download_executions.state AS execution_state,
+                '' AS relative_path,
+                download_executions.target_path AS absolute_path,
+                download_executions.source_title AS file_name,
+                '' AS file_ext,
+                MAX(download_executions.source_size_bytes, download_executions.downloaded_bytes) AS size_bytes,
+                download_executions.episode_index,
+                download_executions.episode_end_index,
+                download_executions.is_collection,
+                'downloaded' AS status,
+                download_executions.updated_at
+            FROM download_executions
+            WHERE download_executions.state IN ('completed', 'seeding')
+              AND download_executions.downloaded_bytes > 0
+              AND NOT EXISTS (
+                    SELECT 1
+                    FROM media_inventory
+                    WHERE media_inventory.download_execution_id = download_executions.id
+                      AND media_inventory.status = 'ready'
+              )
+         )
+         SELECT
+            id,
+            bangumi_subject_id,
+            download_job_id,
+            download_execution_id,
+            resource_candidate_id,
+            slot_key,
+            source_title,
+            source_fansub_name,
+            execution_state,
+            relative_path,
+            absolute_path,
+            file_name,
+            file_ext,
+            size_bytes,
+            episode_index,
+            episode_end_index,
+            is_collection,
+            status,
+            updated_at
+         FROM resource_rows
+         WHERE (?1 IS NULL
+                OR file_name LIKE ?1
+                OR source_title LIKE ?1
+                OR CAST(bangumi_subject_id AS TEXT) LIKE ?1)
+         ORDER BY updated_at DESC, id DESC
          LIMIT ?2 OFFSET ?3",
     )
     .bind(keyword.as_deref())

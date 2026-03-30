@@ -17,6 +17,7 @@ import type { ActiveDownload, ResourceLibraryItem } from "../types";
 
 const PAGE_SIZE = 24;
 const ACTIVE_DOWNLOAD_REFRESH_MS = 1000;
+const RESOURCE_REFRESH_MS = 1000;
 
 const useStyles = makeStyles({
   page: {
@@ -192,6 +193,19 @@ function formatSpeed(value: number) {
   return value > 0 ? `${formatBytes(value)}/s` : "0 B/s";
 }
 
+function formatResourceStatus(value: string) {
+  switch (value) {
+    case "ready":
+      return "已入库";
+    case "downloaded":
+      return "已下载";
+    case "partial":
+      return "未完成";
+    default:
+      return value;
+  }
+}
+
 function formatProgress(download: ActiveDownload) {
   const total = Math.max(download.totalBytes, download.downloadedBytes);
   if (!total) {
@@ -281,21 +295,25 @@ export function ResourcesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const visibleResourcePageSize = Math.min(page * PAGE_SIZE, 96);
+
+  function buildResourceParams(pageSize = visibleResourcePageSize) {
+    const params = new URLSearchParams({
+      page: "1",
+      pageSize: String(pageSize),
+    });
+    if (keyword.trim()) {
+      params.set("keyword", keyword.trim());
+    }
+    return params;
+  }
 
   useEffect(() => {
     let isMounted = true;
     setIsLoading(true);
 
-    const params = new URLSearchParams({
-      page: "1",
-      pageSize: String(PAGE_SIZE),
-    });
-    if (keyword.trim()) {
-      params.set("keyword", keyword.trim());
-    }
-
     void Promise.all([
-      fetchResources(params, deviceId, userToken),
+      fetchResources(buildResourceParams(), deviceId, userToken),
       fetchActiveDownloads(deviceId, userToken),
     ])
       .then(([resourceResponse, downloadResponse]) => {
@@ -325,7 +343,7 @@ export function ResourcesPage() {
     return () => {
       isMounted = false;
     };
-  }, [deviceId, keyword, userToken]);
+  }, [deviceId, keyword, userToken, visibleResourcePageSize]);
 
   useEffect(() => {
     let isMounted = true;
@@ -333,18 +351,36 @@ export function ResourcesPage() {
 
     const poll = async () => {
       try {
-        const response = await fetchActiveDownloads(deviceId, userToken);
+        const [downloadResponse, resourceResponse] = await Promise.all([
+          fetchActiveDownloads(deviceId, userToken),
+          fetchResources(buildResourceParams(), deviceId, userToken),
+        ]);
         if (isMounted) {
-          setDownloads(response.items);
+          setDownloads(downloadResponse.items);
+          setItems(resourceResponse.items);
+          setTotal(resourceResponse.total);
+          setTotalSizeBytes(resourceResponse.totalSizeBytes);
+          setHasNextPage(resourceResponse.hasNextPage);
+          setError(null);
+        }
+      } catch (nextError) {
+        if (isMounted && nextError instanceof Error) {
+          setError(nextError.message);
         }
       } finally {
         if (isMounted) {
-          timeoutId = window.setTimeout(poll, ACTIVE_DOWNLOAD_REFRESH_MS);
+          timeoutId = window.setTimeout(
+            poll,
+            Math.min(ACTIVE_DOWNLOAD_REFRESH_MS, RESOURCE_REFRESH_MS),
+          );
         }
       }
     };
 
-    timeoutId = window.setTimeout(poll, ACTIVE_DOWNLOAD_REFRESH_MS);
+    timeoutId = window.setTimeout(
+      poll,
+      Math.min(ACTIVE_DOWNLOAD_REFRESH_MS, RESOURCE_REFRESH_MS),
+    );
 
     return () => {
       isMounted = false;
@@ -571,11 +607,13 @@ export function ResourcesPage() {
                     <Text weight="semibold" className={styles.titleLine}>
                       {item.fileName}
                     </Text>
-                    <Text className={styles.subtitleLine}>Bangumi {item.bangumiSubjectId}</Text>
-                    <Text className={styles.titleLine}>{describeEpisode(item)}</Text>
+                    <Text className={styles.subtitleLine}>{item.sourceTitle}</Text>
+                    <Text className={styles.titleLine}>
+                      {formatResourceStatus(item.status)} · {describeEpisode(item)}
+                    </Text>
                     <Text className={styles.titleLine}>{formatBytes(item.sizeBytes)}</Text>
                     <Text className={styles.subtitleLine}>
-                      {item.sourceFansubName ?? item.sourceTitle}
+                      {(item.sourceFansubName ?? "AnimeGarden")} · Bangumi {item.bangumiSubjectId}
                     </Text>
                   </Card>
                 </Link>

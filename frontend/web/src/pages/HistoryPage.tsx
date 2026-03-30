@@ -15,6 +15,9 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: "18px",
+    height: "100%",
+    minHeight: 0,
+    overflow: "hidden",
   },
   surfaceCard: {
     padding: "20px 22px",
@@ -47,17 +50,21 @@ const useStyles = makeStyles({
     backgroundColor: "var(--app-surface-1)",
     border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)",
+    flex: "1 1 auto",
+    minHeight: 0,
+    overflow: "hidden",
   },
   listViewport: {
-    height: "clamp(440px, calc(100vh - 290px), 760px)",
+    flex: "1 1 auto",
+    minHeight: 0,
     overflowY: "auto",
     overflowX: "hidden",
     paddingRight: "6px",
   },
   list: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-    gridAutoRows: "176px",
+    gridTemplateColumns: "1fr",
+    gridAutoRows: "148px",
     gap: "12px",
   },
   link: {
@@ -87,6 +94,13 @@ const useStyles = makeStyles({
   body: {
     display: "flex",
     flexDirection: "column",
+    justifyContent: "space-between",
+    gap: "10px",
+    minWidth: 0,
+  },
+  content: {
+    display: "flex",
+    flexDirection: "column",
     gap: "6px",
     minWidth: 0,
   },
@@ -103,6 +117,18 @@ const useStyles = makeStyles({
   },
   muted: {
     color: "var(--app-muted)",
+  },
+  metaRow: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gap: "10px",
+    alignItems: "end",
+  },
+  metaCell: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+    minWidth: 0,
   },
   actions: {
     display: "flex",
@@ -283,21 +309,40 @@ export function HistoryPage() {
                   <HistoryPoster imagePortrait={item.imagePortrait} />
 
                   <div className={styles.body}>
-                    <Text weight="semibold" className={styles.title}>
-                      {item.subjectTitleCn || item.subjectTitle}
-                    </Text>
-                    <Text className={styles.title}>
-                      第 {item.episodeNumber ?? "?"} 集 · {item.episodeTitleCn || item.episodeTitle || "未命名"}
-                    </Text>
-                    <Text className={`${styles.muted} ${styles.singleLine}`.trim()}>
-                      {item.fileName ?? "资源文件待确认"}
-                    </Text>
-                    <Text className={`${styles.muted} ${styles.singleLine}`.trim()}>
-                      {item.sourceFansubName ?? "未标注字幕组"}
-                    </Text>
-                    <Text className={`${styles.muted} ${styles.singleLine}`.trim()}>
-                      最近播放 {formatPlayedAt(item.lastPlayedAt)} · {item.playCount} 次
-                    </Text>
+                    <div className={styles.content}>
+                      <Text weight="semibold" className={styles.title}>
+                        {item.subjectTitleCn || item.subjectTitle}
+                      </Text>
+                      <Text className={styles.title}>
+                        第 {item.episodeNumber ?? "?"} 集 · {item.episodeTitleCn || item.episodeTitle || "未命名"}
+                      </Text>
+                      <Text className={`${styles.muted} ${styles.singleLine}`.trim()}>
+                        {item.fileName ?? "资源文件待确认"}
+                      </Text>
+                    </div>
+
+                    <div className={styles.metaRow}>
+                      <div className={styles.metaCell}>
+                        <Text size={200} className={styles.muted}>
+                          来源
+                        </Text>
+                        <Text className={styles.singleLine}>
+                          {item.sourceFansubName ?? "未标注字幕组"}
+                        </Text>
+                      </div>
+                      <div className={styles.metaCell}>
+                        <Text size={200} className={styles.muted}>
+                          最近播放
+                        </Text>
+                        <Text className={styles.singleLine}>{formatPlayedAt(item.lastPlayedAt)}</Text>
+                      </div>
+                      <div className={styles.metaCell}>
+                        <Text size={200} className={styles.muted}>
+                          播放次数
+                        </Text>
+                        <Text className={styles.singleLine}>{item.playCount} 次</Text>
+                      </div>
+                    </div>
                   </div>
                 </Card>
               </Link>
