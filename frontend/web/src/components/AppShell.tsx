@@ -13,6 +13,7 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { fetchCatalogManifest } from "../api";
 import type { RouteState } from "../navigation";
 import { useSession } from "../session";
+import { BrandLogo } from "./BrandLogo";
 
 const useStyles = makeStyles({
   layout: {
@@ -34,9 +35,18 @@ const useStyles = makeStyles({
   },
   brand: {
     display: "flex",
-    flexDirection: "column",
-    gap: "2px",
+    alignItems: "center",
+    gap: "10px",
     padding: "2px 6px 0"
+  },
+  brandLogo: {
+    width: "18px",
+    height: "22px",
+    flexShrink: 0,
+    color: "var(--app-text)"
+  },
+  brandTitle: {
+    minWidth: 0
   },
   profileCard: {
     display: "flex",
@@ -169,7 +179,8 @@ export function AppShell() {
     <div className={styles.layout}>
       <aside className={styles.rail}>
         <div className={styles.brand}>
-          <Text weight="semibold" size={700}>
+          <BrandLogo className={styles.brandLogo} aria-hidden="true" />
+          <Text weight="semibold" size={700} className={styles.brandTitle}>
             Anicargo
           </Text>
         </div>
