@@ -40,8 +40,8 @@ const useStyles = makeStyles({
     padding: "2px 6px 0"
   },
   brandLogo: {
-    width: "18px",
-    height: "22px",
+    width: "36px",
+    height: "44px",
     flexShrink: 0,
     color: "var(--app-text)"
   },
