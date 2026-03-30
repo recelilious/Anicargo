@@ -31,7 +31,7 @@ const useStyles = makeStyles({
     backgroundColor: "var(--app-surface-1)",
     border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)",
-    minHeight: "96px",
+    height: "96px",
   },
   headerRow: {
     display: "flex",
@@ -39,7 +39,7 @@ const useStyles = makeStyles({
     justifyContent: "center",
     gap: "10px",
     alignItems: "flex-start",
-    minHeight: "56px",
+    height: "56px",
     width: "100%",
   },
   headerTitleGroup: {
@@ -48,7 +48,7 @@ const useStyles = makeStyles({
     gap: "10px",
     alignItems: "flex-start",
     justifyContent: "center",
-    minHeight: "56px",
+    height: "56px",
     width: "100%",
   },
   headerSource: {
