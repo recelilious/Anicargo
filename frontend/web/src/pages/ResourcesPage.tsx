@@ -2,8 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Button,
   Card,
-  Field,
-  Input,
   ProgressBar,
   Spinner,
   Text,
@@ -284,8 +282,6 @@ function compareDisplayText(left: string, right: string) {
 export function ResourcesPage() {
   const styles = useStyles();
   const { deviceId, userToken } = useSession();
-  const [keywordInput, setKeywordInput] = useState("");
-  const [keyword, setKeyword] = useState("");
   const [items, setItems] = useState<ResourceLibraryItem[]>([]);
   const [downloads, setDownloads] = useState<ActiveDownload[]>([]);
   const [total, setTotal] = useState(0);
@@ -298,14 +294,10 @@ export function ResourcesPage() {
   const visibleResourcePageSize = Math.min(page * PAGE_SIZE, 96);
 
   function buildResourceParams(pageSize = visibleResourcePageSize) {
-    const params = new URLSearchParams({
+    return new URLSearchParams({
       page: "1",
       pageSize: String(pageSize),
     });
-    if (keyword.trim()) {
-      params.set("keyword", keyword.trim());
-    }
-    return params;
   }
 
   useEffect(() => {
@@ -343,7 +335,7 @@ export function ResourcesPage() {
     return () => {
       isMounted = false;
     };
-  }, [deviceId, keyword, userToken, visibleResourcePageSize]);
+  }, [deviceId, userToken, visibleResourcePageSize]);
 
   useEffect(() => {
     let isMounted = true;
@@ -401,9 +393,6 @@ export function ResourcesPage() {
         page: String(page + 1),
         pageSize: String(PAGE_SIZE),
       });
-      if (keyword.trim()) {
-        params.set("keyword", keyword.trim());
-      }
 
       const response = await fetchResources(params, deviceId, userToken);
       setItems((current) => [...current, ...response.items]);
@@ -469,25 +458,6 @@ export function ResourcesPage() {
             资源
           </Text>
 
-          <div style={{ minWidth: "min(360px, 100%)" }}>
-            <Field label="搜索">
-              <Input
-                value={keywordInput}
-                onChange={(_, data) => setKeywordInput(data.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    setKeyword(keywordInput);
-                  }
-                }}
-                contentAfter={
-                  <Button appearance="subtle" onClick={() => setKeyword(keywordInput)}>
-                    应用
-                  </Button>
-                }
-                placeholder="番名 / Bangumi ID / 文件名"
-              />
-            </Field>
-          </div>
         </div>
       </Card>
 
