@@ -57,7 +57,6 @@ struct YucCatalogEntry {
 
 #[derive(Debug, Clone, FromRow)]
 struct CatalogSnapshotRow {
-    source_hash: String,
     refreshed_at: String,
 }
 
@@ -247,15 +246,7 @@ async fn sync_current_season_catalog(
     if needs_fetch {
         let html = yuc.fetch_season_html(catalog_key).await?;
         let catalog = parse_catalog(yuc, catalog_key, &html);
-
-        if snapshot
-            .as_ref()
-            .is_some_and(|row| row.source_hash == catalog.source_hash)
-        {
-            touch_catalog_refresh(pool, &catalog, &now).await?;
-        } else {
-            store_catalog(pool, &catalog, &now).await?;
-        }
+        store_catalog(pool, &catalog, &now).await?;
     }
 
     populate_missing_matches(pool, bangumi, catalog_key).await?;
@@ -287,7 +278,7 @@ async fn load_catalog_snapshot(
     catalog_key: &str,
 ) -> Result<Option<CatalogSnapshotRow>, AppError> {
     sqlx::query_as::<_, CatalogSnapshotRow>(
-        "SELECT source_hash, refreshed_at
+        "SELECT refreshed_at
          FROM yuc_catalogs
          WHERE catalog_key = ?1
          LIMIT 1",
@@ -296,30 +287,6 @@ async fn load_catalog_snapshot(
     .fetch_optional(pool)
     .await
     .map_err(|_| AppError::internal("failed to read Yuc catalog snapshot"))
-}
-
-async fn touch_catalog_refresh(
-    pool: &SqlitePool,
-    catalog: &YucCatalog,
-    refreshed_at: &str,
-) -> Result<(), AppError> {
-    sqlx::query(
-        "UPDATE yuc_catalogs
-         SET title = ?2,
-             source_url = ?3,
-             source_hash = ?4,
-             refreshed_at = ?5
-         WHERE catalog_key = ?1",
-    )
-    .bind(&catalog.catalog_key)
-    .bind(&catalog.title)
-    .bind(&catalog.source_url)
-    .bind(&catalog.source_hash)
-    .bind(refreshed_at)
-    .execute(pool)
-    .await
-    .map_err(|_| AppError::internal("failed to refresh Yuc catalog timestamp"))?;
-    Ok(())
 }
 
 async fn store_catalog(pool: &SqlitePool, catalog: &YucCatalog, now: &str) -> Result<(), AppError> {
@@ -1369,7 +1336,7 @@ fn weekday_card_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
         Regex::new(
-            r#"(?s)<div style="float:left"><div class="div_date"><p class="imgtext\d+">(?P<time>\d{2}:\d{2})~</p><p class="imgep">(?P<episode_note>.*?)</p><img[^>]*data-src="(?P<image>[^"]+)"[^>]*></div><div><table width="120px"><tr><td colspan="3" class="date_title_[^"]*">(?P<title>.*?)</td></tr><tr class="tr_area">(?P<area>.*?)</tr></table></div></div>"#,
+            r#"(?s)<div style="float:left"><div class="div_date[^"]*"[^>]*><p class="imgtext\d+">(?P<time>\d{2}:\d{2})~</p><p class="imgep\d*">(?P<episode_note>.*?)</p><img[^>]*data-src="(?P<image>[^"]+)"[^>]*></div><div><table width="120px"><tr><td colspan="3" class="date_title_[^"]*">(?P<title>.*?)</td></tr><tr class="tr_area">(?P<area>.*?)</tr></table></div></div>"#,
         )
         .expect("valid yuc weekday card regex")
     })
@@ -1410,7 +1377,8 @@ fn variant_regex() -> &'static Regex {
 #[cfg(test)]
 mod tests {
     use super::{
-        ScheduleDisplayOptions, derive_release_status, resolve_schedule_display, tokyo_today,
+        ScheduleDisplayOptions, derive_release_status, parse_weekday_entries,
+        resolve_schedule_display, tokyo_today,
     };
     use crate::bangumi::{EpisodeRaw, SubjectRaw};
     use chrono_tz::Australia::Brisbane;
@@ -1509,5 +1477,24 @@ mod tests {
             airdate,
             duration_seconds: None,
         }
+    }
+
+    #[test]
+    fn parses_current_yuc_weekday_cards_with_imgep_suffixes() {
+        let html = r#"
+            <!--周一-->
+            <div><table class="date_" width="100%";><tr><td class="date2">周一 (月)</td></tr></table></div>
+            <div>
+            <div style="float:left"><div class="div_date" ><p class="imgtext4">21:00~</p><p class="imgep2">4/6~</p><img width="120px" data-src="https://example.com/a.jpg"></div><div><table width="120px"><tr><td colspan="3" class="date_title_">自称恶役千金的<br>婚约者观察记录</td></tr><tr class="tr_area"><!--版权--></tr></table></div></div>
+            <div style="float:left"><div class="div_date" ><p class="imgtext4">22:00~</p><p class="imgep2">4/6~</p><img width="120px" data-src="https://example.com/b.jpg"></div><div><table width="120px"><tr><td colspan="3" class="date_title_">尖帽子的魔法工坊</td></tr><tr class="tr_area"><!--版权--></tr></table></div></div>
+            </div><div style="clear:both"></div>
+        "#;
+
+        let entries = parse_weekday_entries(html);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].weekday.id, 1);
+        assert_eq!(entries[0].broadcast_time.as_deref(), Some("21:00"));
+        assert_eq!(entries[0].title_cn, "自称恶役千金的 婚约者观察记录");
+        assert_eq!(entries[1].title_cn, "尖帽子的魔法工坊");
     }
 }

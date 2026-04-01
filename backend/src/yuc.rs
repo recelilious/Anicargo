@@ -982,7 +982,7 @@ fn schedule_card_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
         Regex::new(
-            r#"(?s)<div style="float:left"><div class="div_date"><p class="imgtext\d+">(?P<time>\d{2}:\d{2})~</p><p class="imgep">.*?</p><img[^>]*></div><div><table width="120px"><tr><td colspan="3" class="date_title_[^"]*">(?P<title>.*?)</td></tr>"#,
+            r#"(?s)<div style="float:left"><div class="div_date[^"]*"[^>]*><p class="imgtext\d+">(?P<time>\d{2}:\d{2})~</p><p class="imgep\d*">.*?</p><img[^>]*></div><div><table width="120px"><tr><td colspan="3" class="date_title_[^"]*">(?P<title>.*?)</td></tr>"#,
         )
         .expect("valid yuc schedule regex")
     })
@@ -1082,7 +1082,7 @@ fn variant_regex() -> &'static Regex {
 mod tests {
     use super::{
         next_season_key_from, parse_future_season_sections, parse_preview_sections,
-        parse_special_sections,
+        parse_schedule_entries, parse_special_sections,
     };
 
     #[test]
@@ -1168,5 +1168,20 @@ mod tests {
         assert_eq!(next_season_key_from("202604"), "202607");
         assert_eq!(next_season_key_from("202607"), "202610");
         assert_eq!(next_season_key_from("202610"), "202701");
+    }
+
+    #[test]
+    fn parses_schedule_entries_with_current_yuc_card_markup() {
+        let html = r#"
+            <div style="float:left"><div class="div_date" ><p class="imgtext4">21:00~</p><p class="imgep2">4/6~</p><img width="120px" data-src="https://example.com/a.jpg"></div><div><table width="120px"><tr><td colspan="3" class="date_title_">自称恶役千金的<br>婚约者观察记录</td></tr></table></div></div>
+            <p class="title_cn_r">自称恶役千金的婚约者观察记录</p>
+            <p class="title_jp_r">自称悪役令嬢な婚約者の観察記録</p>
+            <p class="broadcast_r">4/6周一晚间</p>
+        "#;
+
+        let entries = parse_schedule_entries(html);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].time, "21:00");
+        assert_eq!(entries[0].aliases.len(), 2);
     }
 }
