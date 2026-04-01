@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import Artplayer from "artplayer";
+import type { Option as ArtplayerOption } from "artplayer/types/option";
 
 type AnicargoPlayerProps = {
   streamUrl: string;
@@ -21,6 +23,79 @@ export function AnicargoPlayer({
 
   playbackStartRef.current = onPlaybackStart;
 
+  function buildArtplayerOptions(container: HTMLDivElement, minimal = false): ArtplayerOption {
+    if (minimal) {
+      return {
+        container,
+        url: streamUrl,
+        poster: posterUrl ?? undefined,
+        theme: "#4b2c23",
+        volume: 0.8,
+        autoplay: false,
+        autoSize: true,
+        fullscreen: true,
+        fullscreenWeb: true,
+        playsInline: true,
+        moreVideoAttr: {
+          preload: "metadata",
+          crossOrigin: "anonymous",
+          playsInline: true,
+        },
+      };
+    }
+
+    return {
+      container,
+      url: streamUrl,
+      poster: posterUrl ?? undefined,
+      theme: "#4b2c23",
+      volume: 0.8,
+      autoplay: false,
+      autoSize: true,
+      backdrop: true,
+      fullscreen: true,
+      fullscreenWeb: true,
+      pip: true,
+      screenshot: false,
+      setting: true,
+      playbackRate: true,
+      aspectRatio: true,
+      subtitleOffset: true,
+      miniProgressBar: true,
+      mutex: true,
+      playsInline: true,
+      autoPlayback: true,
+      moreVideoAttr: {
+        preload: "metadata",
+        crossOrigin: "anonymous",
+        playsInline: true,
+      },
+      subtitle: subtitleUrl
+        ? {
+            url: subtitleUrl,
+            type: subtitleUrl.endsWith(".ass")
+              ? "ass"
+              : subtitleUrl.endsWith(".srt")
+                ? "srt"
+                : "vtt",
+            style: {
+              fontFamily: "\"JetBrains Mono Variable\", \"Maple Mono CN\", monospace",
+              fontSize: "18px",
+              color: "#f8f4f0",
+              textShadow: "0 2px 6px rgba(0, 0, 0, 0.88)",
+            },
+          }
+        : undefined,
+      cssVar: {
+        "--art-theme": "#4b2c23",
+        "--art-font-color": "#f5eee8",
+        "--art-control-opacity": 0.92,
+        "--art-widget-background": "rgba(13, 18, 24, 0.92)",
+        "--art-subtitle-font-size": "18px",
+      },
+    };
+  }
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container) {
@@ -33,83 +108,53 @@ export function AnicargoPlayer({
 
     let cancelled = false;
 
-    async function mountPlayer() {
+    function bindPlayer(player: Artplayer) {
+      player.on("play", () => {
+        if (hasStartedRef.current) {
+          return;
+        }
+
+        hasStartedRef.current = true;
+        playbackStartRef.current?.();
+      });
+
+      playerRef.current = player;
+    }
+
+    function mountPlayer() {
       try {
-        const { default: Artplayer } = await import("artplayer");
         if (cancelled || !containerRef.current) {
           return;
         }
 
-        const player = new Artplayer({
-          container: containerRef.current,
-          url: streamUrl,
-          poster: posterUrl ?? undefined,
-          theme: "#4b2c23",
-          volume: 0.8,
-          autoplay: false,
-          autoSize: true,
-          backdrop: true,
-          fullscreen: true,
-          fullscreenWeb: true,
-          pip: true,
-          screenshot: false,
-          setting: true,
-          playbackRate: true,
-          aspectRatio: true,
-          subtitleOffset: true,
-          miniProgressBar: true,
-          mutex: true,
-          playsInline: true,
-          autoPlayback: true,
-          moreVideoAttr: {
-            preload: "metadata",
-            crossOrigin: "anonymous",
-            playsInline: true,
-          },
-          subtitle: subtitleUrl
-            ? {
-                url: subtitleUrl,
-                type: subtitleUrl.endsWith(".ass")
-                  ? "ass"
-                  : subtitleUrl.endsWith(".srt")
-                    ? "srt"
-                    : "vtt",
-                style: {
-                  fontFamily: "\"JetBrains Mono Variable\", \"Maple Mono CN\", monospace",
-                  fontSize: "18px",
-                  color: "#f8f4f0",
-                  textShadow: "0 2px 6px rgba(0, 0, 0, 0.88)",
-                },
-              }
-            : undefined,
-          cssVar: {
-            "--art-theme": "#4b2c23",
-            "--art-font-color": "#f5eee8",
-            "--art-control-opacity": 0.92,
-            "--art-widget-background": "rgba(13, 18, 24, 0.92)",
-            "--art-subtitle-font-size": "18px",
-          },
-        });
+        try {
+          const player = new Artplayer(buildArtplayerOptions(containerRef.current));
+          bindPlayer(player);
+          return;
+        } catch (primaryError) {
+          console.warn("Failed to initialize Artplayer with full config, retrying with minimal config", primaryError);
+        }
 
-        player.on("play", () => {
-          if (hasStartedRef.current) {
-            return;
+        try {
+          containerRef.current.innerHTML = "";
+          const player = new Artplayer(buildArtplayerOptions(containerRef.current, true));
+          bindPlayer(player);
+          return;
+        } catch (fallbackError) {
+          console.error("Failed to initialize Artplayer, falling back to native video", fallbackError);
+          if (!cancelled) {
+            setUseNativeVideo(true);
           }
-
-          hasStartedRef.current = true;
-          playbackStartRef.current?.();
-        });
-
-        playerRef.current = player;
+        }
       } catch (error) {
-        console.error("Failed to initialize Artplayer, falling back to native video", error);
+        console.error("Unexpected player bootstrap failure, falling back to native video", error);
         if (!cancelled) {
           setUseNativeVideo(true);
         }
       }
     }
 
-    void mountPlayer();
+    mountPlayer();
 
     return () => {
       cancelled = true;
