@@ -83,14 +83,20 @@ const useStyles = makeStyles({
     minWidth: 0,
     height: "100vh",
     padding: "24px 28px 40px",
-    overflowY: "auto",
-    overflowX: "hidden"
-  },
-  contentContained: {
+    overflow: "hidden",
     display: "flex",
     flexDirection: "column",
-    overflow: "hidden",
+  },
+  scrollViewport: {
+    flex: "1 1 auto",
     minHeight: 0,
+    overflowY: "auto",
+    overflowX: "hidden",
+  },
+  containedViewport: {
+    flex: "1 1 auto",
+    minHeight: 0,
+    overflow: "hidden",
   }
 });
 
@@ -194,10 +200,14 @@ export function AppShell() {
       </aside>
 
       <main
-        id="app-scroll-root"
-        className={`${styles.content} ${usesContainedScroll ? styles.contentContained : ""}`.trim()}
+        className={styles.content}
       >
-        <RoutedMotionOutlet routeKey={location.key} outlet={outlet} contained={usesContainedScroll} />
+        <div
+          id="app-scroll-root"
+          className={usesContainedScroll ? styles.containedViewport : styles.scrollViewport}
+        >
+          <RoutedMotionOutlet routeKey={location.key} outlet={outlet} />
+        </div>
       </main>
     </div>
   );
