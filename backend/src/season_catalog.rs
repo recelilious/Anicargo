@@ -869,7 +869,125 @@ fn score_subject_candidate(subject: &SubjectRaw, entry: &CatalogMatchRow) -> f64
         }
     }
 
+    let entry_hint = extract_catalog_installment_hint(entry);
+    let subject_hint = extract_subject_installment_hint(subject);
+    best = adjust_score_for_installment_hint(best, entry_hint, subject_hint);
+
     best
+}
+
+fn adjust_score_for_installment_hint(
+    base_score: f64,
+    entry_hint: Option<i32>,
+    subject_hint: Option<i32>,
+) -> f64 {
+    match (entry_hint, subject_hint) {
+        (Some(expected), Some(actual)) if expected == actual => base_score + 72.0,
+        (Some(_), Some(_)) => (base_score - 96.0).max(0.0),
+        (Some(_), None) => (base_score - 36.0).max(0.0),
+        _ => base_score,
+    }
+}
+
+fn extract_catalog_installment_hint(entry: &CatalogMatchRow) -> Option<i32> {
+    [
+        entry.title_original.as_deref(),
+        Some(entry.title.as_str()),
+        Some(entry.title_cn.as_str()),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(extract_installment_hint)
+}
+
+fn extract_subject_installment_hint(subject: &SubjectRaw) -> Option<i32> {
+    extract_installment_hint(&subject.name_cn)
+        .or_else(|| extract_installment_hint(&subject.name))
+        .or_else(|| {
+            subject
+                .infobox
+                .iter()
+                .find_map(|item| extract_installment_hint(&flatten_infobox_value(&item.value)))
+        })
+}
+
+fn extract_installment_hint(text: &str) -> Option<i32> {
+    let value = text.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    if let Some(capture) = chinese_installment_regex().captures(value) {
+        return parse_installment_number(capture.name("number")?.as_str());
+    }
+
+    if let Some(capture) = season_suffix_regex().captures(value) {
+        return capture
+            .name("number")
+            .and_then(|number| number.as_str().parse::<i32>().ok());
+    }
+
+    if let Some(capture) = season_prefix_regex().captures(value) {
+        return capture
+            .name("number")
+            .and_then(|number| number.as_str().parse::<i32>().ok());
+    }
+
+    if let Some(capture) = ordinal_season_regex().captures(value) {
+        return capture
+            .name("number")
+            .and_then(|number| number.as_str().parse::<i32>().ok());
+    }
+
+    None
+}
+
+fn parse_installment_number(value: &str) -> Option<i32> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Ok(number) = trimmed.parse::<i32>() {
+        return Some(number);
+    }
+
+    parse_simple_chinese_numeral(trimmed)
+}
+
+fn parse_simple_chinese_numeral(value: &str) -> Option<i32> {
+    if value.is_empty() {
+        return None;
+    }
+
+    let mut total = 0i32;
+    let mut current = 0i32;
+
+    for character in value.chars() {
+        match character {
+            '零' => {}
+            '一' => current += 1,
+            '二' | '两' => current += 2,
+            '三' => current += 3,
+            '四' => current += 4,
+            '五' => current += 5,
+            '六' => current += 6,
+            '七' => current += 7,
+            '八' => current += 8,
+            '九' => current += 9,
+            '十' => {
+                total += if current == 0 { 10 } else { current * 10 };
+                current = 0;
+            }
+            '百' => {
+                total += if current == 0 { 100 } else { current * 100 };
+                current = 0;
+            }
+            _ => return None,
+        }
+    }
+
+    Some(total + current)
 }
 
 fn preferred_subject_title(subject: &SubjectRaw) -> String {
@@ -1374,14 +1492,47 @@ fn variant_regex() -> &'static Regex {
     })
 }
 
+fn chinese_installment_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r"第\s*(?P<number>[0-9一二三四五六七八九十百零两]+)\s*(?:季|期|部|章|篇|弹|作)")
+            .expect("valid chinese installment regex")
+    })
+}
+
+fn season_suffix_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r"(?i)\b(?:season|part)\s*(?P<number>\d{1,3})\b")
+            .expect("valid season suffix regex")
+    })
+}
+
+fn season_prefix_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r"(?i)\bS(?P<number>\d{1,3})\b").expect("valid season prefix regex")
+    })
+}
+
+fn ordinal_season_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r"(?i)\b(?P<number>\d{1,3})(?:st|nd|rd|th)\s+season\b")
+            .expect("valid ordinal season regex")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        ScheduleDisplayOptions, derive_release_status, parse_weekday_entries,
-        resolve_schedule_display, tokyo_today,
+        CatalogMatchRow, ScheduleDisplayOptions, derive_release_status, parse_weekday_entries,
+        resolve_schedule_display, score_subject_candidate, tokyo_today,
     };
     use crate::bangumi::{EpisodeRaw, SubjectRaw};
+    use crate::bangumi::{ImageSetRaw, InfoboxRaw, RatingRaw, TagRaw};
     use chrono_tz::Australia::Brisbane;
+    use serde_json::json;
     #[test]
     fn converts_source_time_into_local_deep_night_display() {
         let options = ScheduleDisplayOptions {
@@ -1496,5 +1647,56 @@ mod tests {
         assert_eq!(entries[0].broadcast_time.as_deref(), Some("21:00"));
         assert_eq!(entries[0].title_cn, "自称恶役千金的 婚约者观察记录");
         assert_eq!(entries[1].title_cn, "尖帽子的魔法工坊");
+    }
+
+    #[test]
+    fn installment_hint_prefers_second_cour_match() {
+        let entry = CatalogMatchRow {
+            id: 1,
+            title: "身为悲剧始作俑者的最强邪恶BOSS女王为民竭心尽力 第2期".to_owned(),
+            title_cn: "身为悲剧始作俑者的最强邪恶BOSS女王为民竭心尽力 第2期".to_owned(),
+            title_original: Some(
+                "悲劇の元凶となる最強外道ラスボス女王は民の為に尽くします 第2期".to_owned(),
+            ),
+        };
+        let season_one = sample_subject_named(
+            100,
+            "身为悲剧始作俑者的最强邪恶BOSS女王为民竭心尽力",
+            "悲劇の元凶となる最強外道ラスボス女王は民の為に尽くします",
+        );
+        let season_two = sample_subject_named(
+            101,
+            "身为悲剧始作俑者的最强邪恶BOSS女王为民竭心尽力 第2期",
+            "悲劇の元凶となる最強外道ラスボス女王は民の為に尽くします 第2期",
+        );
+
+        let score_one = score_subject_candidate(&season_one, &entry);
+        let score_two = score_subject_candidate(&season_two, &entry);
+
+        assert!(score_two > score_one, "season two score {score_two} should exceed season one score {score_one}");
+    }
+
+    fn sample_subject_named(id: i64, name_cn: &str, name: &str) -> SubjectRaw {
+        SubjectRaw {
+            id,
+            name: name.to_owned(),
+            name_cn: name_cn.to_owned(),
+            summary: String::new(),
+            date: None,
+            air_date: None,
+            air_weekday: None,
+            total_episodes: None,
+            images: Some(ImageSetRaw {
+                large: None,
+                common: None,
+                medium: None,
+            }),
+            tags: Vec::<TagRaw>::new(),
+            infobox: vec![InfoboxRaw {
+                key: "别名".to_owned(),
+                value: json!(name_cn),
+            }],
+            rating: Some(RatingRaw { score: Some(7.0) }),
+        }
     }
 }
