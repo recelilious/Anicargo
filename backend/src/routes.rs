@@ -31,11 +31,10 @@ use crate::{
     db,
     discovery::{
         ResourceDiscoveryCoordinator, candidate_priority_key, infer_part_hint_from_texts,
-        infer_season_hint_from_texts,
-        replacement_window_elapsed,
+        infer_season_hint_from_texts, replacement_window_elapsed,
     },
     downloads::{DownloadCoordinator, DownloadDemandInput, DownloadRuntimeSettings},
-    media, season_catalog,
+    media, season_catalog, subject_parts,
     telemetry::{self, RuntimeMetrics},
     types::{
         ActivateDownloadResponse, ActiveDownloadDto, ActiveDownloadsResponse,
@@ -1227,10 +1226,8 @@ async fn resolve_subject_search_profile(
                 "Resolved live Bangumi subject profile for resource discovery"
             );
 
-            let season_hint = infer_season_hint_from_texts([
-                subject.name.as_str(),
-                subject.name_cn.as_str(),
-            ]);
+            let season_hint =
+                infer_season_hint_from_texts([subject.name.as_str(), subject.name_cn.as_str()]);
             let part_hint =
                 infer_part_hint_from_texts([subject.name.as_str(), subject.name_cn.as_str()]);
             AnimeGardenSearchProfileWithStatus {
@@ -1731,7 +1728,15 @@ async fn apply_download_plan(
     let plan = if job.release_status == "airing" {
         build_airing_download_plan(&state.pool, job, policy, candidates, targets).await?
     } else {
-        build_completed_download_plan(&state.pool, job, policy, candidates, targets).await?
+        build_completed_download_plan(
+            &state.pool,
+            Some(&state.bangumi),
+            job,
+            policy,
+            candidates,
+            targets,
+        )
+        .await?
     };
 
     tracing::info!(
@@ -2063,6 +2068,7 @@ async fn build_airing_download_plan(
 
 async fn build_completed_download_plan(
     pool: &SqlitePool,
+    bangumi: Option<&BangumiClient>,
     job: &crate::types::DownloadJobDto,
     policy: &crate::types::PolicyDto,
     candidates: &[ResourceCandidateDto],
@@ -2091,17 +2097,79 @@ async fn build_completed_download_plan(
         .iter()
         .filter(|candidate| candidate.rejected_reason.is_none() && candidate.is_collection)
         .collect::<Vec<_>>();
+    let split_part_group = if collection_candidates.is_empty() {
+        None
+    } else {
+        match bangumi {
+            Some(bangumi) => match subject_parts::resolve_subject_part_group(
+                bangumi,
+                job.bangumi_subject_id,
+            )
+            .await
+            {
+                Ok(group) => group,
+                Err(error) => {
+                    tracing::warn!(
+                        job_id = job.id,
+                        subject_id = job.bangumi_subject_id,
+                        error = %error,
+                        "Failed to resolve split-part Bangumi group while planning completed-season downloads"
+                    );
+                    None
+                }
+            },
+            None => None,
+        }
+    };
 
     let already_has_any_media = availability
         .iter()
         .any(|item| item.status == "ready" || item.status == "partial");
     if !already_has_any_media && !missing_episodes.is_empty() && !collection_candidates.is_empty() {
-        let eligible_collection_candidates = ordered_slot_candidates(
-            &collection_candidates
+        if let Some(group) = split_part_group.as_ref() {
+            let grouped_collection_candidates = collection_candidates
                 .iter()
                 .copied()
-                .filter(|candidate| collection_matches_target_window(candidate, &missing_episodes))
-                .collect::<Vec<_>>(),
+                .filter(|candidate| {
+                    collection_matches_split_part_group_total(
+                        candidate,
+                        group,
+                        job.bangumi_subject_id,
+                        &missing_episodes,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let eligible_grouped_candidates = ordered_slot_candidates(
+                &grouped_collection_candidates,
+                &job.release_status,
+                preferred_fansub,
+            );
+            if !eligible_grouped_candidates.is_empty() {
+                tracing::info!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    missing_episodes = ?missing_episodes,
+                    candidate_id = eligible_grouped_candidates[0].id,
+                    title = %eligible_grouped_candidates[0].title,
+                    score = eligible_grouped_candidates[0].score,
+                    "Selected split-part completed-season collection candidate chain"
+                );
+                return Ok(DownloadPlan {
+                    candidate_chains: vec![eligible_grouped_candidates
+                        .into_iter()
+                        .map(|candidate| candidate.id)
+                        .collect()],
+                });
+            }
+        }
+
+        let direct_window_candidates = collection_candidates
+            .iter()
+            .copied()
+            .filter(|candidate| collection_matches_target_window(candidate, &missing_episodes))
+            .collect::<Vec<_>>();
+        let eligible_collection_candidates = ordered_slot_candidates(
+            &direct_window_candidates,
             &job.release_status,
             preferred_fansub,
         );
@@ -2118,6 +2186,41 @@ async fn build_completed_download_plan(
             return Ok(DownloadPlan {
                 candidate_chains: vec![
                     eligible_collection_candidates
+                        .into_iter()
+                        .map(|candidate| candidate.id)
+                        .collect(),
+                ],
+            });
+        }
+
+        let expanded_window_candidates = collection_candidates
+            .iter()
+            .copied()
+            .filter(|candidate| {
+                !direct_window_candidates
+                    .iter()
+                    .any(|exact| exact.id == candidate.id)
+                    && collection_matches_expanded_completed_window(candidate, &missing_episodes)
+            })
+            .collect::<Vec<_>>();
+        let eligible_expanded_candidates = ordered_slot_candidates(
+            &expanded_window_candidates,
+            &job.release_status,
+            preferred_fansub,
+        );
+        if !eligible_expanded_candidates.is_empty() {
+            tracing::info!(
+                job_id = job.id,
+                subject_id = job.bangumi_subject_id,
+                missing_episodes = ?missing_episodes,
+                candidate_id = eligible_expanded_candidates[0].id,
+                title = %eligible_expanded_candidates[0].title,
+                score = eligible_expanded_candidates[0].score,
+                "Selected expanded completed-season collection candidate chain"
+            );
+            return Ok(DownloadPlan {
+                candidate_chains: vec![
+                    eligible_expanded_candidates
                         .into_iter()
                         .map(|candidate| candidate.id)
                         .collect(),
@@ -2248,6 +2351,74 @@ fn collection_matches_target_window(candidate: &ResourceCandidateDto, targets: &
         .unwrap_or(end);
 
     start >= min_target - 1.0 && end <= max_target + 1.0
+}
+
+fn collection_matches_expanded_completed_window(
+    candidate: &ResourceCandidateDto,
+    targets: &[f64],
+) -> bool {
+    if !collection_covers_all_targets(candidate, targets) {
+        return false;
+    }
+
+    let Some(start) = candidate.episode_index else {
+        return false;
+    };
+    let end = candidate.episode_end_index.unwrap_or(start);
+    let min_target = targets
+        .iter()
+        .copied()
+        .min_by(|left, right| left.total_cmp(right))
+        .unwrap_or(start);
+    let max_target = targets
+        .iter()
+        .copied()
+        .max_by(|left, right| left.total_cmp(right))
+        .unwrap_or(end);
+    let target_span = max_target - min_target + 1.0;
+    let overshoot = end - max_target;
+
+    start >= min_target - 1.0
+        && target_span <= 13.0
+        && overshoot > 1.0
+        && overshoot <= 15.0
+}
+
+fn collection_matches_split_part_group_total(
+    candidate: &ResourceCandidateDto,
+    group: &subject_parts::SubjectPartGroup,
+    bangumi_subject_id: i64,
+    targets: &[f64],
+) -> bool {
+    if !collection_covers_all_targets(candidate, targets) {
+        return false;
+    }
+
+    let Some(start) = candidate.episode_index else {
+        return false;
+    };
+    let end = candidate.episode_end_index.unwrap_or(start);
+    let Some(current_segment) = subject_parts::current_segment(group, bangumi_subject_id) else {
+        return false;
+    };
+    let Some(first_segment) = subject_parts::first_segment(group) else {
+        return false;
+    };
+    let Some(last_segment) = subject_parts::last_segment(group) else {
+        return false;
+    };
+
+    let group_span = last_segment.global_end - first_segment.global_start + 1.0;
+    let current_span = current_segment.global_end - current_segment.global_start + 1.0;
+    if group_span <= current_span + 0.001 {
+        return false;
+    }
+
+    let span = end - start + 1.0;
+    start <= first_segment.global_start + 1.0
+        && end + 0.001 >= last_segment.global_end
+        && span + 0.001 >= group_span
+        && span <= group_span + 2.0
 }
 
 fn choose_latest_airing_candidates<'a>(
@@ -2734,6 +2905,9 @@ fn subject_search_aliases(subject: &SubjectRaw) -> Vec<String> {
     let mut aliases = Vec::new();
     push_subject_alias(&mut aliases, &subject.name);
     push_subject_alias(&mut aliases, &subject.name_cn);
+    for alias in subject_parts::collect_base_title_aliases(&subject.name, &subject.name_cn) {
+        push_subject_alias(&mut aliases, &alias);
+    }
 
     for item in &subject.infobox {
         if !is_alias_infobox_key(&item.key) {
@@ -2954,7 +3128,11 @@ fn format_runtime_duration(duration: std::time::Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{collection_matches_target_window, normalize_visible_active_downloads};
+    use super::{
+        collection_matches_split_part_group_total, collection_matches_target_window,
+        normalize_visible_active_downloads,
+    };
+    use crate::subject_parts::{SubjectPartGroup, SubjectPartSegment};
     use crate::types::{ActiveDownloadDto, ResourceCandidateDto};
 
     fn sample_collection_candidate(start: f64, end: f64) -> ResourceCandidateDto {
@@ -2997,6 +3175,48 @@ mod tests {
         assert!(collection_matches_target_window(
             &sample_collection_candidate(0.0, 11.0),
             &targets,
+        ));
+    }
+
+    #[test]
+    fn split_part_group_prefers_whole_season_pack() {
+        let group = SubjectPartGroup {
+            segments: vec![
+                SubjectPartSegment {
+                    bangumi_subject_id: 1,
+                    total_episodes: 11,
+                    part_index: 1,
+                    global_start: 1.0,
+                    global_end: 11.0,
+                },
+                SubjectPartSegment {
+                    bangumi_subject_id: 2,
+                    total_episodes: 12,
+                    part_index: 2,
+                    global_start: 12.0,
+                    global_end: 23.0,
+                },
+            ],
+        };
+        let part_two_targets = (1..=12).map(|value| value as f64).collect::<Vec<_>>();
+
+        assert!(collection_matches_split_part_group_total(
+            &sample_collection_candidate(1.0, 23.0),
+            &group,
+            2,
+            &part_two_targets,
+        ));
+        assert!(!collection_matches_split_part_group_total(
+            &sample_collection_candidate(1.0, 12.0),
+            &group,
+            2,
+            &part_two_targets,
+        ));
+        assert!(!collection_matches_split_part_group_total(
+            &sample_collection_candidate(1.0, 48.0),
+            &group,
+            2,
+            &part_two_targets,
         ));
     }
 

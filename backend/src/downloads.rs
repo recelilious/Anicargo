@@ -28,8 +28,10 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{
+    bangumi::BangumiClient,
     db,
     media::{ParsedReleaseSlot, scan_video_files},
+    subject_parts,
     types::{
         AppError, DownloadDecisionDto, DownloadExecutionDecisionDto, DownloadExecutionDto,
         DownloadJobDto, ResourceCandidateDto,
@@ -680,13 +682,19 @@ impl DownloadEngine for RqbitDownloadEngine {
 #[derive(Clone)]
 pub struct DownloadCoordinator {
     engine: Arc<dyn DownloadEngine>,
+    bangumi: Option<BangumiClient>,
     runtime_settings: Arc<RwLock<DownloadRuntimeSettings>>,
 }
 
 impl DownloadCoordinator {
-    pub fn new(engine: Arc<dyn DownloadEngine>, runtime_settings: DownloadRuntimeSettings) -> Self {
+    pub fn new(
+        engine: Arc<dyn DownloadEngine>,
+        runtime_settings: DownloadRuntimeSettings,
+        bangumi: Option<BangumiClient>,
+    ) -> Self {
         Self {
             engine,
+            bangumi,
             runtime_settings: Arc::new(RwLock::new(runtime_settings)),
         }
     }
@@ -1255,7 +1263,13 @@ impl DownloadCoordinator {
                     .await?;
 
                     if should_refresh_media_index(&execution, &snapshot.state) {
-                        sync_execution_media_inventory(pool, &execution, &snapshot.state).await?;
+                        sync_execution_media_inventory(
+                            pool,
+                            self.bangumi.as_ref(),
+                            &execution,
+                            &snapshot.state,
+                        )
+                        .await?;
                     }
 
                     if execution.state != snapshot.state {
@@ -1404,6 +1418,7 @@ fn build_engine_activate_request(
 
 async fn sync_execution_media_inventory(
     pool: &SqlitePool,
+    bangumi: Option<&BangumiClient>,
     execution: &DownloadExecutionDto,
     state: &str,
 ) -> Result<(), AppError> {
@@ -1428,29 +1443,200 @@ async fn sync_execution_media_inventory(
             );
             AppError::internal("failed to scan downloaded media files")
         })?;
+    let part_group = if execution.is_collection {
+        match bangumi {
+            Some(bangumi) => match subject_parts::resolve_subject_part_group(
+                bangumi,
+                execution.bangumi_subject_id,
+            )
+            .await
+            {
+                Ok(group) => group,
+                Err(error) => {
+                    warn!(
+                        execution_id = execution.id,
+                        subject_id = execution.bangumi_subject_id,
+                        error = %error,
+                        "Failed to resolve split-part Bangumi group for collection indexing; falling back to single-subject indexing"
+                    );
+                    None
+                }
+            },
+            None => None,
+        }
+    } else {
+        None
+    };
     let items = files
         .into_iter()
-        .map(|file| db::NewMediaInventoryItem {
-            bangumi_subject_id: execution.bangumi_subject_id,
-            download_job_id: execution.download_job_id,
-            download_execution_id: execution.id,
-            resource_candidate_id: execution.resource_candidate_id,
-            slot_key: file.slot_key,
-            relative_path: file.relative_path,
-            absolute_path: file.absolute_path,
-            file_name: file.file_name,
-            file_ext: file.file_ext,
-            size_bytes: file.size_bytes,
-            episode_index: file.episode_index,
-            episode_end_index: file.episode_end_index,
-            is_collection: file.is_collection,
-            status: status.to_owned(),
+        .flat_map(|file| {
+            map_inventory_items_for_file(execution, status, part_group.as_ref(), file)
         })
         .collect::<Vec<_>>();
 
     db::replace_media_inventory_for_execution(pool, execution.id, &items).await?;
     db::mark_download_execution_indexed(pool, execution.id).await?;
     Ok(())
+}
+
+fn map_inventory_items_for_file(
+    execution: &DownloadExecutionDto,
+    status: &str,
+    part_group: Option<&subject_parts::SubjectPartGroup>,
+    file: crate::media::IndexedMediaFile,
+) -> Vec<db::NewMediaInventoryItem> {
+    let Some(part_group) = part_group else {
+        return vec![new_inventory_item(
+            execution,
+            status,
+            execution.bangumi_subject_id,
+            file.slot_key.clone(),
+            file.episode_index,
+            file.episode_end_index,
+            file.is_collection,
+            &file,
+        )];
+    };
+
+    let Some(current_segment) = subject_parts::current_segment(part_group, execution.bangumi_subject_id)
+    else {
+        return vec![new_inventory_item(
+            execution,
+            status,
+            execution.bangumi_subject_id,
+            file.slot_key.clone(),
+            file.episode_index,
+            file.episode_end_index,
+            file.is_collection,
+            &file,
+        )];
+    };
+
+    let spans_multiple_parts = execution
+        .episode_end_index
+        .unwrap_or(execution.episode_index.unwrap_or_default())
+        > current_segment.total_episodes as f64 + 1.0;
+    if !spans_multiple_parts {
+        return vec![new_inventory_item(
+            execution,
+            status,
+            execution.bangumi_subject_id,
+            file.slot_key.clone(),
+            file.episode_index,
+            file.episode_end_index,
+            file.is_collection,
+            &file,
+        )];
+    }
+
+    match (file.episode_index, file.episode_end_index, file.is_collection) {
+        (Some(start), Some(end), true) => {
+            let mappings = subject_parts::map_global_range_to_segments(part_group, start, end);
+            if mappings.is_empty() {
+                return vec![new_inventory_item(
+                    execution,
+                    status,
+                    execution.bangumi_subject_id,
+                    file.slot_key.clone(),
+                    file.episode_index,
+                    file.episode_end_index,
+                    file.is_collection,
+                    &file,
+                )];
+            }
+
+            mappings
+                .into_iter()
+                .map(|(subject_id, local_start, local_end)| {
+                    new_inventory_item(
+                        execution,
+                        status,
+                        subject_id,
+                        format!(
+                            "batch:{}-{}",
+                            format_inventory_episode(local_start),
+                            format_inventory_episode(local_end)
+                        ),
+                        Some(local_start),
+                        Some(local_end),
+                        true,
+                        &file,
+                    )
+                })
+                .collect()
+        }
+        (Some(episode), _, false) => subject_parts::map_global_episode_to_segment(part_group, episode)
+            .map(|(subject_id, local_episode)| {
+                vec![new_inventory_item(
+                    execution,
+                    status,
+                    subject_id,
+                    format!("episode:{}", format_inventory_episode(local_episode)),
+                    Some(local_episode),
+                    Some(local_episode),
+                    false,
+                    &file,
+                )]
+            })
+            .unwrap_or_else(|| {
+                vec![new_inventory_item(
+                    execution,
+                    status,
+                    execution.bangumi_subject_id,
+                    file.slot_key.clone(),
+                    file.episode_index,
+                    file.episode_end_index,
+                    file.is_collection,
+                    &file,
+                )]
+            }),
+        _ => vec![new_inventory_item(
+            execution,
+            status,
+            execution.bangumi_subject_id,
+            file.slot_key.clone(),
+            file.episode_index,
+            file.episode_end_index,
+            file.is_collection,
+            &file,
+        )],
+    }
+}
+
+fn new_inventory_item(
+    execution: &DownloadExecutionDto,
+    status: &str,
+    bangumi_subject_id: i64,
+    slot_key: String,
+    episode_index: Option<f64>,
+    episode_end_index: Option<f64>,
+    is_collection: bool,
+    file: &crate::media::IndexedMediaFile,
+) -> db::NewMediaInventoryItem {
+    db::NewMediaInventoryItem {
+        bangumi_subject_id,
+        download_job_id: execution.download_job_id,
+        download_execution_id: execution.id,
+        resource_candidate_id: execution.resource_candidate_id,
+        slot_key,
+        relative_path: file.relative_path.clone(),
+        absolute_path: file.absolute_path.clone(),
+        file_name: file.file_name.clone(),
+        file_ext: file.file_ext.clone(),
+        size_bytes: file.size_bytes,
+        episode_index,
+        episode_end_index,
+        is_collection,
+        status: status.to_owned(),
+    }
+}
+
+fn format_inventory_episode(value: f64) -> String {
+    if (value.fract()).abs() < 0.001 {
+        format!("{}", value.round() as i64)
+    } else {
+        format!("{value:.1}")
+    }
 }
 
 fn should_queue_job(subscription_count: i64, threshold: i64, force: bool) -> bool {

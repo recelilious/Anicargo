@@ -10,6 +10,7 @@ mod logcodec;
 mod media;
 mod routes;
 mod season_catalog;
+mod subject_parts;
 mod telemetry;
 mod types;
 mod yuc;
@@ -76,7 +77,11 @@ async fn main() -> anyhow::Result<()> {
     let download_engine = build_download_engine(&config, downloader_service.clone())
         .await
         .context("failed to initialize download engine")?;
-    let downloads = DownloadCoordinator::new(download_engine, download_runtime_settings);
+    let downloads = DownloadCoordinator::new(
+        download_engine,
+        download_runtime_settings,
+        Some(bangumi.clone()),
+    );
     downloads
         .apply_runtime_settings(download_runtime_settings)
         .await
