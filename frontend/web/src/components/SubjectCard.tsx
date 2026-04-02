@@ -266,7 +266,7 @@ function extractCatalogTiming(label: string | null) {
 function resolveMeta(subject: SubjectCardModel, variant: SubjectCardMetaVariant) {
   if (variant === "schedule") {
     return {
-      left: inferTypeLabel(subject),
+      left: subject.ratingScore == null ? null : subject.ratingScore.toFixed(1),
       right: subject.broadcastTime?.trim() || null,
       rating: null as string | null,
     };
