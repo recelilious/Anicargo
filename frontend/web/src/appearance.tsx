@@ -3,6 +3,48 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { anicargoThemes, type ResolvedAppearance, type ThemePreference } from "./theme";
 
 const APPEARANCE_KEY = "anicargo.theme_preference";
+const FAVICON_ID = "anicargo-favicon";
+
+function buildFaviconHref(color: string) {
+  const svg = `
+    <svg viewBox="0 0 481 600" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <g clip-path="url(#anicargo-favicon-clip)">
+        <circle cx="164.5" cy="435.5" r="130" stroke="${color}" stroke-width="69" />
+        <rect x="280.707" y="317" width="60" height="158.344" transform="rotate(55 280.707 317)" fill="${color}" />
+        <rect x="11" y="34.4146" width="60" height="732.555" transform="rotate(-35 11 34.4146)" fill="${color}" />
+        <rect width="60" height="600" fill="${color}" />
+      </g>
+      <defs>
+        <clipPath id="anicargo-favicon-clip">
+          <rect width="481" height="600" fill="white" />
+        </clipPath>
+      </defs>
+    </svg>
+  `;
+
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+function upsertFavicon(href: string) {
+  const existing =
+    (document.getElementById(FAVICON_ID) as HTMLLinkElement | null) ??
+    (document.querySelector('link[rel~="icon"]') as HTMLLinkElement | null);
+  const link =
+    existing ??
+    (() => {
+      const created = document.createElement("link");
+      created.id = FAVICON_ID;
+      created.rel = "icon";
+      created.type = "image/svg+xml";
+      document.head.appendChild(created);
+      return created;
+    })();
+
+  link.id = FAVICON_ID;
+  link.rel = "icon";
+  link.type = "image/svg+xml";
+  link.href = href;
+}
 
 type AppearanceContextValue = {
   themePreference: ThemePreference;
@@ -88,6 +130,11 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     document.documentElement.dataset.theme = resolvedAppearance;
     document.documentElement.style.colorScheme = resolvedAppearance;
+  }, [resolvedAppearance]);
+
+  useEffect(() => {
+    const faviconColor = resolvedAppearance === "dark" ? "#B7C7D9" : "#4B2C23";
+    upsertFavicon(buildFaviconHref(faviconColor));
   }, [resolvedAppearance]);
 
   const value: AppearanceContextValue = {
