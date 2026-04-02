@@ -30,7 +30,8 @@ use crate::{
     config::AppConfig,
     db,
     discovery::{
-        ResourceDiscoveryCoordinator, candidate_priority_key, infer_season_hint_from_texts,
+        ResourceDiscoveryCoordinator, candidate_priority_key, infer_part_hint_from_texts,
+        infer_season_hint_from_texts,
         replacement_window_elapsed,
     },
     downloads::{DownloadCoordinator, DownloadDemandInput, DownloadRuntimeSettings},
@@ -1226,16 +1227,21 @@ async fn resolve_subject_search_profile(
                 "Resolved live Bangumi subject profile for resource discovery"
             );
 
+            let season_hint = infer_season_hint_from_texts([
+                subject.name.as_str(),
+                subject.name_cn.as_str(),
+            ]);
+            let part_hint =
+                infer_part_hint_from_texts([subject.name.as_str(), subject.name_cn.as_str()]);
             AnimeGardenSearchProfileWithStatus {
                 bangumi_subject_id: subject_id,
                 title: subject.name.clone(),
                 title_cn: subject.name_cn.clone(),
                 aliases: subject_search_aliases(&subject),
                 release_status,
-                season_hint: infer_season_hint_from_texts([
-                    subject.name.as_str(),
-                    subject.name_cn.as_str(),
-                ]),
+                season_hint,
+                installment_hint: Some(season_hint.unwrap_or(1)),
+                part_hint,
             }
         }
         Err(error) => {
@@ -1249,6 +1255,8 @@ async fn resolve_subject_search_profile(
             if let Some(cached) = cached {
                 let season_hint =
                     infer_season_hint_from_texts([cached.title.as_str(), cached.title_cn.as_str()]);
+                let part_hint =
+                    infer_part_hint_from_texts([cached.title.as_str(), cached.title_cn.as_str()]);
                 tracing::info!(
                     subject_id,
                     release_status = %cached.release_status,
@@ -1261,6 +1269,8 @@ async fn resolve_subject_search_profile(
                     aliases: Vec::new(),
                     release_status: cached.release_status,
                     season_hint,
+                    installment_hint: Some(season_hint.unwrap_or(1)),
+                    part_hint,
                 };
             }
 
@@ -1271,6 +1281,8 @@ async fn resolve_subject_search_profile(
                 aliases: Vec::new(),
                 release_status: "completed".to_owned(),
                 season_hint: None,
+                installment_hint: None,
+                part_hint: None,
             }
         }
     }
@@ -2700,6 +2712,8 @@ struct AnimeGardenSearchProfileWithStatus {
     aliases: Vec<String>,
     release_status: String,
     season_hint: Option<i64>,
+    installment_hint: Option<i64>,
+    part_hint: Option<i64>,
 }
 
 impl AnimeGardenSearchProfileWithStatus {
@@ -2710,6 +2724,8 @@ impl AnimeGardenSearchProfileWithStatus {
             title_cn: self.title_cn.clone(),
             aliases: self.aliases.clone(),
             season_hint: self.season_hint,
+            installment_hint: self.installment_hint,
+            part_hint: self.part_hint,
         }
     }
 }

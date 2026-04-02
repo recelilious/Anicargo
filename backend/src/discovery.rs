@@ -81,6 +81,7 @@ impl ResourceDiscoveryCoordinator {
                     &format!("targeted:{}", strategy_parts.join(" || ")),
                     filtered_broad_resources,
                     policy,
+                    profile,
                     None,
                 )
                 .await;
@@ -179,6 +180,7 @@ impl ResourceDiscoveryCoordinator {
             &strategy,
             resources,
             policy,
+            profile,
             discovery_note.as_deref(),
         )
         .await
@@ -234,6 +236,7 @@ async fn store_discovered_candidates(
     strategy: &str,
     resources: Vec<NormalizedAnimeGardenResource>,
     policy: &PolicyDto,
+    profile: &AnimeGardenSearchProfile,
     discovery_note: Option<&str>,
 ) -> Result<Vec<ResourceCandidateDto>, AppError> {
     info!(
@@ -259,6 +262,7 @@ async fn store_discovered_candidates(
             previous_selected.as_ref(),
             policy,
             &job.release_status,
+            profile,
         );
         let candidate = db::create_resource_candidate(
             pool,
@@ -843,11 +847,46 @@ fn evaluate_candidate(
     previous_selected: Option<&ResourceCandidateDto>,
     policy: &PolicyDto,
     release_status: &str,
+    profile: &AnimeGardenSearchProfile,
 ) -> CandidateEvaluation {
     let resolution = extract_resolution(resource);
     let locale_hint = detect_locale_hint(resource);
     let is_raw = detect_raw(resource, locale_hint.as_deref());
     let normalized_fansub = resource.fansub_name.as_deref().map(normalize_name);
+
+    if let Some(expected_installment) = profile.installment_hint {
+        if let Some(actual_installment) = resource.parsed_season_number {
+            if actual_installment != expected_installment {
+                return CandidateEvaluation {
+                    score: -1000.0,
+                    resolution,
+                    locale_hint,
+                    is_raw,
+                    rejected_reason: Some(format!(
+                        "installment mismatch: expected {}, got {}",
+                        expected_installment, actual_installment
+                    )),
+                };
+            }
+        }
+    }
+
+    if let Some(expected_part) = profile.part_hint {
+        if let Some(actual_part) = resource.parsed_part_number {
+            if actual_part != expected_part {
+                return CandidateEvaluation {
+                    score: -1000.0,
+                    resolution,
+                    locale_hint,
+                    is_raw,
+                    rejected_reason: Some(format!(
+                        "part mismatch: expected {}, got {}",
+                        expected_part, actual_part
+                    )),
+                };
+            }
+        }
+    }
 
     if let Some(rule) = rules.iter().find(|rule| {
         normalized_fansub
@@ -1041,12 +1080,35 @@ pub(crate) fn infer_season_hint_from_texts<'a>(
         .max()
 }
 
+pub(crate) fn infer_part_hint_from_texts<'a>(
+    values: impl IntoIterator<Item = &'a str>,
+) -> Option<i64> {
+    values.into_iter().filter_map(infer_part_hint_from_text).max()
+}
+
 fn infer_season_hint_from_text(value: &str) -> Option<i64> {
     for regex in [
         season_suffix_regex(),
         japanese_season_regex(),
         english_season_regex(),
     ] {
+        if let Some(captures) = regex.captures(value) {
+            for index in 1..captures.len() {
+                let Some(group) = captures.get(index) else {
+                    continue;
+                };
+                if let Some(parsed) = parse_season_capture(group.as_str()) {
+                    return Some(parsed);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn infer_part_hint_from_text(value: &str) -> Option<i64> {
+    for regex in [part_suffix_regex(), chinese_part_regex()] {
         if let Some(captures) = regex.captures(value) {
             for index in 1..captures.len() {
                 let Some(group) = captures.get(index) else {
@@ -1114,11 +1176,26 @@ fn season_suffix_regex() -> &'static Regex {
     })
 }
 
+fn part_suffix_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r"(?i)\bPart\s*([0-9]{1,2})\b").expect("valid part suffix regex")
+    })
+}
+
 fn japanese_season_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
         Regex::new(r"第\s*([0-9]{1,2}|[一二三四五六七八九十两兩]+)\s*[季期]")
             .expect("valid japanese season regex")
+    })
+}
+
+fn chinese_part_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r"第\s*([0-9]{1,2}|[一二三四五六七八九十两]+)\s*部分")
+            .expect("valid chinese part regex")
     })
 }
 
@@ -1182,6 +1259,8 @@ mod tests {
             title_cn: "【我推的孩子】 第三季".to_owned(),
             aliases: Vec::new(),
             season_hint: Some(3),
+            installment_hint: Some(3),
+            part_hint: None,
         };
         let resources = vec![
             sample_resource(
@@ -1235,6 +1314,8 @@ mod tests {
             title_cn: "That Time I Got Reincarnated as a Slime Season 2 Part 2".to_owned(),
             aliases: Vec::new(),
             season_hint: Some(2),
+            installment_hint: Some(2),
+            part_hint: Some(2),
         };
         let normalized = normalize_resource_release_slots(
             vec![sample_collection_resource(
@@ -1261,6 +1342,8 @@ mod tests {
             title_cn: "【我推的孩子】 第三季".to_owned(),
             aliases: Vec::new(),
             season_hint: Some(3),
+            installment_hint: Some(3),
+            part_hint: None,
         };
         let normalized = normalize_resource_release_slots(
             vec![sample_collection_resource(
@@ -1317,6 +1400,7 @@ mod tests {
                 is_collection: false,
             },
             parsed_season_number,
+            parsed_part_number: None,
             parsed_resolution: Some("1080P".to_owned()),
             parsed_language: None,
             parsed_subtitles: None,
@@ -1351,6 +1435,7 @@ mod tests {
                 is_collection: true,
             },
             parsed_season_number,
+            parsed_part_number: None,
             parsed_resolution: Some("1080P".to_owned()),
             parsed_language: None,
             parsed_subtitles: None,

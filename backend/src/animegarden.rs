@@ -28,6 +28,8 @@ pub struct AnimeGardenSearchProfile {
     pub title_cn: String,
     pub aliases: Vec<String>,
     pub season_hint: Option<i64>,
+    pub installment_hint: Option<i64>,
+    pub part_hint: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +55,7 @@ pub struct AnimeGardenResource {
     pub parser_release_slot: Option<ParsedReleaseSlot>,
     pub merged_release_slot: ParsedReleaseSlot,
     pub parsed_season_number: Option<i64>,
+    pub parsed_part_number: Option<i64>,
     pub parsed_resolution: Option<String>,
     pub parsed_language: Option<String>,
     pub parsed_subtitles: Option<String>,
@@ -84,6 +87,8 @@ impl AnimeGardenClient {
             title_cn = %profile.title_cn,
             aliases = ?profile.aliases,
             season_hint = ?profile.season_hint,
+            installment_hint = ?profile.installment_hint,
+            part_hint = ?profile.part_hint,
             search_terms = ?search_terms,
             "Starting AnimeGarden discovery"
         );
@@ -750,6 +755,9 @@ impl From<ResourceRaw> for AnimeGardenResource {
                     .as_ref()
                     .and_then(|parsed| parsed.season.as_ref().map(|season| season.number))
             });
+        let parsed_part_number = manual_parse
+            .as_ref()
+            .and_then(|parsed| parsed.season.as_ref().and_then(|season| season.part));
         let parsed_resolution = value
             .metadata
             .as_ref()
@@ -802,6 +810,7 @@ impl From<ResourceRaw> for AnimeGardenResource {
             parser_release_slot,
             merged_release_slot,
             parsed_season_number,
+            parsed_part_number,
             parsed_resolution,
             parsed_language,
             parsed_subtitles,
