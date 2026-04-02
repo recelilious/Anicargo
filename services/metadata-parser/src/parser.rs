@@ -123,7 +123,8 @@ fn detect_file_role(extension: &str) -> FileRole {
         "ass" | "ssa" | "srt" | "sup" => FileRole::Subtitle,
         "ttf" | "otf" | "woff" | "woff2" => FileRole::FontPack,
         "7z" | "zip" | "rar" => FileRole::Archive,
-        "flac" | "aac" | "mka" | "wav" => FileRole::Audio,
+        "flac" | "aac" | "mka" | "wav" | "mp3" | "m4a" | "ogg" | "opus" => FileRole::Audio,
+        "epub" | "pdf" | "txt" | "cbz" | "cbr" => FileRole::Other,
         _ => FileRole::Other,
     }
 }
@@ -1041,6 +1042,28 @@ mod tests {
         assert_eq!(parsed.file.role, Some(FileRole::Subtitle));
         assert_eq!(parsed.file.extension.as_deref(), Some("ass"));
         assert_eq!(parsed.subtitles.languages, vec!["zh-Hans"]);
+    }
+
+    #[test]
+    fn detects_audio_release_extension_from_title() {
+        let parsed = parse_release_name(
+            "[2021] TVアニメ『無職転生～異世界行ったら本気だす～』OPテーマ [MP3 320K].mp3",
+        );
+
+        print_case("audio_release_extension", &parsed);
+        assert_eq!(parsed.file.role, Some(FileRole::Audio));
+        assert_eq!(parsed.file.extension.as_deref(), Some("mp3"));
+    }
+
+    #[test]
+    fn detects_epub_release_extension_from_title() {
+        let parsed = parse_release_name(
+            "(Novel)[理不尽な孫の手] 無職転生 ～異世界行ったら本気だす～ 第1 - 25巻 epub.epub",
+        );
+
+        print_case("epub_release_extension", &parsed);
+        assert_eq!(parsed.file.role, Some(FileRole::Other));
+        assert_eq!(parsed.file.extension.as_deref(), Some("epub"));
     }
 
     #[test]

@@ -3,6 +3,7 @@ use std::{
     sync::OnceLock,
 };
 
+use anicargo_metadata_parser::FileRole;
 use chrono::{DateTime, Duration, Utc};
 use regex::Regex;
 use sqlx::SqlitePool;
@@ -854,6 +855,16 @@ fn evaluate_candidate(
     let is_raw = detect_raw(resource, locale_hint.as_deref());
     let normalized_fansub = resource.fansub_name.as_deref().map(normalize_name);
 
+    if let Some(reason) = detect_non_video_candidate(resource, resolution.as_deref()) {
+        return CandidateEvaluation {
+            score: -1000.0,
+            resolution,
+            locale_hint,
+            is_raw,
+            rejected_reason: Some(reason),
+        };
+    }
+
     if let Some(expected_installment) = profile.installment_hint {
         if let Some(actual_installment) = resource.parsed_season_number {
             if actual_installment != expected_installment {
@@ -975,6 +986,95 @@ fn evaluate_candidate(
     }
 }
 
+fn detect_non_video_candidate(
+    resource: &AnimeGardenResource,
+    resolution: Option<&str>,
+) -> Option<String> {
+    let release_type = resource.release_type.trim();
+    if matches!(
+        release_type,
+        "音乐" | "漫畫" | "漫画" | "游戏" | "遊戲" | "日剧" | "日劇" | "小说" | "小說"
+    ) {
+        return Some(format!("non-video release type: {release_type}"));
+    }
+
+    if let Some(role) = resource.parsed_file_role {
+        match role {
+            FileRole::Subtitle => {
+                return Some("non-video resource: subtitle file".to_owned());
+            }
+            FileRole::FontPack => {
+                return Some("non-video resource: font pack".to_owned());
+            }
+            FileRole::Archive => {
+                return Some("non-video resource: archive package".to_owned());
+            }
+            FileRole::Audio => {
+                return Some("non-video resource: audio release".to_owned());
+            }
+            FileRole::Other => {
+                let lower = resource.title.to_lowercase();
+                if ["epub", "pdf", "txt", "novel", "小说", "小說", "巻 epub"]
+                    .iter()
+                    .any(|term| lower.contains(term))
+                {
+                    return Some("non-video resource: ebook or text release".to_owned());
+                }
+            }
+            FileRole::Video => {}
+        }
+    }
+
+    let lower = resource.title.to_lowercase();
+    if [
+        "epub", "novel", "小说", "小說", " txt", ".txt", ".pdf", "pdf ",
+    ]
+    .iter()
+    .any(|term| lower.contains(term))
+    {
+        return Some("non-video resource: ebook or text release".to_owned());
+    }
+
+    let has_video_signal = resolution.is_some()
+        || lower.contains("1080p")
+        || lower.contains("2160p")
+        || lower.contains("720p")
+        || lower.contains("webrip")
+        || lower.contains("bdrip")
+        || lower.contains("bluray")
+        || lower.contains("hevc")
+        || lower.contains("avc")
+        || lower.contains("x264")
+        || lower.contains("x265")
+        || lower.contains("web-dl")
+        || lower.contains("mkv")
+        || lower.contains("mp4");
+
+    let looks_audio_only = [
+        "ost",
+        "サウンドトラック",
+        "soundtrack",
+        "主题歌",
+        "主題歌",
+        "op ",
+        " ed",
+        "drama cd",
+        "character song",
+        "mp3",
+        "flac",
+        "320k",
+        "hi-res",
+    ]
+    .iter()
+    .any(|term| lower.contains(term));
+
+    if looks_audio_only && !has_video_signal {
+        return Some("non-video resource: audio-only release".to_owned());
+    }
+
+    None
+}
+
 fn locale_preference_bonus(preference: &str, locale_hint: Option<&str>, is_raw: bool) -> f64 {
     let preference = preference.to_lowercase();
 
@@ -1083,7 +1183,10 @@ pub(crate) fn infer_season_hint_from_texts<'a>(
 pub(crate) fn infer_part_hint_from_texts<'a>(
     values: impl IntoIterator<Item = &'a str>,
 ) -> Option<i64> {
-    values.into_iter().filter_map(infer_part_hint_from_text).max()
+    values
+        .into_iter()
+        .filter_map(infer_part_hint_from_text)
+        .max()
 }
 
 fn infer_season_hint_from_text(value: &str) -> Option<i64> {
@@ -1232,11 +1335,15 @@ pub(crate) fn replacement_window_elapsed(selection_updated_at: Option<&str>, hou
 
 #[cfg(test)]
 mod tests {
+    use anicargo_metadata_parser::FileRole;
+
     use super::{
-        infer_season_hint_from_texts, normalize_resource_release_slots, replacement_window_elapsed,
+        detect_non_video_candidate, evaluate_candidate, infer_season_hint_from_texts,
+        normalize_resource_release_slots, replacement_window_elapsed,
     };
     use crate::animegarden::{AnimeGardenResource, AnimeGardenSearchProfile};
     use crate::media::ParsedReleaseSlot;
+    use crate::types::{FansubRuleDto, PolicyDto};
     use chrono::{Duration, Utc};
 
     #[test]
@@ -1363,6 +1470,102 @@ mod tests {
     }
 
     #[test]
+    fn rejects_music_resource_candidates_as_non_video() {
+        let resource = AnimeGardenResource {
+            provider: "dmhy".to_owned(),
+            provider_id: "music".to_owned(),
+            title: "[2021] TVアニメ「無職転生」OPテーマ [MP3 320K].mp3".to_owned(),
+            href: String::new(),
+            release_type: "音乐".to_owned(),
+            magnet: String::new(),
+            size: 0,
+            created_at: "2026-01-01T00:00:00Z".to_owned(),
+            fetched_at: "2026-01-01T00:00:00Z".to_owned(),
+            fansub_name: None,
+            publisher_name: String::new(),
+            api_release_slot: None,
+            parser_release_slot: None,
+            merged_release_slot: ParsedReleaseSlot {
+                slot_key: "episode:2".to_owned(),
+                episode_index: Some(2.0),
+                episode_end_index: Some(2.0),
+                is_collection: false,
+            },
+            parsed_season_number: Some(1),
+            parsed_part_number: None,
+            parsed_file_role: Some(FileRole::Audio),
+            parsed_resolution: None,
+            parsed_language: None,
+            parsed_subtitles: None,
+        };
+        let profile = AnimeGardenSearchProfile {
+            bangumi_subject_id: 1,
+            title: "sample".to_owned(),
+            title_cn: "sample".to_owned(),
+            aliases: Vec::new(),
+            season_hint: Some(1),
+            installment_hint: Some(1),
+            part_hint: None,
+        };
+        let evaluation = evaluate_candidate(
+            &resource,
+            &Vec::<FansubRuleDto>::new(),
+            None,
+            &PolicyDto {
+                subscription_threshold: 1,
+                replacement_window_hours: 72,
+                prefer_same_fansub: true,
+                max_concurrent_downloads: 5,
+                upload_limit_mb: 0,
+                download_limit_mb: 5,
+            },
+            "completed",
+            &profile,
+        );
+        assert_eq!(
+            evaluation.rejected_reason.as_deref(),
+            Some("non-video release type: 音乐")
+        );
+    }
+
+    #[test]
+    fn rejects_epub_candidates_as_non_video() {
+        let resource = AnimeGardenResource {
+            provider: "dmhy".to_owned(),
+            provider_id: "epub".to_owned(),
+            title:
+                "(Novel)[理不尽な孫の手] 無職転生 ～異世界行ったら本気だす～ 第1 - 25巻 epub.epub"
+                    .to_owned(),
+            href: String::new(),
+            release_type: "RAW".to_owned(),
+            magnet: String::new(),
+            size: 0,
+            created_at: "2026-01-01T00:00:00Z".to_owned(),
+            fetched_at: "2026-01-01T00:00:00Z".to_owned(),
+            fansub_name: None,
+            publisher_name: String::new(),
+            api_release_slot: None,
+            parser_release_slot: None,
+            merged_release_slot: ParsedReleaseSlot {
+                slot_key: "batch:1-25".to_owned(),
+                episode_index: Some(1.0),
+                episode_end_index: Some(25.0),
+                is_collection: true,
+            },
+            parsed_season_number: Some(1),
+            parsed_part_number: None,
+            parsed_file_role: Some(FileRole::Other),
+            parsed_resolution: None,
+            parsed_language: None,
+            parsed_subtitles: None,
+        };
+        assert_eq!(
+            detect_non_video_candidate(&resource, None).as_deref(),
+            Some("non-video resource: ebook or text release")
+        );
+    }
+
+    #[test]
     fn replacement_window_opens_only_after_deadline() {
         let recent = (Utc::now() - Duration::hours(24)).to_rfc3339();
         let expired = (Utc::now() - Duration::hours(96)).to_rfc3339();
@@ -1401,6 +1604,7 @@ mod tests {
             },
             parsed_season_number,
             parsed_part_number: None,
+            parsed_file_role: Some(FileRole::Video),
             parsed_resolution: Some("1080P".to_owned()),
             parsed_language: None,
             parsed_subtitles: None,
@@ -1436,6 +1640,7 @@ mod tests {
             },
             parsed_season_number,
             parsed_part_number: None,
+            parsed_file_role: Some(FileRole::Video),
             parsed_resolution: Some("1080P".to_owned()),
             parsed_language: None,
             parsed_subtitles: None,

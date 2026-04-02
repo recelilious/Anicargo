@@ -1,6 +1,6 @@
 use std::{collections::HashSet, time::Duration};
 
-use anicargo_metadata_parser::{ParseResult, parse_release_name};
+use anicargo_metadata_parser::{FileRole, ParseResult, parse_release_name};
 use anyhow::Context;
 use reqwest::{Client, StatusCode};
 use serde::Deserialize;
@@ -56,6 +56,7 @@ pub struct AnimeGardenResource {
     pub merged_release_slot: ParsedReleaseSlot,
     pub parsed_season_number: Option<i64>,
     pub parsed_part_number: Option<i64>,
+    pub parsed_file_role: Option<FileRole>,
     pub parsed_resolution: Option<String>,
     pub parsed_language: Option<String>,
     pub parsed_subtitles: Option<String>,
@@ -758,6 +759,13 @@ impl From<ResourceRaw> for AnimeGardenResource {
         let parsed_part_number = manual_parse
             .as_ref()
             .and_then(|parsed| parsed.season.as_ref().and_then(|season| season.part));
+        let parsed_file_role = value
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.anipar.as_ref())
+            .and_then(|parsed| parsed.file.as_ref())
+            .and_then(|file| file.video.as_ref().map(|_| FileRole::Video))
+            .or_else(|| manual_parse.as_ref().and_then(|parsed| parsed.file.role));
         let parsed_resolution = value
             .metadata
             .as_ref()
@@ -811,6 +819,7 @@ impl From<ResourceRaw> for AnimeGardenResource {
             merged_release_slot,
             parsed_season_number,
             parsed_part_number,
+            parsed_file_role,
             parsed_resolution,
             parsed_language,
             parsed_subtitles,
