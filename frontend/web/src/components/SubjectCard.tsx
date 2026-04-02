@@ -284,7 +284,7 @@ function resolveMeta(subject: SubjectCardModel, variant: SubjectCardMetaVariant)
     return {
       left: extractCatalogYear(subject.airDate),
       right: subject.catalogLabel?.trim() || null,
-      rating: null as string | null,
+      rating: formatRating(subject.ratingScore),
     };
   }
 
