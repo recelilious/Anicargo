@@ -48,8 +48,10 @@ const TASK_SESSION_RESUME_TIMEOUT_SECS: u64 = 20;
 const TASK_SESSION_PAUSE_TIMEOUT_SECS: u64 = 8;
 const TASK_TIMEOUT_PRIORITY_BUMP: u32 = 5;
 const TASK_PRIORITY_MAX: u32 = 1023;
-const STRICT_LIMIT_HEADROOM_RATIO: f64 = 0.94;
-const STRICT_LIMIT_RECOVERY_RATIO: f64 = 0.92;
+const STRICT_LIMIT_HEADROOM_RATIO_HIGH: f64 = 0.94;
+const STRICT_LIMIT_HEADROOM_RATIO_MEDIUM: f64 = 0.85;
+const STRICT_LIMIT_HEADROOM_RATIO_LOW: f64 = 0.72;
+const STRICT_LIMIT_RECOVERY_RATIO: f64 = 0.85;
 
 #[derive(Clone)]
 pub struct DownloaderService {
@@ -1720,7 +1722,15 @@ fn bytes_per_second_to_mb_per_second(value: u64) -> f64 {
 }
 
 fn apply_strict_limit_headroom(limit_bps: u64) -> u64 {
-    ((limit_bps as f64) * STRICT_LIMIT_HEADROOM_RATIO)
+    let one_mebibyte = 1024 * 1024;
+    let ratio = if limit_bps <= 2 * one_mebibyte {
+        STRICT_LIMIT_HEADROOM_RATIO_LOW
+    } else if limit_bps <= 5 * one_mebibyte {
+        STRICT_LIMIT_HEADROOM_RATIO_MEDIUM
+    } else {
+        STRICT_LIMIT_HEADROOM_RATIO_HIGH
+    };
+    ((limit_bps as f64) * ratio)
         .round()
         .max(0.0) as u64
 }
@@ -1992,6 +2002,14 @@ mod tests {
             .sum::<u64>();
 
         assert!(combined < apply_strict_limit_headroom(5 * 1024 * 1024));
+    }
+
+    #[test]
+    fn low_bandwidth_limits_apply_extra_headroom() {
+        let one_mebibyte = 1024 * 1024;
+        let limited = apply_strict_limit_headroom(one_mebibyte);
+        assert!(limited <= ((one_mebibyte as f64) * 0.72).round() as u64);
+        assert!(limited < one_mebibyte);
     }
 
     #[test]
