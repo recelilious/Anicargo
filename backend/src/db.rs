@@ -2305,6 +2305,63 @@ pub async fn list_active_selected_candidates_for_subjects(
     Ok(rows.into_iter().map(map_resource_candidate).collect())
 }
 
+pub async fn list_open_download_jobs_for_subjects(
+    pool: &SqlitePool,
+    subject_ids: &[i64],
+    exclude_download_job_id: Option<i64>,
+) -> Result<Vec<DownloadJobDto>, AppError> {
+    if subject_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut query = QueryBuilder::new(
+        "SELECT
+            id,
+            bangumi_subject_id,
+            trigger_kind,
+            requested_by,
+            release_status,
+            season_mode,
+            lifecycle,
+            subscription_count,
+            threshold_snapshot,
+            engine_name,
+            engine_job_ref,
+            notes,
+            selected_candidate_id,
+            selection_updated_at,
+            last_search_run_id,
+            search_status,
+            created_at,
+            updated_at
+         FROM download_jobs
+         WHERE bangumi_subject_id IN (",
+    );
+    {
+        let mut separated = query.separated(", ");
+        for subject_id in subject_ids {
+            separated.push_bind(subject_id);
+        }
+    }
+    query.push(
+        ")
+         AND lifecycle IN ('pending', 'queued', 'planning', 'searching', 'staged', 'downloading', 'seeding', 'completed')",
+    );
+    if let Some(download_job_id) = exclude_download_job_id {
+        query.push(" AND id != ");
+        query.push_bind(download_job_id);
+    }
+    query.push(" ORDER BY created_at ASC");
+
+    let rows = query
+        .build_query_as::<DownloadJobRow>()
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AppError::internal("failed to list open download jobs for subject group"))?;
+
+    Ok(rows.into_iter().map(map_download_job).collect())
+}
+
 pub async fn create_download_execution_event(
     pool: &SqlitePool,
     event: NewDownloadExecutionEvent,

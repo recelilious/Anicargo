@@ -1231,11 +1231,34 @@ async fn resolve_subject_search_profile(
                 infer_season_hint_from_texts([subject.name.as_str(), subject.name_cn.as_str()]);
             let part_hint =
                 infer_part_hint_from_texts([subject.name.as_str(), subject.name_cn.as_str()]);
+            let mut aliases = subject_search_aliases(&subject);
+            if let Ok(Some(group)) = subject_parts::resolve_subject_part_group(bangumi, subject_id).await
+            {
+                for segment in group.segments {
+                    if segment.bangumi_subject_id == subject_id {
+                        continue;
+                    }
+                    match bangumi.fetch_subject(segment.bangumi_subject_id).await {
+                        Ok(related_subject) => {
+                            aliases.extend(subject_search_aliases(&related_subject));
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                subject_id,
+                                related_subject_id = segment.bangumi_subject_id,
+                                error = %error,
+                                "Failed to fetch split-part related subject aliases for resource discovery"
+                            );
+                        }
+                    }
+                }
+                aliases = dedupe_aliases(aliases);
+            }
             AnimeGardenSearchProfileWithStatus {
                 bangumi_subject_id: subject_id,
                 title: subject.name.clone(),
                 title_cn: subject.name_cn.clone(),
-                aliases: subject_search_aliases(&subject),
+                aliases,
                 release_status,
                 season_hint,
                 installment_hint: Some(season_hint.unwrap_or(1)),
@@ -2133,6 +2156,60 @@ async fn build_completed_download_plan(
                 .iter()
                 .map(|segment| segment.bangumi_subject_id)
                 .collect::<Vec<_>>();
+            let current_segment = subject_parts::current_segment(group, job.bangumi_subject_id);
+            let grouped_jobs =
+                db::list_open_download_jobs_for_subjects(pool, &group_subject_ids, Some(job.id))
+                    .await?;
+            if let Some(current_segment) = current_segment {
+                let should_wait_for_earlier_group_job = current_segment.part_index > 1
+                    && grouped_jobs.iter().any(|other_job| {
+                        let Some(other_segment) =
+                            subject_parts::current_segment(group, other_job.bangumi_subject_id)
+                        else {
+                            return false;
+                        };
+                        other_segment.part_index < current_segment.part_index
+                            && other_job.created_at <= job.created_at
+                    });
+                if should_wait_for_earlier_group_job {
+                    for _ in 0..10 {
+                        let grouped_selected_candidates =
+                            db::list_active_selected_candidates_for_subjects(
+                                pool,
+                                &group_subject_ids,
+                                Some(job.id),
+                            )
+                            .await?;
+                        if let Some(existing_candidate) =
+                            grouped_selected_candidates.iter().find(|candidate| {
+                                candidate.is_collection
+                                    && candidate.rejected_reason.is_none()
+                                    && collection_matches_split_part_group_total(
+                                        candidate,
+                                        group,
+                                        job.bangumi_subject_id,
+                                        &missing_episodes,
+                                    )
+                            })
+                        {
+                            tracing::info!(
+                                job_id = job.id,
+                                subject_id = job.bangumi_subject_id,
+                                existing_candidate_id = existing_candidate.id,
+                                existing_subject_id = existing_candidate.bangumi_subject_id,
+                                existing_slot_key = %existing_candidate.slot_key,
+                                missing_episodes = ?missing_episodes,
+                                "Skipping duplicate split-part collection planning because an earlier grouped full-season pack was selected during wait"
+                            );
+                            return Ok(DownloadPlan {
+                                candidate_chains: Vec::new(),
+                            });
+                        }
+                        sleep(TokioDuration::from_millis(500)).await;
+                    }
+                }
+            }
+
             let grouped_selected_candidates = db::list_active_selected_candidates_for_subjects(
                 pool,
                 &group_subject_ids,
@@ -3017,6 +3094,24 @@ fn subject_search_aliases(subject: &SubjectRaw) -> Vec<String> {
 
     let mut seen = HashSet::new();
     aliases
+        .into_iter()
+        .filter_map(|value| {
+            let normalized = value.trim();
+            if normalized.is_empty() {
+                return None;
+            }
+            let dedupe_key = normalized.to_lowercase();
+            if !seen.insert(dedupe_key) {
+                return None;
+            }
+            Some(normalized.to_owned())
+        })
+        .collect()
+}
+
+fn dedupe_aliases(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    values
         .into_iter()
         .filter_map(|value| {
             let normalized = value.trim();
