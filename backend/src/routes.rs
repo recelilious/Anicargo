@@ -1487,6 +1487,21 @@ async fn run_download_pipeline(
                     reason,
                     "Download execution activation failed after background queueing"
                 );
+                if let Err(update_error) = db::update_download_job_search_status(
+                    &state.pool,
+                    job.id,
+                    "failed",
+                    Some(&error_message),
+                )
+                .await
+                {
+                    tracing::warn!(
+                        job_id = job.id,
+                        subject_id = job.bangumi_subject_id,
+                        error = %update_error,
+                        "Failed to persist failed search status after activation failure"
+                    );
+                }
                 if let Err(update_error) = db::update_download_job_lifecycle(
                     &state.pool,
                     job.id,
@@ -2120,7 +2135,7 @@ async fn build_completed_download_plan(
 
     let mut preferred_fansub = preferred_fansub.map(str::to_owned);
     let mut candidate_chains = Vec::new();
-    for episode_number in tracked_episodes {
+    for episode_number in tracked_episodes.iter().copied() {
         if availability
             .iter()
             .any(|item| availability_covers_episode(item, episode_number))
@@ -2176,6 +2191,20 @@ async fn build_completed_download_plan(
     }
 
     let _ = policy;
+    if !tracked_episodes.is_empty() && !missing_episodes.is_empty() && candidate_chains.is_empty() {
+        tracing::warn!(
+            job_id = job.id,
+            subject_id = job.bangumi_subject_id,
+            tracked_episodes = ?tracked_episodes,
+            missing_episodes = ?missing_episodes,
+            candidate_count = candidates.len(),
+            "Completed-season download plan did not find any candidate chain for missing episodes"
+        );
+        return Err(AppError::bad_request(
+            "no completed-season candidates matched the missing episode window",
+        ));
+    }
+
     Ok(DownloadPlan { candidate_chains })
 }
 

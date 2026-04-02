@@ -54,7 +54,8 @@ fn parse_impl(input: &str, source_kind: ParseSourceKind) -> ParseResult {
         update_subtitle_info(&stem, &mut subtitles);
     }
 
-    let episode_range = parse_episode_range(&body);
+    let season = parse_season(&body);
+    let episode_range = parse_episode_range(&body, season.as_ref());
     if episode_range.is_some() {
         flags.is_batch = true;
     }
@@ -63,8 +64,6 @@ fn parse_impl(input: &str, source_kind: ParseSourceKind) -> ParseResult {
     } else {
         parse_dual_episode_alias(&body)
     };
-
-    let season = parse_season(&body);
     let title_body = cleanup_title_body(&body, episode_range.as_ref(), episode.as_ref());
     let titles = parse_titles(&title_body, season.as_ref());
 
@@ -421,7 +420,7 @@ fn detect_audio_codec(value: &str) -> Option<String> {
     None
 }
 
-fn parse_episode_range(body: &str) -> Option<EpisodeRangeDescriptor> {
+fn parse_episode_range(body: &str, season: Option<&SeasonInfo>) -> Option<EpisodeRangeDescriptor> {
     let tokens = extract_enclosed_tokens(body);
     for token in tokens
         .iter()
@@ -439,7 +438,73 @@ fn parse_episode_range(body: &str) -> Option<EpisodeRangeDescriptor> {
             return Some(range);
         }
     }
-    parse_episode_range_token(body)
+    parse_episode_range_in_body(body, season)
+}
+
+fn parse_episode_range_in_body(
+    body: &str,
+    season: Option<&SeasonInfo>,
+) -> Option<EpisodeRangeDescriptor> {
+    if let Some(captures) = dual_range_regex().captures(body) {
+        let primary_start = parse_episode_number(captures.get(1)?.as_str())?;
+        let primary_end = parse_episode_number(captures.get(2)?.as_str())?;
+        let secondary_start = parse_episode_number(captures.get(3)?.as_str())?;
+        let secondary_end = parse_episode_number(captures.get(4)?.as_str())?;
+        return Some(EpisodeRangeDescriptor {
+            primary_start,
+            primary_end,
+            secondary_start: Some(secondary_start),
+            secondary_end: Some(secondary_end),
+        });
+    }
+
+    let captures = plain_range_regex().captures(body)?;
+    let primary_start = parse_episode_number(captures.get(1)?.as_str())?;
+    let primary_end = parse_episode_number(captures.get(2)?.as_str())?;
+    if should_ignore_part_marker_plain_range(body, season, primary_start, primary_end) {
+        return None;
+    }
+
+    Some(EpisodeRangeDescriptor {
+        primary_start,
+        primary_end,
+        secondary_start: None,
+        secondary_end: None,
+    })
+}
+
+fn should_ignore_part_marker_plain_range(
+    body: &str,
+    season: Option<&SeasonInfo>,
+    primary_start: EpisodeNumber,
+    primary_end: EpisodeNumber,
+) -> bool {
+    let Some(season) = season else {
+        return false;
+    };
+    let Some(part) = season.part else {
+        return false;
+    };
+    if !part_regexes().iter().any(|regex| regex.is_match(body)) {
+        return false;
+    }
+    if has_explicit_batch_hint(body) {
+        return false;
+    }
+
+    primary_start.minor.is_none()
+        && primary_end.minor.is_none()
+        && primary_start.major == part
+        && primary_end.major > primary_start.major
+}
+
+fn has_explicit_batch_hint(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.contains("batch")
+        || lower.contains("complete")
+        || lower.contains("fin")
+        || value.contains("鍚堥泦")
+        || value.contains("鍏ㄩ泦")
 }
 
 fn parse_episode_range_token(value: &str) -> Option<EpisodeRangeDescriptor> {
@@ -951,6 +1016,19 @@ mod tests {
         assert_eq!(parsed.season.map(|item| item.number), Some(2));
         assert_eq!(parsed.season.and_then(|item| item.part), Some(2));
         assert!(parsed.flags.is_batch);
+    }
+
+    #[test]
+    fn does_not_treat_part_marker_episode_as_batch_range() {
+        let parsed = parse_release_name(
+            "[Up to 21°C] Mushoku Tensei S2 Part 2 - 24 [WebRip 1080p HEVC-10bit AAC]",
+        );
+
+        print_case("part_two_single_episode", &parsed);
+        assert!(parsed.episode_range.is_none());
+        assert_eq!(parsed.season.map(|item| item.number), Some(2));
+        assert_eq!(parsed.season.and_then(|item| item.part), Some(2));
+        assert_eq!(parsed.episode.expect("episode").primary.major, 24);
     }
 
     #[test]
