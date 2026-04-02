@@ -2259,6 +2259,52 @@ pub async fn list_active_executions_for_subjects(
     Ok(rows.into_iter().map(map_download_execution).collect())
 }
 
+pub async fn list_active_selected_candidates_for_subjects(
+    pool: &SqlitePool,
+    subject_ids: &[i64],
+    exclude_download_job_id: Option<i64>,
+) -> Result<Vec<ResourceCandidateDto>, AppError> {
+    if subject_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut query = QueryBuilder::new(
+        "SELECT resource_candidates.*
+         FROM download_jobs
+         INNER JOIN resource_candidates
+            ON resource_candidates.id = download_jobs.selected_candidate_id
+         WHERE download_jobs.bangumi_subject_id IN (",
+    );
+    {
+        let mut separated = query.separated(", ");
+        for subject_id in subject_ids {
+            separated.push_bind(subject_id);
+        }
+    }
+    query.push(
+        ")
+         AND download_jobs.lifecycle IN ('pending', 'queued', 'planning', 'searching', 'staged', 'downloading', 'seeding', 'completed')",
+    );
+    if let Some(download_job_id) = exclude_download_job_id {
+        query.push(" AND download_jobs.id != ");
+        query.push_bind(download_job_id);
+    }
+    query.push(
+        "
+         ORDER BY download_jobs.selection_updated_at DESC, download_jobs.created_at DESC",
+    );
+
+    let rows = query
+        .build_query_as::<ResourceCandidateRow>()
+        .fetch_all(pool)
+        .await
+        .map_err(|_| {
+            AppError::internal("failed to list active selected candidates for subject group")
+        })?;
+
+    Ok(rows.into_iter().map(map_resource_candidate).collect())
+}
+
 pub async fn create_download_execution_event(
     pool: &SqlitePool,
     event: NewDownloadExecutionEvent,

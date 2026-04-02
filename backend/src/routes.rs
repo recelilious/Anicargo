@@ -2133,6 +2133,36 @@ async fn build_completed_download_plan(
                 .iter()
                 .map(|segment| segment.bangumi_subject_id)
                 .collect::<Vec<_>>();
+            let grouped_selected_candidates = db::list_active_selected_candidates_for_subjects(
+                pool,
+                &group_subject_ids,
+                Some(job.id),
+            )
+            .await?;
+            if let Some(existing_candidate) = grouped_selected_candidates.iter().find(|candidate| {
+                candidate.is_collection
+                    && candidate.rejected_reason.is_none()
+                    && collection_matches_split_part_group_total(
+                        candidate,
+                        group,
+                        job.bangumi_subject_id,
+                        &missing_episodes,
+                    )
+            }) {
+                tracing::info!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    existing_candidate_id = existing_candidate.id,
+                    existing_subject_id = existing_candidate.bangumi_subject_id,
+                    existing_slot_key = %existing_candidate.slot_key,
+                    missing_episodes = ?missing_episodes,
+                    "Skipping duplicate split-part collection planning because a grouped full-season pack is already selected"
+                );
+                return Ok(DownloadPlan {
+                    candidate_chains: Vec::new(),
+                });
+            }
+
             let grouped_executions =
                 db::list_active_executions_for_subjects(pool, &group_subject_ids).await?;
             if let Some(existing_execution) = grouped_executions.iter().find(|execution| {
