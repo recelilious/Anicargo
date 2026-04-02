@@ -9,7 +9,7 @@ import { useSession } from "../session";
 import type { SubjectCard as SubjectCardModel } from "../types";
 import { CardCoverFallback } from "./CardCoverFallback";
 
-type SubjectCardMetaVariant = "schedule" | "catalog" | "preview";
+type SubjectCardMetaVariant = "schedule" | "catalog" | "preview" | "related";
 
 const useStyles = makeStyles({
   link: {
@@ -276,6 +276,14 @@ function resolveMeta(subject: SubjectCardModel, variant: SubjectCardMetaVariant)
     return {
       left: inferTypeLabel(subject),
       right: extractCatalogTiming(subject.catalogLabel) || extractCatalogYear(subject.airDate),
+      rating: null as string | null,
+    };
+  }
+
+  if (variant === "related") {
+    return {
+      left: extractCatalogYear(subject.airDate),
+      right: subject.catalogLabel?.trim() || null,
       rating: null as string | null,
     };
   }

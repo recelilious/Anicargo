@@ -127,6 +127,39 @@ impl BangumiClient {
             .map(|payload| payload.data)
     }
 
+    pub async fn fetch_related_subjects(
+        &self,
+        subject_id: i64,
+    ) -> Result<Vec<RelatedSubjectRaw>, AppError> {
+        let url = format!("{}/v0/subjects/{}/subjects", self.base_url, subject_id);
+        let response = self
+            .send_request(
+                self.http
+                    .get(&url)
+                    .header(reqwest::header::USER_AGENT, &self.user_agent),
+                "subject relations",
+                &url,
+            )
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(self.subject_status_error(response, &url).await);
+        }
+
+        response
+            .json::<Vec<RelatedSubjectRaw>>()
+            .await
+            .map_err(|error| {
+                warn!(
+                    url = %url,
+                    subject_id,
+                    error = %error,
+                    "Failed to parse Bangumi subject relations response"
+                );
+                AppError::upstream("failed to parse Bangumi subject relations")
+            })
+    }
+
     async fn send_request(
         &self,
         request: reqwest::RequestBuilder,
@@ -364,6 +397,17 @@ pub struct InfoboxRaw {
     pub value: Value,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct RelatedSubjectRaw {
+    pub id: i64,
+    pub r#type: i64,
+    #[serde(default)]
+    pub relation: String,
+    pub name: String,
+    #[serde(default)]
+    pub name_cn: String,
+}
+
 impl SubjectRaw {
     pub fn to_card(&self) -> SubjectCardDto {
         let mut card = self.base_card();
@@ -442,6 +486,9 @@ impl SubjectRaw {
                 .filter(|item| !item.value.is_empty())
                 .collect(),
             rating_score: self.rating.as_ref().and_then(|rating| rating.score),
+            opening_themes: Vec::new(),
+            ending_themes: Vec::new(),
+            related_subjects: Vec::new(),
         }
     }
 

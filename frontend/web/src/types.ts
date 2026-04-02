@@ -123,6 +123,9 @@ export type SubjectDetailResponse = {
     tags: string[];
     infobox: InfoboxItem[];
     ratingScore: number | null;
+    openingThemes: string[];
+    endingThemes: string[];
+    relatedSubjects: SubjectCard[];
   };
   episodes: Episode[];
   subscription: SubscriptionState;

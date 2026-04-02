@@ -270,6 +270,9 @@ pub struct SubjectDetailDto {
     pub tags: Vec<String>,
     pub infobox: Vec<InfoboxItemDto>,
     pub rating_score: Option<f64>,
+    pub opening_themes: Vec<String>,
+    pub ending_themes: Vec<String>,
+    pub related_subjects: Vec<SubjectCardDto>,
 }
 
 #[derive(Debug, Clone, Serialize)]

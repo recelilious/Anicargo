@@ -5,6 +5,7 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { fetchSubjectDetail, toggleSubscription } from "../api";
 import { EpisodeCard } from "../components/EpisodeCard";
+import { SubjectCard } from "../components/SubjectCard";
 import { useLoadingStatus } from "../loading-status";
 import { MotionPage, MotionPresence } from "../motion";
 import { resolveReturnScrollTop, type RouteState } from "../navigation";
@@ -156,6 +157,16 @@ const useStyles = makeStyles({
     gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     gap: "12px",
   },
+  relatedSection: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "14px",
+  },
+  relatedGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    gap: "12px",
+  },
 });
 
 function formatRating(score: number | null) {
@@ -186,6 +197,21 @@ function resolveSubscriptionAction(detail: SubjectDetailResponse) {
     label: detail.subscription.isSubscribed ? "取消订阅" : "订阅",
     disabled: false,
   };
+}
+
+function formatThemeList(values: string[]) {
+  return values
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function shouldHideInfoboxItem(key: string) {
+  const normalized = key.trim().toLowerCase();
+  return (
+    normalized === "\u4e2d\u6587\u540d" ||
+    normalized === "\u4e0a\u6620\u5e74\u5ea6"
+  );
 }
 
 export function SubjectPage() {
@@ -305,6 +331,9 @@ export function SubjectPage() {
   }
 
   const subscriptionAction = resolveSubscriptionAction(detail);
+  const visibleInfobox = detail.subject.infobox.filter((item) => !shouldHideInfoboxItem(item.key));
+  const openingThemes = formatThemeList(detail.subject.openingThemes);
+  const endingThemes = formatThemeList(detail.subject.endingThemes);
 
   return (
     <MotionPage className={styles.page}>
@@ -399,9 +428,31 @@ export function SubjectPage() {
               </div>
             ) : null}
 
-            {detail.subject.infobox.length > 0 ? (
+            {openingThemes || endingThemes || visibleInfobox.length > 0 ? (
               <div className={styles.infoGrid}>
-                {detail.subject.infobox.map((item) => (
+                {openingThemes ? (
+                  <div className={styles.infoCard}>
+                    <Text size={200} className={styles.statLabel}>
+                      {"\u7247\u5934\u66f2"}
+                    </Text>
+                    <Text weight="semibold" className={styles.infoValue}>
+                      {openingThemes}
+                    </Text>
+                  </div>
+                ) : null}
+
+                {endingThemes ? (
+                  <div className={styles.infoCard}>
+                    <Text size={200} className={styles.statLabel}>
+                      {"\u7247\u5c3e\u66f2"}
+                    </Text>
+                    <Text weight="semibold" className={styles.infoValue}>
+                      {endingThemes}
+                    </Text>
+                  </div>
+                ) : null}
+
+                {visibleInfobox.map((item) => (
                   <div key={`${item.key}-${item.value}`} className={styles.infoCard}>
                     <Text size={200} className={styles.statLabel}>
                       {item.key}
@@ -437,6 +488,27 @@ export function SubjectPage() {
           ))}
         </div>
       </div>
+      {detail.subject.relatedSubjects.length > 0 ? (
+        <div
+          className={`${styles.relatedSection} app-motion-surface`}
+          style={{ ["--motion-delay" as string]: "84ms" }}
+        >
+          <Text weight="semibold" size={700}>
+            {"\u5173\u8054\u52a8\u753b"}
+          </Text>
+
+          <div className={styles.relatedGrid}>
+            {detail.subject.relatedSubjects.map((subject, index) => (
+              <SubjectCard
+                key={`${subject.catalogLabel ?? "related"}-${subject.bangumiSubjectId}`}
+                subject={subject}
+                metaVariant="related"
+                motionIndex={index}
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
     </MotionPage>
   );
 }

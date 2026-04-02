@@ -395,11 +395,12 @@ async fn subject_detail(
     let viewer = resolve_optional_viewer(&state.pool, &headers, device_id.as_deref()).await?;
     let policy = db::load_policy(&state.pool).await?;
 
-    let (subject, episodes, episode_availability, download_status) = tokio::try_join!(
+    let (subject, episodes, episode_availability, download_status, related_subjects) = tokio::try_join!(
         state.bangumi.fetch_subject(subject_id),
         state.bangumi.fetch_episodes(subject_id),
         db::list_subject_episode_availability(&state.pool, subject_id),
-        db::subject_download_status(&state.pool, subject_id)
+        db::subject_download_status(&state.pool, subject_id),
+        state.bangumi.fetch_related_subjects(subject_id)
     )?;
 
     let (is_subscribed, subscription_count) = if let Some(viewer) = viewer.as_ref() {
@@ -417,8 +418,14 @@ async fn subject_detail(
 
     let release_status =
         crate::season_catalog::derive_release_status(&subject, &episodes).to_owned();
+    let (opening_themes, ending_themes) = extract_related_theme_titles(&related_subjects);
+    let related_cards =
+        fetch_related_subject_cards(&state.bangumi, &state.yuc, &related_subjects).await;
     let mut subject = enrich_detail(&state.yuc, subject.to_detail()).await;
     subject.release_status = release_status;
+    subject.opening_themes = opening_themes;
+    subject.ending_themes = ending_themes;
+    subject.related_subjects = related_cards;
 
     Ok(Json(ApiEnvelope::new(SubjectDetailResponse {
         subject,
@@ -441,6 +448,120 @@ async fn subject_detail(
         },
         download_status: download_status,
     })))
+}
+
+fn is_relation_match(relation: &str, expected: &[&str]) -> bool {
+    let relation = relation.trim();
+    expected.iter().any(|value| relation == *value)
+}
+
+fn relation_card_rank(relation: &str) -> i32 {
+    if is_relation_match(relation, &["\u{524d}\u{4f20}"]) {
+        0
+    } else if is_relation_match(relation, &["\u{7eed}\u{96c6}"]) {
+        1
+    } else if is_relation_match(relation, &["\u{884d}\u{751f}"]) {
+        2
+    } else if is_relation_match(relation, &["\u{756a}\u{5916}\u{7bc7}"]) {
+        3
+    } else {
+        9
+    }
+}
+
+fn include_related_subject_card(relation: &str, subject_type: i64) -> bool {
+    subject_type == 2
+        && is_relation_match(
+            relation,
+            &[
+                "\u{524d}\u{4f20}",
+                "\u{7eed}\u{96c6}",
+                "\u{884d}\u{751f}",
+                "\u{756a}\u{5916}\u{7bc7}",
+            ],
+        )
+}
+
+fn extract_related_theme_titles(
+    related_subjects: &[crate::bangumi::RelatedSubjectRaw],
+) -> (Vec<String>, Vec<String>) {
+    let mut openings = Vec::new();
+    let mut endings = Vec::new();
+
+    for item in related_subjects {
+        let title = if item.name_cn.trim().is_empty() {
+            item.name.trim()
+        } else {
+            item.name_cn.trim()
+        };
+
+        if title.is_empty() {
+            continue;
+        }
+
+        if is_relation_match(&item.relation, &["\u{7247}\u{5934}\u{66f2}"]) {
+            if !openings.iter().any(|entry| entry == title) {
+                openings.push(title.to_owned());
+            }
+            continue;
+        }
+
+        if is_relation_match(&item.relation, &["\u{7247}\u{5c3e}\u{66f2}"]) {
+            if !endings.iter().any(|entry| entry == title) {
+                endings.push(title.to_owned());
+            }
+        }
+    }
+
+    (openings, endings)
+}
+
+async fn fetch_related_subject_cards(
+    bangumi: &BangumiClient,
+    yuc: &YucClient,
+    related_subjects: &[crate::bangumi::RelatedSubjectRaw],
+) -> Vec<SubjectCardDto> {
+    let related_items = related_subjects
+        .iter()
+        .filter(|item| include_related_subject_card(&item.relation, item.r#type))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let mut items = stream::iter(related_items.into_iter().map(|item| {
+        let bangumi = bangumi.clone();
+        let yuc = yuc.clone();
+        async move {
+            match bangumi.fetch_subject(item.id).await {
+                Ok(subject) => {
+                    let mut card = yuc.enrich_card(subject.to_card()).await;
+                    card.catalog_label = Some(item.relation.trim().to_owned());
+                    Some((relation_card_rank(&item.relation), card))
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        subject_id = item.id,
+                        relation = %item.relation,
+                        error = %error,
+                        "Failed to fetch Bangumi related subject for detail page"
+                    );
+                    None
+                }
+            }
+        }
+    }))
+    .buffered(6)
+    .filter_map(|item| async move { item })
+    .collect::<Vec<_>>()
+    .await;
+
+    items.sort_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then_with(|| left.1.air_date.cmp(&right.1.air_date))
+            .then_with(|| left.1.bangumi_subject_id.cmp(&right.1.bangumi_subject_id))
+    });
+
+    items.into_iter().map(|(_, card)| card).collect()
 }
 
 async fn subject_download_status(
