@@ -206,7 +206,7 @@ export function AppShell() {
           id="app-scroll-root"
           className={usesContainedScroll ? styles.containedViewport : styles.scrollViewport}
         >
-          <RoutedMotionOutlet routeKey={location.key} outlet={outlet} />
+          <RoutedMotionOutlet routeKey={location.key} outlet={outlet} contained={usesContainedScroll} />
         </div>
       </main>
     </div>

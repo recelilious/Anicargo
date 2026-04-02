@@ -293,12 +293,6 @@ export function HistoryPage() {
         {error ? <Text>{error}</Text> : null}
       </MotionPresence>
 
-      {!isLoading && items.length === 0 ? (
-        <Card className={styles.surfaceCard}>
-          <Text weight="semibold">当前没有播放历史</Text>
-        </Card>
-      ) : null}
-
       <section className={`${styles.historyPanel} app-motion-surface`} style={{ ["--motion-delay" as string]: "48ms" }}>
         <div className={styles.listViewport}>
           <div className={styles.list}>
