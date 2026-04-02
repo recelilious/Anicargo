@@ -3,7 +3,7 @@ use std::{fs, path::Path};
 use anyhow::Context;
 use chrono::{Duration, Utc};
 use sqlx::{
-    FromRow, SqlitePool,
+    FromRow, QueryBuilder, SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
 };
 
@@ -2221,6 +2221,40 @@ pub async fn list_download_executions(
     .fetch_all(pool)
     .await
     .map_err(|_| AppError::internal("failed to list download executions"))?;
+
+    Ok(rows.into_iter().map(map_download_execution).collect())
+}
+
+pub async fn list_active_executions_for_subjects(
+    pool: &SqlitePool,
+    subject_ids: &[i64],
+) -> Result<Vec<DownloadExecutionDto>, AppError> {
+    if subject_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut query = QueryBuilder::new(
+        "SELECT *
+         FROM download_executions
+         WHERE bangumi_subject_id IN (",
+    );
+    {
+        let mut separated = query.separated(", ");
+        for subject_id in subject_ids {
+            separated.push_bind(subject_id);
+        }
+    }
+    query.push(
+        ")
+         AND state IN ('queued', 'staged', 'starting', 'downloading', 'seeding', 'completed')
+         ORDER BY created_at DESC",
+    );
+
+    let rows = query
+        .build_query_as::<DownloadExecutionRow>()
+        .fetch_all(pool)
+        .await
+        .map_err(|_| AppError::internal("failed to list active executions for subject group"))?;
 
     Ok(rows.into_iter().map(map_download_execution).collect())
 }

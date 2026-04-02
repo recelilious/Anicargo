@@ -42,8 +42,9 @@ use crate::{
         AdminDownloadExecutionEventsResponse, AdminDownloadExecutionsResponse,
         AdminDownloadQueueResponse, AdminRuntimeResponse, ApiEnvelope, AppError, AuthResponse,
         BootstrapResponse, CalendarResponse, CatalogManifestResponse, CatalogPageResponse,
-        CredentialsRequest, DownloadJobDto, EpisodePlaybackMediaDto, EpisodePlaybackResponse,
-        FansubRuleDto, ForceDownloadResponse, HealthResponse, PlaybackHistoryItemDto,
+        CredentialsRequest, DownloadExecutionDto, DownloadJobDto, EpisodePlaybackMediaDto,
+        EpisodePlaybackResponse, FansubRuleDto, ForceDownloadResponse, HealthResponse,
+        PlaybackHistoryItemDto,
         PlaybackHistoryRecordRequest, PlaybackHistoryResponse, PolicyDto, ResourceCandidateDto,
         ResourceLibraryRequest, ResourceLibraryResponse, RuntimeHttpStatsDto, RuntimeOverviewDto,
         ScheduleDisplayQuery, SearchRequest, SearchResponse, SubjectCardDto,
@@ -2127,6 +2128,37 @@ async fn build_completed_download_plan(
         .any(|item| item.status == "ready" || item.status == "partial");
     if !already_has_any_media && !missing_episodes.is_empty() && !collection_candidates.is_empty() {
         if let Some(group) = split_part_group.as_ref() {
+            let group_subject_ids = group
+                .segments
+                .iter()
+                .map(|segment| segment.bangumi_subject_id)
+                .collect::<Vec<_>>();
+            let grouped_executions =
+                db::list_active_executions_for_subjects(pool, &group_subject_ids).await?;
+            if let Some(existing_execution) = grouped_executions.iter().find(|execution| {
+                execution.is_collection
+                    && execution.state != "replaced"
+                    && collection_execution_matches_split_part_group_total(
+                        execution,
+                        group,
+                        job.bangumi_subject_id,
+                        &missing_episodes,
+                    )
+            }) {
+                tracing::info!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    existing_execution_id = existing_execution.id,
+                    existing_subject_id = existing_execution.bangumi_subject_id,
+                    existing_slot_key = %existing_execution.slot_key,
+                    missing_episodes = ?missing_episodes,
+                    "Skipping duplicate split-part collection planning because a grouped full-season pack already exists"
+                );
+                return Ok(DownloadPlan {
+                    candidate_chains: Vec::new(),
+                });
+            }
+
             let grouped_collection_candidates = collection_candidates
                 .iter()
                 .copied()
@@ -2419,6 +2451,43 @@ fn collection_matches_split_part_group_total(
         && end + 0.001 >= last_segment.global_end
         && span + 0.001 >= group_span
         && span <= group_span + 2.0
+}
+
+fn collection_execution_matches_split_part_group_total(
+    execution: &DownloadExecutionDto,
+    group: &subject_parts::SubjectPartGroup,
+    bangumi_subject_id: i64,
+    targets: &[f64],
+) -> bool {
+    let candidate = ResourceCandidateDto {
+        id: execution.resource_candidate_id,
+        download_job_id: execution.download_job_id,
+        search_run_id: execution.download_job_id,
+        bangumi_subject_id: execution.bangumi_subject_id,
+        slot_key: execution.slot_key.clone(),
+        episode_index: execution.episode_index,
+        episode_end_index: execution.episode_end_index,
+        is_collection: execution.is_collection,
+        provider: String::new(),
+        provider_resource_id: String::new(),
+        title: execution.source_title.clone(),
+        href: String::new(),
+        magnet: execution.source_magnet.clone(),
+        release_type: "batch".to_owned(),
+        size_bytes: execution.source_size_bytes,
+        fansub_name: execution.source_fansub_name.clone(),
+        publisher_name: String::new(),
+        source_created_at: execution.created_at.clone(),
+        source_fetched_at: execution.updated_at.clone(),
+        resolution: None,
+        locale_hint: None,
+        is_raw: false,
+        score: 0.0,
+        rejected_reason: None,
+        discovered_at: execution.created_at.clone(),
+    };
+
+    collection_matches_split_part_group_total(&candidate, group, bangumi_subject_id, targets)
 }
 
 fn choose_latest_airing_candidates<'a>(
@@ -3129,11 +3198,12 @@ fn format_runtime_duration(duration: std::time::Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
+        collection_execution_matches_split_part_group_total,
         collection_matches_split_part_group_total, collection_matches_target_window,
         normalize_visible_active_downloads,
     };
     use crate::subject_parts::{SubjectPartGroup, SubjectPartSegment};
-    use crate::types::{ActiveDownloadDto, ResourceCandidateDto};
+    use crate::types::{ActiveDownloadDto, DownloadExecutionDto, ResourceCandidateDto};
 
     fn sample_collection_candidate(start: f64, end: f64) -> ResourceCandidateDto {
         ResourceCandidateDto {
@@ -3214,6 +3284,68 @@ mod tests {
         ));
         assert!(!collection_matches_split_part_group_total(
             &sample_collection_candidate(1.0, 48.0),
+            &group,
+            2,
+            &part_two_targets,
+        ));
+    }
+
+    #[test]
+    fn split_part_group_existing_execution_blocks_duplicate_part_collection() {
+        let group = SubjectPartGroup {
+            segments: vec![
+                SubjectPartSegment {
+                    bangumi_subject_id: 1,
+                    total_episodes: 11,
+                    part_index: 1,
+                    global_start: 1.0,
+                    global_end: 11.0,
+                },
+                SubjectPartSegment {
+                    bangumi_subject_id: 2,
+                    total_episodes: 12,
+                    part_index: 2,
+                    global_start: 12.0,
+                    global_end: 23.0,
+                },
+            ],
+        };
+        let execution = DownloadExecutionDto {
+            id: 1,
+            download_job_id: 1,
+            resource_candidate_id: 1,
+            bangumi_subject_id: 1,
+            slot_key: "batch:1-23".to_owned(),
+            episode_index: Some(1.0),
+            episode_end_index: Some(23.0),
+            is_collection: true,
+            engine_name: "downloader".to_owned(),
+            engine_execution_ref: None,
+            execution_role: "primary".to_owned(),
+            state: "downloading".to_owned(),
+            target_path: String::new(),
+            source_title: "sample".to_owned(),
+            source_magnet: String::new(),
+            source_size_bytes: 1,
+            source_fansub_name: Some("sample".to_owned()),
+            downloaded_bytes: 0,
+            uploaded_bytes: 0,
+            download_rate_bytes: 0,
+            upload_rate_bytes: 0,
+            peer_count: 1,
+            notes: None,
+            created_at: "2026-01-01T00:00:00Z".to_owned(),
+            updated_at: "2026-01-01T00:00:00Z".to_owned(),
+            started_at: None,
+            completed_at: None,
+            replaced_at: None,
+            failed_at: None,
+            last_indexed_at: None,
+        };
+        let part_two_targets = (1..=12).map(|value| value as f64).collect::<Vec<_>>();
+
+        assert!(collection_execution_matches_split_part_group_total(
+            &execution,
             &group,
             2,
             &part_two_targets,
