@@ -164,8 +164,9 @@ const useStyles = makeStyles({
   },
   relatedGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fill, minmax(210px, 210px))",
     gap: "12px",
+    justifyContent: "flex-start",
   },
 });
 
