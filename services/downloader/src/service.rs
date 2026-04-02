@@ -48,6 +48,8 @@ const TASK_SESSION_RESUME_TIMEOUT_SECS: u64 = 20;
 const TASK_SESSION_PAUSE_TIMEOUT_SECS: u64 = 8;
 const TASK_TIMEOUT_PRIORITY_BUMP: u32 = 5;
 const TASK_PRIORITY_MAX: u32 = 1023;
+const STRICT_LIMIT_HEADROOM_RATIO: f64 = 0.94;
+const STRICT_LIMIT_RECOVERY_RATIO: f64 = 0.92;
 
 #[derive(Clone)]
 pub struct DownloaderService {
@@ -1300,8 +1302,10 @@ fn compute_download_limits(
     }
 
     let total_limit_bps = mb_to_bytes_per_second(total_limit_mb);
-    let mut remaining = total_limit_bps.unwrap_or(0);
+    let strict_budget = total_limit_bps.map(apply_strict_limit_headroom);
+    let mut remaining = strict_budget.unwrap_or(0);
     let mut auto_layers = BTreeMap::<u32, Vec<Uuid>>::new();
+    let mut manual_limits = Vec::new();
 
     for task_id in active_ids {
         let Some(task) = tasks.get(task_id) else {
@@ -1309,16 +1313,16 @@ fn compute_download_limits(
         };
         if let Some(manual_mb) = task.manual_download_limit_mb {
             let manual_bps = mb_to_bytes_per_second(manual_mb).unwrap_or(0);
-            limits.insert(*task_id, Some(manual_bps));
-            if total_limit_bps.is_some() {
-                remaining = remaining.saturating_sub(manual_bps);
-            }
+            manual_limits.push((*task_id, manual_bps));
         } else {
             auto_layers.entry(task.priority).or_default().push(*task_id);
         }
     }
 
     if total_limit_bps.is_none() {
+        for (task_id, manual_bps) in manual_limits {
+            limits.insert(task_id, Some(manual_bps));
+        }
         for task_ids in auto_layers.values() {
             for task_id in task_ids {
                 limits.insert(*task_id, None);
@@ -1326,6 +1330,23 @@ fn compute_download_limits(
         }
         return limits;
     }
+
+    let manual_total = manual_limits
+        .iter()
+        .map(|(_, limit)| *limit)
+        .sum::<u64>();
+    let manual_scale = if manual_total > remaining && manual_total > 0 {
+        remaining as f64 / manual_total as f64
+    } else {
+        1.0
+    };
+    let mut scaled_manual_total = 0_u64;
+    for (task_id, manual_bps) in manual_limits {
+        let scaled = scale_limit_bps(manual_bps, manual_scale);
+        limits.insert(task_id, Some(scaled));
+        scaled_manual_total = scaled_manual_total.saturating_add(scaled);
+    }
+    remaining = remaining.saturating_sub(scaled_manual_total);
 
     if remaining == 0 {
         for task_ids in auto_layers.values() {
@@ -1353,6 +1374,10 @@ fn compute_download_limits(
         }
     }
 
+    apply_feedback_scaling(tasks, active_ids, strict_budget.unwrap_or(0), &mut limits, |task| {
+        task.download_rate_bytes
+    });
+
     limits
 }
 
@@ -1367,8 +1392,10 @@ fn compute_seed_upload_limits(
     }
 
     let total_limit_bps = mb_to_bytes_per_second(total_limit_mb);
-    let mut remaining = total_limit_bps.unwrap_or(0);
+    let strict_budget = total_limit_bps.map(apply_strict_limit_headroom);
+    let mut remaining = strict_budget.unwrap_or(0);
     let mut auto_ids = Vec::new();
+    let mut manual_limits = Vec::new();
 
     for task_id in active_ids {
         let Some(task) = tasks.get(task_id) else {
@@ -1376,27 +1403,48 @@ fn compute_seed_upload_limits(
         };
         if let Some(manual_mb) = task.manual_upload_limit_mb {
             let manual_bps = mb_to_bytes_per_second(manual_mb).unwrap_or(0);
-            limits.insert(*task_id, Some(manual_bps));
-            if total_limit_bps.is_some() {
-                remaining = remaining.saturating_sub(manual_bps);
-            }
+            manual_limits.push((*task_id, manual_bps));
         } else {
             auto_ids.push(*task_id);
         }
     }
 
     if total_limit_bps.is_none() {
+        for (task_id, manual_bps) in manual_limits {
+            limits.insert(task_id, Some(manual_bps));
+        }
         for task_id in auto_ids {
             limits.insert(task_id, None);
         }
         return limits;
     }
 
+    let manual_total = manual_limits
+        .iter()
+        .map(|(_, limit)| *limit)
+        .sum::<u64>();
+    let manual_scale = if manual_total > remaining && manual_total > 0 {
+        remaining as f64 / manual_total as f64
+    } else {
+        1.0
+    };
+    let mut scaled_manual_total = 0_u64;
+    for (task_id, manual_bps) in manual_limits {
+        let scaled = scale_limit_bps(manual_bps, manual_scale);
+        limits.insert(task_id, Some(scaled));
+        scaled_manual_total = scaled_manual_total.saturating_add(scaled);
+    }
+    remaining = remaining.saturating_sub(scaled_manual_total);
+
     let divisor = auto_ids.len().max(1) as u64;
     let share = remaining / divisor;
     for task_id in auto_ids {
         limits.insert(task_id, Some(share));
     }
+
+    apply_feedback_scaling(tasks, active_ids, strict_budget.unwrap_or(0), &mut limits, |task| {
+        task.upload_rate_bytes
+    });
 
     limits
 }
@@ -1671,6 +1719,51 @@ fn bytes_per_second_to_mb_per_second(value: u64) -> f64 {
     value as f64 / 1024.0 / 1024.0
 }
 
+fn apply_strict_limit_headroom(limit_bps: u64) -> u64 {
+    ((limit_bps as f64) * STRICT_LIMIT_HEADROOM_RATIO)
+        .round()
+        .max(0.0) as u64
+}
+
+fn scale_limit_bps(limit_bps: u64, factor: f64) -> u64 {
+    if limit_bps == 0 || !factor.is_finite() || factor <= 0.0 {
+        0
+    } else {
+        ((limit_bps as f64) * factor).round().max(0.0) as u64
+    }
+}
+
+fn apply_feedback_scaling<F>(
+    tasks: &HashMap<Uuid, TaskRecord>,
+    active_ids: &[Uuid],
+    strict_budget: u64,
+    limits: &mut HashMap<Uuid, Option<u64>>,
+    current_rate: F,
+) where
+    F: Fn(&TaskRecord) -> u64,
+{
+    if strict_budget == 0 {
+        return;
+    }
+
+    let observed_total = active_ids
+        .iter()
+        .filter_map(|task_id| tasks.get(task_id))
+        .map(&current_rate)
+        .sum::<u64>();
+    if observed_total <= strict_budget {
+        return;
+    }
+
+    let correction = ((strict_budget as f64 / observed_total as f64) * STRICT_LIMIT_RECOVERY_RATIO)
+        .clamp(0.0, 1.0);
+    for limit in limits.values_mut() {
+        if let Some(value) = limit.as_mut() {
+            *value = scale_limit_bps(*value, correction);
+        }
+    }
+}
+
 fn speed_mib_to_bytes(value: f64) -> u64 {
     if !value.is_finite() || value <= 0.0 {
         0
@@ -1838,8 +1931,67 @@ mod tests {
         assert_eq!(p7, p7_second);
 
         let auto_total = p3 + p4 + p7 + p7_second;
-        let expected_remaining = 3 * 1024 * 1024;
+        let expected_remaining =
+            apply_strict_limit_headroom(5 * 1024 * 1024).saturating_sub(2 * 1024 * 1024);
         assert!((auto_total as i64 - expected_remaining as i64).abs() <= 8);
+    }
+
+    #[test]
+    fn download_limits_scale_down_when_observed_rate_exceeds_budget() {
+        let created = Utc
+            .with_ymd_and_hms(2026, 3, 27, 0, 30, 0)
+            .single()
+            .expect("valid timestamp");
+
+        let mut first = sample_task(0, created, None);
+        let mut second = sample_task(1, created + chrono::Duration::seconds(1), None);
+        first.download_rate_bytes = 3 * 1024 * 1024;
+        second.download_rate_bytes = 3 * 1024 * 1024;
+
+        let active_ids = vec![first.id, second.id];
+        let task_map = [first, second]
+            .into_iter()
+            .map(|task| (task.id, task))
+            .collect::<HashMap<_, _>>();
+
+        let limits = compute_download_limits(&task_map, &active_ids, 5, 0.8);
+        let combined = limits
+            .values()
+            .copied()
+            .flatten()
+            .sum::<u64>();
+
+        assert!(combined < apply_strict_limit_headroom(5 * 1024 * 1024));
+    }
+
+    #[test]
+    fn seed_limits_scale_down_when_observed_rate_exceeds_budget() {
+        let created = Utc
+            .with_ymd_and_hms(2026, 3, 27, 0, 45, 0)
+            .single()
+            .expect("valid timestamp");
+
+        let mut first = sample_task(0, created, None);
+        let mut second = sample_task(1, created + chrono::Duration::seconds(1), None);
+        first.kind = TaskKind::Seed;
+        second.kind = TaskKind::Seed;
+        first.upload_rate_bytes = 4 * 1024 * 1024;
+        second.upload_rate_bytes = 4 * 1024 * 1024;
+
+        let active_ids = vec![first.id, second.id];
+        let task_map = [first, second]
+            .into_iter()
+            .map(|task| (task.id, task))
+            .collect::<HashMap<_, _>>();
+
+        let limits = compute_seed_upload_limits(&task_map, &active_ids, 5);
+        let combined = limits
+            .values()
+            .copied()
+            .flatten()
+            .sum::<u64>();
+
+        assert!(combined < apply_strict_limit_headroom(5 * 1024 * 1024));
     }
 
     #[test]

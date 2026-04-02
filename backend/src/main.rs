@@ -171,7 +171,7 @@ fn build_embedded_downloader_config(config: &AppConfig) -> EmbeddedDownloaderCon
         priority_decay: 0.8,
         stall_timeout_secs: 600,
         total_timeout_secs: 14_400,
-        scheduler_interval_secs: 2,
+        scheduler_interval_secs: 1,
     }
 }
 
