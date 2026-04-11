@@ -24,7 +24,7 @@ const useStyles = makeStyles({
   },
   layout: {
     display: "grid",
-    gridTemplateColumns: "minmax(320px, 420px) minmax(420px, 1fr)",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
     gap: "16px",
     alignItems: "start",
     "@media (max-width: 1100px)": {
