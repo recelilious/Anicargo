@@ -195,65 +195,69 @@ export function SettingsPage() {
             ) : null}
           </Card>
 
-          <form onSubmit={(event) => void onLoginSubmit(event)}>
-            <Card className={`${styles.card} ${styles.form} app-motion-surface`} style={{ ["--motion-delay" as string]: "44ms" }}>
-              <div className={styles.titleGroup}>
-                <Text weight="semibold">登录账号</Text>
-                <Text size={300} className={styles.muted}>
-                  使用已有账号登录，登录后将切换到账号订阅模式。
-                </Text>
-              </div>
+          <MotionPresence show={isGuestViewer}>
+            <>
+              <form onSubmit={(event) => void onLoginSubmit(event)}>
+                <Card className={`${styles.card} ${styles.form} app-motion-surface`} style={{ ["--motion-delay" as string]: "44ms" }}>
+                  <div className={styles.titleGroup}>
+                    <Text weight="semibold">登录账号</Text>
+                    <Text size={300} className={styles.muted}>
+                      使用已有账号登录，登录后将切换到账号订阅模式。
+                    </Text>
+                  </div>
 
-              <Field label="用户名">
-                <Input
-                  value={loginForm.username}
-                  onChange={(_, data) => setLoginForm((current) => ({ ...current, username: data.value }))}
-                />
-              </Field>
+                  <Field label="用户名">
+                    <Input
+                      value={loginForm.username}
+                      onChange={(_, data) => setLoginForm((current) => ({ ...current, username: data.value }))}
+                    />
+                  </Field>
 
-              <Field label="密码">
-                <Input
-                  type="password"
-                  value={loginForm.password}
-                  onChange={(_, data) => setLoginForm((current) => ({ ...current, password: data.value }))}
-                />
-              </Field>
+                  <Field label="密码">
+                    <Input
+                      type="password"
+                      value={loginForm.password}
+                      onChange={(_, data) => setLoginForm((current) => ({ ...current, password: data.value }))}
+                    />
+                  </Field>
 
-              <Button type="submit" appearance="primary">
-                登录
-              </Button>
-            </Card>
-          </form>
+                  <Button type="submit" appearance="primary">
+                    登录
+                  </Button>
+                </Card>
+              </form>
 
-          <form onSubmit={(event) => void onRegisterSubmit(event)}>
-            <Card className={`${styles.card} ${styles.form} app-motion-surface`} style={{ ["--motion-delay" as string]: "88ms" }}>
-              <div className={styles.titleGroup}>
-                <Text weight="semibold">注册账号</Text>
-                <Text size={300} className={styles.muted}>
-                  注册后会立即切换到新账号，并使用账号身份保存订阅。
-                </Text>
-              </div>
+              <form onSubmit={(event) => void onRegisterSubmit(event)}>
+                <Card className={`${styles.card} ${styles.form} app-motion-surface`} style={{ ["--motion-delay" as string]: "88ms" }}>
+                  <div className={styles.titleGroup}>
+                    <Text weight="semibold">注册账号</Text>
+                    <Text size={300} className={styles.muted}>
+                      注册后会立即切换到新账号，并使用账号身份保存订阅。
+                    </Text>
+                  </div>
 
-              <Field label="用户名">
-                <Input
-                  value={registerForm.username}
-                  onChange={(_, data) => setRegisterForm((current) => ({ ...current, username: data.value }))}
-                />
-              </Field>
+                  <Field label="用户名">
+                    <Input
+                      value={registerForm.username}
+                      onChange={(_, data) => setRegisterForm((current) => ({ ...current, username: data.value }))}
+                    />
+                  </Field>
 
-              <Field label="密码">
-                <Input
-                  type="password"
-                  value={registerForm.password}
-                  onChange={(_, data) => setRegisterForm((current) => ({ ...current, password: data.value }))}
-                />
-              </Field>
+                  <Field label="密码">
+                    <Input
+                      type="password"
+                      value={registerForm.password}
+                      onChange={(_, data) => setRegisterForm((current) => ({ ...current, password: data.value }))}
+                    />
+                  </Field>
 
-              <Button type="submit" appearance="primary">
-                注册
-              </Button>
-            </Card>
-          </form>
+                  <Button type="submit" appearance="primary">
+                    注册
+                  </Button>
+                </Card>
+              </form>
+            </>
+          </MotionPresence>
         </div>
 
         <div className={styles.column}>
