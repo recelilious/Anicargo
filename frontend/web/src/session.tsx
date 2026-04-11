@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
-import { adminLogin, adminLogout, fetchBootstrap, login, logout, register } from "./api";
+import { adminLogin, adminLogout, fetchAdminDashboard, fetchBootstrap, login, logout, register } from "./api";
 import type { BootstrapResponse, ViewerSummary } from "./types";
 
 const DEVICE_KEY = "anicargo.device_id";
@@ -143,6 +143,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [userToken, setUserToken] = useState<string | null>(() => safeLocalStorageGet(USER_TOKEN_KEY));
   const [adminToken, setAdminToken] = useState<string | null>(() => safeLocalStorageGet(ADMIN_TOKEN_KEY));
   const [adminUsername, setAdminUsername] = useState<string | null>(() => safeLocalStorageGet(ADMIN_NAME_KEY));
+  const [adminVerified, setAdminVerified] = useState(false);
   const [systemTimeZone] = useState(() => detectSystemTimeZone());
   const [deepNightMode, setDeepNightModeState] = useState(() => ensureDeepNightMode());
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
@@ -156,6 +157,41 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refresh().finally(() => setIsReady(true));
   }, [deviceId, userToken]);
+
+  useEffect(() => {
+    if (!adminToken) {
+      setAdminVerified(false);
+      return;
+    }
+
+    const token = adminToken;
+    let cancelled = false;
+
+    async function verifyAdminSession() {
+      try {
+        await fetchAdminDashboard(deviceId, token);
+        if (!cancelled) {
+          setAdminVerified(true);
+        }
+      } catch {
+        if (cancelled) {
+          return;
+        }
+
+        safeLocalStorageRemove(ADMIN_TOKEN_KEY);
+        safeLocalStorageRemove(ADMIN_NAME_KEY);
+        setAdminToken(null);
+        setAdminUsername(null);
+        setAdminVerified(false);
+      }
+    }
+
+    void verifyAdminSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [adminToken, deviceId]);
 
   async function registerAccount(username: string, password: string) {
     const response = await register(username, password);
@@ -201,6 +237,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     safeLocalStorageSet(ADMIN_NAME_KEY, response.adminUsername);
     setAdminToken(response.token);
     setAdminUsername(response.adminUsername);
+    setAdminVerified(true);
   }
 
   async function logoutAdmin() {
@@ -212,6 +249,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     safeLocalStorageRemove(ADMIN_NAME_KEY);
     setAdminToken(null);
     setAdminUsername(null);
+    setAdminVerified(false);
   }
 
   function setDeepNightMode(next: boolean) {
@@ -233,7 +271,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }
 
   const isGuestViewer = bootstrap?.viewer.kind !== "user";
-  const isAdmin = Boolean(adminToken);
+  const isAdmin = Boolean(adminToken) && adminVerified;
   const displayName = isGuestViewer ? guestName : bootstrap?.viewer.label ?? guestName;
   const viewerModeLabel = isGuestViewer ? "设备订阅" : "账号订阅";
   const viewerSubline = isGuestViewer ? `设备 ${deviceId.slice(0, 8)}` : "账号已连接";
