@@ -20,26 +20,78 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: "18px",
+    minHeight: "100%",
   },
-  cards: {
+  layout: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+    gridTemplateColumns: "minmax(320px, 420px) minmax(420px, 1fr)",
     gap: "16px",
+    alignItems: "start",
+    "@media (max-width: 1100px)": {
+      gridTemplateColumns: "1fr",
+    },
+  },
+  column: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "16px",
+    minWidth: 0,
+  },
+  card: {
+    backgroundColor: "var(--app-surface-1)",
+    border: "1px solid var(--app-border)",
+    boxShadow: "var(--app-card-shadow)",
+    padding: "20px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "14px",
+  },
+  titleGroup: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
   },
   form: {
     display: "flex",
     flexDirection: "column",
     gap: "12px",
   },
+  identityGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gap: "10px",
+    "@media (max-width: 520px)": {
+      gridTemplateColumns: "1fr",
+    },
+  },
+  identityCell: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+    padding: "12px 14px",
+    borderRadius: "14px",
+    backgroundColor: "var(--app-surface-2)",
+    border: "1px solid var(--app-border)",
+  },
   muted: {
     color: "var(--app-muted)",
   },
-  card: {
-    backgroundColor: "var(--app-surface-1)",
-    border: "1px solid var(--app-border)",
-    boxShadow: "var(--app-card-shadow)",
+  hashValue: {
+    wordBreak: "break-all",
   },
 });
+
+function getIdentityLabel(isGuestViewer: boolean, isAdmin: boolean) {
+  if (isGuestViewer) {
+    return "游客设备";
+  }
+
+  if (isAdmin) {
+    return "管理员账号";
+  }
+
+  return "普通账号";
+}
 
 export function SettingsPage() {
   const styles = useStyles();
@@ -59,6 +111,9 @@ export function SettingsPage() {
   const [registerForm, setRegisterForm] = useState({ username: "", password: "" });
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [error, setError] = useState<string | null>(null);
+
+  const identityLabel = getIdentityLabel(isGuestViewer, isAdmin);
+  const identityHash = bootstrap?.deviceId ?? "—";
 
   async function onRegisterSubmit(event: FormEvent) {
     event.preventDefault();
@@ -90,102 +145,72 @@ export function SettingsPage() {
         {error ? <Text>{error}</Text> : null}
       </MotionPresence>
 
-      <div className={styles.cards}>
-        <Card className={`${styles.card} app-motion-surface`}>
-          <Text weight="semibold">身份</Text>
-          <Text>{isGuestViewer ? `游客：${displayName}` : `账号：${displayName}`}</Text>
-          <Text className={styles.muted}>{bootstrap?.deviceId}</Text>
-          {!isGuestViewer ? (
-            <Button appearance="secondary" onClick={() => void logoutAccount()}>
-              退出账号
-            </Button>
-          ) : null}
-        </Card>
+      <div className={styles.layout}>
+        <div className={styles.column}>
+          <Card className={`${styles.card} app-motion-surface`}>
+            <div className={styles.titleGroup}>
+              <Text weight="semibold">身份</Text>
+              <Text size={300} className={styles.muted}>
+                当前设备与账号身份信息会显示在这里。
+              </Text>
+            </div>
 
-        <Card className={`${styles.card} app-motion-surface`} style={{ ["--motion-delay" as string]: "44ms" }}>
-          <Text weight="semibold">外观</Text>
-          <RadioGroup
-            value={themePreference}
-            onChange={(_, data) => setThemePreference(data.value as "system" | "light" | "dark")}
-          >
-            <Radio value="system" label="跟随系统" />
-            <Radio value="light" label="浅色" />
-            <Radio value="dark" label="深色" />
-          </RadioGroup>
-          <Text size={300} className={styles.muted}>
-            当前生效：{resolvedAppearance === "dark" ? "深色" : "浅色"}
-          </Text>
-        </Card>
+            <div className={styles.identityGrid}>
+              <div className={styles.identityCell}>
+                <Text size={200} className={styles.muted}>
+                  当前身份
+                </Text>
+                <Text weight="semibold">{identityLabel}</Text>
+              </div>
 
-        <Card className={`${styles.card} app-motion-surface`} style={{ ["--motion-delay" as string]: "88ms" }}>
-          <Text weight="semibold">时间显示</Text>
-          <Switch
-            checked={deepNightMode}
-            label={deepNightMode ? "深夜模式已开启" : "深夜模式已关闭"}
-            onChange={(_, data) => setDeepNightMode(Boolean(data.checked))}
-          />
-          <Text size={300} className={styles.muted}>
-            当前时区：{systemTimeZone}
-          </Text>
-          <Text size={300} className={styles.muted}>
-            开启后，凌晨 06:00 之前会按前一日显示为 24+ 小时制。
-          </Text>
-        </Card>
+              <div className={styles.identityCell}>
+                <Text size={200} className={styles.muted}>
+                  名称
+                </Text>
+                <Text weight="semibold">{displayName}</Text>
+              </div>
 
-        <Card className={`${styles.card} app-motion-surface`} style={{ ["--motion-delay" as string]: "132ms" }}>
-          <Text weight="semibold">管理权限</Text>
-          {isGuestViewer ? (
-            <>
-              <Text>管理员功能跟随账号身份显示，游客状态下不会出现管理栏目。</Text>
-              <Text className={styles.muted}>使用管理员账号按正常账号流程登录后，左侧才会出现管理入口。</Text>
-            </>
-          ) : isAdmin ? (
-            <>
-              <Text>当前账号具备管理员权限。</Text>
-              <Text className={styles.muted}>左侧边栏已经开放管理栏目，可直接进入。</Text>
-            </>
-          ) : (
-            <>
-              <Text>当前账号没有管理员权限。</Text>
-              <Text className={styles.muted}>只有管理员账号按普通账号方式登录后，管理栏目才会显示。</Text>
-            </>
-          )}
-        </Card>
-      </div>
+              <div className={styles.identityCell}>
+                <Text size={200} className={styles.muted}>
+                  哈希码
+                </Text>
+                <Text weight="semibold" className={styles.hashValue}>
+                  {identityHash}
+                </Text>
+              </div>
+            </div>
 
-      <MotionPresence show={isGuestViewer}>
-        <div className={styles.cards}>
-          <form onSubmit={(event) => void onRegisterSubmit(event)}>
-            <Card className={`${styles.card} ${styles.form} app-motion-surface`}>
-              <Text weight="semibold">注册账号</Text>
-              <Field label="用户名">
-                <Input
-                  value={registerForm.username}
-                  onChange={(_, data) => setRegisterForm((current) => ({ ...current, username: data.value }))}
-                />
-              </Field>
-              <Field label="密码">
-                <Input
-                  type="password"
-                  value={registerForm.password}
-                  onChange={(_, data) => setRegisterForm((current) => ({ ...current, password: data.value }))}
-                />
-              </Field>
-              <Button type="submit" appearance="primary">
-                注册
+            <Text size={300} className={styles.muted}>
+              {isGuestViewer
+                ? "当前处于设备订阅模式。"
+                : isAdmin
+                  ? "当前账号已启用管理员权限，左侧会显示管理栏目。"
+                  : "当前账号已登录，可在不同设备间同步账号订阅。 "}
+            </Text>
+
+            {!isGuestViewer ? (
+              <Button appearance="secondary" onClick={() => void logoutAccount()}>
+                退出当前账号
               </Button>
-            </Card>
-          </form>
+            ) : null}
+          </Card>
 
           <form onSubmit={(event) => void onLoginSubmit(event)}>
             <Card className={`${styles.card} ${styles.form} app-motion-surface`} style={{ ["--motion-delay" as string]: "44ms" }}>
-              <Text weight="semibold">登录账号</Text>
+              <div className={styles.titleGroup}>
+                <Text weight="semibold">登录账号</Text>
+                <Text size={300} className={styles.muted}>
+                  使用已有账号登录，登录后将切换到账号订阅模式。
+                </Text>
+              </div>
+
               <Field label="用户名">
                 <Input
                   value={loginForm.username}
                   onChange={(_, data) => setLoginForm((current) => ({ ...current, username: data.value }))}
                 />
               </Field>
+
               <Field label="密码">
                 <Input
                   type="password"
@@ -193,13 +218,91 @@ export function SettingsPage() {
                   onChange={(_, data) => setLoginForm((current) => ({ ...current, password: data.value }))}
                 />
               </Field>
+
               <Button type="submit" appearance="primary">
                 登录
               </Button>
             </Card>
           </form>
+
+          <form onSubmit={(event) => void onRegisterSubmit(event)}>
+            <Card className={`${styles.card} ${styles.form} app-motion-surface`} style={{ ["--motion-delay" as string]: "88ms" }}>
+              <div className={styles.titleGroup}>
+                <Text weight="semibold">注册账号</Text>
+                <Text size={300} className={styles.muted}>
+                  注册后会立即切换到新账号，并使用账号身份保存订阅。
+                </Text>
+              </div>
+
+              <Field label="用户名">
+                <Input
+                  value={registerForm.username}
+                  onChange={(_, data) => setRegisterForm((current) => ({ ...current, username: data.value }))}
+                />
+              </Field>
+
+              <Field label="密码">
+                <Input
+                  type="password"
+                  value={registerForm.password}
+                  onChange={(_, data) => setRegisterForm((current) => ({ ...current, password: data.value }))}
+                />
+              </Field>
+
+              <Button type="submit" appearance="primary">
+                注册
+              </Button>
+            </Card>
+          </form>
         </div>
-      </MotionPresence>
+
+        <div className={styles.column}>
+          <Card className={`${styles.card} app-motion-surface`} style={{ ["--motion-delay" as string]: "132ms" }}>
+            <div className={styles.titleGroup}>
+              <Text weight="semibold">外观</Text>
+              <Text size={300} className={styles.muted}>
+                切换当前页面的明暗主题与跟随系统模式。
+              </Text>
+            </div>
+
+            <RadioGroup
+              value={themePreference}
+              onChange={(_, data) => setThemePreference(data.value as "system" | "light" | "dark")}
+            >
+              <Radio value="system" label="跟随系统" />
+              <Radio value="light" label="浅色" />
+              <Radio value="dark" label="深色" />
+            </RadioGroup>
+
+            <Text size={300} className={styles.muted}>
+              当前生效：{resolvedAppearance === "dark" ? "深色" : "浅色"}
+            </Text>
+          </Card>
+
+          <Card className={`${styles.card} app-motion-surface`} style={{ ["--motion-delay" as string]: "176ms" }}>
+            <div className={styles.titleGroup}>
+              <Text weight="semibold">时间显示</Text>
+              <Text size={300} className={styles.muted}>
+                控制时区展示方式与深夜模式的日期归属逻辑。
+              </Text>
+            </div>
+
+            <Switch
+              checked={deepNightMode}
+              label={deepNightMode ? "深夜模式已开启" : "深夜模式已关闭"}
+              onChange={(_, data) => setDeepNightMode(Boolean(data.checked))}
+            />
+
+            <Text size={300} className={styles.muted}>
+              当前时区：{systemTimeZone}
+            </Text>
+
+            <Text size={300} className={styles.muted}>
+              开启后，凌晨 06:00 之前会按前一日显示为 24+ 小时制。
+            </Text>
+          </Card>
+        </div>
+      </div>
     </MotionPage>
   );
 }
