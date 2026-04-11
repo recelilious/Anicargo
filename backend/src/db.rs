@@ -22,13 +22,7 @@ struct UserRow {
     id: i64,
     username: String,
     password_hash: String,
-}
-
-#[derive(Debug, FromRow)]
-struct AdminRow {
-    id: i64,
-    username: String,
-    password_hash: String,
+    is_admin: i64,
 }
 
 #[derive(Debug, FromRow)]
@@ -412,26 +406,46 @@ pub async fn connect_and_migrate(config: &AppConfig) -> anyhow::Result<SqlitePoo
 }
 
 pub async fn ensure_bootstrap_admin(pool: &SqlitePool, auth: &AuthConfig) -> Result<(), AppError> {
-    let existing = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM admin_accounts")
+    let existing_default_user = sqlx::query_scalar::<_, i64>("SELECT id FROM users WHERE username = ?1")
+        .bind(&auth.default_admin_username)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| AppError::internal("failed to query bootstrap admin user"))?;
+
+    if let Some(user_id) = existing_default_user {
+        sqlx::query("UPDATE users SET is_admin = 1 WHERE id = ?1")
+            .bind(user_id)
+            .execute(pool)
+            .await
+            .map_err(|_| AppError::internal("failed to promote bootstrap admin user"))?;
+        return Ok(());
+    }
+
+    let existing = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users WHERE is_admin = 1")
         .fetch_one(pool)
         .await
-        .map_err(|_| AppError::internal("failed to count admin accounts"))?;
+        .map_err(|_| AppError::internal("failed to count admin users"))?;
 
     if existing > 0 {
+        sqlx::query("UPDATE users SET is_admin = 1 WHERE username = ?1")
+            .bind(&auth.default_admin_username)
+            .execute(pool)
+            .await
+            .map_err(|_| AppError::internal("failed to refresh bootstrap admin flag"))?;
         return Ok(());
     }
 
     let password_hash = hash_password(&auth.default_admin_password)?;
 
     sqlx::query(
-        "INSERT INTO admin_accounts (username, password_hash, created_at) VALUES (?1, ?2, ?3)",
+        "INSERT INTO users (username, password_hash, is_admin, created_at) VALUES (?1, ?2, 1, ?3)",
     )
     .bind(&auth.default_admin_username)
     .bind(password_hash)
     .bind(now_string())
     .execute(pool)
     .await
-    .map_err(|_| AppError::internal("failed to create bootstrap admin"))?;
+    .map_err(|_| AppError::internal("failed to create bootstrap admin user"))?;
 
     Ok(())
 }
@@ -462,8 +476,9 @@ pub async fn register_user(
     let password_hash = hash_password(password)?;
     let created_at = now_string();
 
-    let result =
-        sqlx::query("INSERT INTO users (username, password_hash, created_at) VALUES (?1, ?2, ?3)")
+    let result = sqlx::query(
+        "INSERT INTO users (username, password_hash, is_admin, created_at) VALUES (?1, ?2, 0, ?3)",
+    )
             .bind(username)
             .bind(password_hash)
             .bind(created_at)
@@ -481,6 +496,7 @@ pub async fn register_user(
         ViewerIdentity::User {
             id: user_id,
             username: username.to_owned(),
+            is_admin: false,
         },
         token,
     ))
@@ -492,9 +508,8 @@ pub async fn login_user(
     password: &str,
     auth: &AuthConfig,
 ) -> Result<(ViewerIdentity, String), AppError> {
-    let Some(user) = sqlx::query_as::<_, UserRow>(
-        "SELECT id, username, password_hash FROM users WHERE username = ?1",
-    )
+    let Some(user) =
+        sqlx::query_as::<_, UserRow>("SELECT id, username, password_hash, is_admin FROM users WHERE username = ?1")
     .bind(username)
     .fetch_optional(pool)
     .await
@@ -513,37 +528,7 @@ pub async fn login_user(
         ViewerIdentity::User {
             id: user.id,
             username: user.username,
-        },
-        token,
-    ))
-}
-
-pub async fn login_admin(
-    pool: &SqlitePool,
-    username: &str,
-    password: &str,
-    auth: &AuthConfig,
-) -> Result<(AdminIdentity, String), AppError> {
-    let Some(admin) = sqlx::query_as::<_, AdminRow>(
-        "SELECT id, username, password_hash FROM admin_accounts WHERE username = ?1",
-    )
-    .bind(username)
-    .fetch_optional(pool)
-    .await
-    .map_err(|_| AppError::internal("failed to query admin account"))?
-    else {
-        return Err(AppError::unauthorized("invalid admin username or password"));
-    };
-
-    if !verify_password(&admin.password_hash, password) {
-        return Err(AppError::unauthorized("invalid admin username or password"));
-    }
-
-    let token = create_admin_session(pool, admin.id, auth.admin_session_hours).await?;
-
-    Ok((
-        AdminIdentity {
-            username: admin.username,
+            is_admin: user.is_admin != 0,
         },
         token,
     ))
@@ -553,8 +538,8 @@ pub async fn user_from_token(
     pool: &SqlitePool,
     token: &str,
 ) -> Result<Option<ViewerIdentity>, AppError> {
-    let row = sqlx::query_as::<_, (i64, String)>(
-        "SELECT users.id, users.username
+    let row = sqlx::query_as::<_, (i64, String, i64)>(
+        "SELECT users.id, users.username, users.is_admin
          FROM user_sessions
          INNER JOIN users ON users.id = user_sessions.user_id
          WHERE user_sessions.token = ?1 AND user_sessions.expires_at > ?2",
@@ -565,7 +550,36 @@ pub async fn user_from_token(
     .await
     .map_err(|_| AppError::internal("failed to read user session"))?;
 
-    Ok(row.map(|(id, username)| ViewerIdentity::User { id, username }))
+    Ok(row.map(|(id, username, is_admin)| ViewerIdentity::User {
+        id,
+        username,
+        is_admin: is_admin != 0,
+    }))
+}
+
+pub async fn admin_from_user_token(
+    pool: &SqlitePool,
+    token: &str,
+) -> Result<Option<AdminIdentity>, AppError> {
+    let row = sqlx::query_as::<_, (i64, String, i64)>(
+        "SELECT users.id, users.username, users.is_admin
+         FROM user_sessions
+         INNER JOIN users ON users.id = user_sessions.user_id
+         WHERE user_sessions.token = ?1 AND user_sessions.expires_at > ?2",
+    )
+    .bind(token)
+    .bind(now_string())
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| AppError::internal("failed to read admin-capable user session"))?;
+
+    Ok(row.and_then(|(_, username, is_admin)| {
+        if is_admin != 0 {
+            Some(AdminIdentity { username })
+        } else {
+            None
+        }
+    }))
 }
 
 pub async fn admin_from_token(
@@ -3008,29 +3022,6 @@ async fn create_user_session(
     .execute(pool)
     .await
     .map_err(|_| AppError::internal("failed to create user session"))?;
-
-    Ok(token)
-}
-
-async fn create_admin_session(
-    pool: &SqlitePool,
-    admin_id: i64,
-    hours: i64,
-) -> Result<String, AppError> {
-    let token = generate_token();
-    let created_at = Utc::now();
-    let expires_at = created_at + Duration::hours(hours);
-
-    sqlx::query(
-        "INSERT INTO admin_sessions (token, admin_id, created_at, expires_at) VALUES (?1, ?2, ?3, ?4)",
-    )
-    .bind(&token)
-    .bind(admin_id)
-    .bind(created_at.to_rfc3339())
-    .bind(expires_at.to_rfc3339())
-    .execute(pool)
-    .await
-    .map_err(|_| AppError::internal("failed to create admin session"))?;
 
     Ok(token)
 }

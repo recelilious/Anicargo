@@ -161,7 +161,7 @@ async fn bootstrap(
     Ok(Json(ApiEnvelope::new(BootstrapResponse {
         device_id,
         viewer: viewer_summary,
-        admin_path: "/admin".to_owned(),
+        admin_path: "/manage".to_owned(),
         policy,
     })))
 }
@@ -832,7 +832,7 @@ async fn admin_login(
     Json(payload): Json<CredentialsRequest>,
 ) -> Result<Json<ApiEnvelope<crate::types::AdminAuthResponse>>, AppError> {
     validate_credentials(&payload.username, &payload.password)?;
-    let (admin, token) = db::login_admin(
+    let (viewer, token) = db::login_user(
         &state.pool,
         &payload.username,
         &payload.password,
@@ -840,9 +840,22 @@ async fn admin_login(
     )
     .await?;
 
+    let ViewerIdentity::User {
+        username, is_admin, ..
+    } = viewer
+    else {
+        db::logout_user(&state.pool, &token).await?;
+        return Err(AppError::unauthorized("admin account login required"));
+    };
+
+    if !is_admin {
+        db::logout_user(&state.pool, &token).await?;
+        return Err(AppError::unauthorized("admin account login required"));
+    }
+
     Ok(Json(ApiEnvelope::new(crate::types::AdminAuthResponse {
         token,
-        admin_username: admin.username,
+        admin_username: username,
     })))
 }
 
@@ -850,11 +863,23 @@ async fn admin_logout(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<ApiEnvelope<bool>>, AppError> {
+    if let Some(token) = extract_user_token(&headers) {
+        db::logout_user(&state.pool, &token).await?;
+        return Ok(Json(ApiEnvelope::new(true)));
+    }
+
     let Some(token) = extract_admin_token(&headers) else {
-        return Err(AppError::unauthorized("missing admin token"));
+        return Err(AppError::unauthorized("missing admin identity"));
     };
 
-    db::logout_admin(&state.pool, &token).await?;
+    if db::admin_from_token(&state.pool, &token).await?.is_some() {
+        db::logout_admin(&state.pool, &token).await?;
+    } else if db::admin_from_user_token(&state.pool, &token).await?.is_some() {
+        db::logout_user(&state.pool, &token).await?;
+    } else {
+        return Err(AppError::unauthorized("invalid admin identity"));
+    }
+
     Ok(Json(ApiEnvelope::new(true)))
 }
 
@@ -1107,11 +1132,21 @@ async fn resolve_optional_viewer(
 }
 
 async fn require_admin(pool: &SqlitePool, headers: &HeaderMap) -> Result<AdminIdentity, AppError> {
+    if let Some(token) = extract_user_token(headers) {
+        if let Some(admin) = db::admin_from_user_token(pool, &token).await? {
+            return Ok(admin);
+        }
+    }
+
     let Some(token) = extract_admin_token(headers) else {
-        return Err(AppError::unauthorized("missing admin token"));
+        return Err(AppError::unauthorized("admin account login required"));
     };
 
-    db::admin_from_token(pool, &token)
+    if let Some(admin) = db::admin_from_token(pool, &token).await? {
+        return Ok(admin);
+    }
+
+    db::admin_from_user_token(pool, &token)
         .await?
         .ok_or_else(|| AppError::unauthorized("invalid admin token"))
 }
@@ -1123,7 +1158,11 @@ fn require_device_id(headers: &HeaderMap) -> Result<String, AppError> {
 fn viewer_to_summary(viewer: &ViewerIdentity) -> ViewerSummary {
     match viewer {
         ViewerIdentity::Device { id } => ViewerSummary::device(id.clone()),
-        ViewerIdentity::User { id, username, .. } => ViewerSummary::user(*id, username.clone()),
+        ViewerIdentity::User {
+            id,
+            username,
+            is_admin,
+        } => ViewerSummary::user(*id, username.clone(), *is_admin),
     }
 }
 
@@ -1135,7 +1174,7 @@ const CANDIDATE_MATERIALIZE_TIMEOUT_SECS: u64 = 20;
 fn viewer_to_download_requester(viewer: &ViewerIdentity) -> String {
     match viewer {
         ViewerIdentity::Device { id } => format!("device:{id}"),
-        ViewerIdentity::User { id, username } => format!("user:{id}:{username}"),
+        ViewerIdentity::User { id, username, .. } => format!("user:{id}:{username}"),
     }
 }
 

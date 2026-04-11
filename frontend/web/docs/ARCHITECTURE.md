@@ -5,7 +5,7 @@
 - `frontend/web/src/main.tsx`
 - `frontend/web/src/App.tsx`
 
-The app uses `react-router-dom` and a shared shell layout for all non-admin routes.
+The app uses `react-router-dom` and a shared shell layout for all routes. The management view is only exposed when the current logged-in account has admin privileges.
 
 ## 2. Route Map
 
@@ -19,7 +19,7 @@ The app uses `react-router-dom` and a shared shell layout for all non-admin rout
 - `/settings` -> `SettingsPage.tsx`
 - `/title/:subjectId` -> `SubjectPage.tsx`
 - `/watch/:subjectId/:episodeId` -> `WatchPage.tsx`
-- `/admin` -> `AdminPage.tsx`
+- `/manage` -> `AdminPage.tsx`
 
 ## 3. Layout And Shared UI
 

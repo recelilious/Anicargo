@@ -3,6 +3,7 @@ export type ViewerSummary = {
   id: number | null;
   label: string;
   deviceId: string | null;
+  isAdmin: boolean;
 };
 
 export type Policy = {
@@ -179,11 +180,6 @@ export type EpisodePlaybackResponse = {
 export type AuthResponse = {
   token: string;
   viewer: ViewerSummary;
-};
-
-export type AdminAuthResponse = {
-  token: string;
-  adminUsername: string;
 };
 
 export type AdminDashboardResponse = {

@@ -11,7 +11,7 @@ pub const DEVICE_ID_HEADER: &str = "x-anicargo-device-id";
 #[derive(Debug, Clone)]
 pub enum ViewerIdentity {
     Device { id: String },
-    User { id: i64, username: String },
+    User { id: i64, username: String, is_admin: bool },
 }
 
 #[derive(Debug, Clone)]

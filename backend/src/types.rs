@@ -103,6 +103,7 @@ pub struct ViewerSummary {
     pub id: Option<i64>,
     pub label: String,
     pub device_id: Option<String>,
+    pub is_admin: bool,
 }
 
 impl ViewerSummary {
@@ -112,15 +113,17 @@ impl ViewerSummary {
             id: None,
             label: "当前设备".to_owned(),
             device_id: Some(device_id),
+            is_admin: false,
         }
     }
 
-    pub fn user(id: i64, username: String) -> Self {
+    pub fn user(id: i64, username: String, is_admin: bool) -> Self {
         Self {
             kind: "user".to_owned(),
             id: Some(id),
             label: username,
             device_id: None,
+            is_admin,
         }
     }
 }

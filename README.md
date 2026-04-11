@@ -31,7 +31,7 @@ npm.cmd run dev
 3. Open the web app:
 
 - User UI: `http://127.0.0.1:5173`
-- Admin UI: `http://127.0.0.1:5173/admin`
+- Management UI: sign in with an admin-capable account, then open the `Manage` item in the sidebar
 
 Default bootstrap admin credentials come from the example config:
 
@@ -79,7 +79,7 @@ Important upstream usage notes:
 The repository already covers:
 
 - Current season calendar caching from Yuc plus Bangumi metadata/status enrichment.
-- Guest-first viewer flow with optional user accounts and a dedicated `/admin` surface.
+- Guest-first viewer flow with optional user accounts and an admin-capable account mode that unlocks the sidebar `Manage` surface after login.
 - Subscription-driven resource discovery and playback.
 - Embedded downloader integration with an optional standalone HTTP port.
 - A standalone metadata parsing library that can be embedded into backend workflows.

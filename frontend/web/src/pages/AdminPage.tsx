@@ -171,7 +171,7 @@ function formatExecutionProgress(execution: DownloadExecution | null) {
 
 export function ManagementPage() {
   const styles = useStyles();
-  const { deviceId, adminToken, adminUsername, isAdmin, logoutAdmin } = useSession();
+  const { deviceId, userToken, displayName, isAdmin, logoutAccount } = useSession();
 
   const [dashboard, setDashboard] = useState<AdminDashboardResponse | null>(null);
   const [runtime, setRuntime] = useState<AdminRuntimeResponse | null>(null);
@@ -194,11 +194,11 @@ export function ManagementPage() {
   useLoadingStatus(isLoading ? "正在同步管理状态..." : null);
 
   useEffect(() => {
-    if (!adminToken) {
+    if (!userToken) {
       return;
     }
 
-    const token = adminToken;
+    const token = userToken;
     let disposed = false;
 
     async function loadAdminState() {
@@ -242,10 +242,10 @@ export function ManagementPage() {
       disposed = true;
       window.clearInterval(interval);
     };
-  }, [adminToken, deviceId]);
+  }, [deviceId, userToken]);
 
   useEffect(() => {
-    if (!adminToken || !selectedJobId) {
+    if (!userToken || !selectedJobId) {
       setCandidates([]);
       setExecutions([]);
       setEvents([]);
@@ -253,7 +253,7 @@ export function ManagementPage() {
       return;
     }
 
-    const token = adminToken;
+    const token = userToken;
     const jobId = selectedJobId;
     let disposed = false;
 
@@ -287,15 +287,15 @@ export function ManagementPage() {
     return () => {
       disposed = true;
     };
-  }, [adminToken, deviceId, selectedJobId]);
+  }, [deviceId, selectedJobId, userToken]);
 
   useEffect(() => {
-    if (!adminToken || !selectedExecutionId) {
+    if (!userToken || !selectedExecutionId) {
       setEvents([]);
       return;
     }
 
-    const token = adminToken;
+    const token = userToken;
     const executionId = selectedExecutionId;
     let disposed = false;
 
@@ -317,15 +317,15 @@ export function ManagementPage() {
     return () => {
       disposed = true;
     };
-  }, [adminToken, deviceId, selectedExecutionId]);
+  }, [deviceId, selectedExecutionId, userToken]);
 
   async function onPolicySave(event: FormEvent) {
     event.preventDefault();
-    if (!adminToken || !dashboard) {
+    if (!userToken || !dashboard) {
       return;
     }
 
-    const token = adminToken;
+    const token = userToken;
     try {
       const policy = await updatePolicy(deviceId, token, dashboard.policy);
       setDashboard((current) => (current ? { ...current, policy } : current));
@@ -337,11 +337,11 @@ export function ManagementPage() {
 
   async function onRuleCreate(event: FormEvent) {
     event.preventDefault();
-    if (!adminToken) {
+    if (!userToken) {
       return;
     }
 
-    const token = adminToken;
+    const token = userToken;
     try {
       const nextRule = await createFansubRule(deviceId, token, ruleForm);
       setDashboard((current) =>
@@ -369,11 +369,11 @@ export function ManagementPage() {
   }
 
   async function onForceDownload() {
-    if (!adminToken || !forceSubjectId.trim()) {
+    if (!userToken || !forceSubjectId.trim()) {
       return;
     }
 
-    const token = adminToken;
+    const token = userToken;
     try {
       await forceAdminDownload(deviceId, token, Number(forceSubjectId));
       const downloadsResponse = await fetchAdminDownloads(deviceId, token);
@@ -387,11 +387,11 @@ export function ManagementPage() {
   }
 
   async function onActivateDownload(jobId: number) {
-    if (!adminToken) {
+    if (!userToken) {
       return;
     }
 
-    const token = adminToken;
+    const token = userToken;
     try {
       await activateAdminDownload(deviceId, token, jobId);
       const [executionResponse, downloadsResponse] = await Promise.all([
@@ -407,7 +407,7 @@ export function ManagementPage() {
     }
   }
 
-  async function onAdminLogout() {
+  async function onAccountLogout() {
     setDashboard(null);
     setRuntime(null);
     setDownloads([]);
@@ -416,16 +416,16 @@ export function ManagementPage() {
     setEvents([]);
     setSelectedJobId(null);
     setSelectedExecutionId(null);
-    await logoutAdmin();
+    await logoutAccount();
   }
 
-  if (!isAdmin || !adminToken) {
+  if (!isAdmin || !userToken) {
     return <Navigate to="/settings" replace />;
   }
 
   const selectedJob = downloads.find((job) => job.id === selectedJobId) ?? null;
   const selectedExecution = executions.find((execution) => execution.id === selectedExecutionId) ?? executions[0] ?? null;
-  const currentAdminLabel = adminUsername ?? dashboard?.adminUsername ?? "admin";
+  const currentAdminLabel = dashboard?.adminUsername ?? displayName;
 
   return (
     <MotionPage className={styles.page}>
@@ -439,7 +439,7 @@ export function ManagementPage() {
 
         <div className={styles.actions}>
           <Text className={styles.muted}>当前管理员 {currentAdminLabel}</Text>
-          <Button appearance="secondary" onClick={() => void onAdminLogout()}>
+          <Button appearance="secondary" onClick={() => void onAccountLogout()}>
             退出管理员
           </Button>
         </div>

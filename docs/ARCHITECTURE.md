@@ -123,7 +123,7 @@ Page routing:
 - `/settings` -> `frontend/web/src/pages/SettingsPage.tsx`
 - `/title/:subjectId` -> `frontend/web/src/pages/SubjectPage.tsx`
 - `/watch/:subjectId/:episodeId` -> `frontend/web/src/pages/WatchPage.tsx`
-- `/admin` -> `frontend/web/src/pages/AdminPage.tsx`
+- `/manage` -> `frontend/web/src/pages/AdminPage.tsx`
 
 ## 6. Downloader Service Feature Map
 

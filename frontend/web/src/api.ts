@@ -1,6 +1,5 @@
 import type {
   ActiveDownloadsResponse,
-  AdminAuthResponse,
   AdminDashboardResponse,
   AdminRuntimeResponse,
   AuthResponse,
@@ -200,72 +199,60 @@ export function logout(userToken: string) {
   return request<boolean>("/api/auth/logout", { method: "POST" }, undefined, userToken);
 }
 
-export function adminLogin(username: string, password: string) {
-  return request<AdminAuthResponse>("/api/admin/login", {
-    method: "POST",
-    body: JSON.stringify({ username, password })
-  });
+export function fetchAdminDashboard(deviceId: string, userToken: string) {
+  return request<AdminDashboardResponse>("/api/admin/dashboard", {}, deviceId, userToken);
 }
 
-export function fetchAdminDashboard(deviceId: string, adminToken: string) {
-  return request<AdminDashboardResponse>("/api/admin/dashboard", {}, deviceId, undefined, adminToken);
+export function fetchAdminRuntime(deviceId: string, userToken: string) {
+  return request<AdminRuntimeResponse>("/api/admin/runtime", {}, deviceId, userToken);
 }
 
-export function fetchAdminRuntime(deviceId: string, adminToken: string) {
-  return request<AdminRuntimeResponse>("/api/admin/runtime", {}, deviceId, undefined, adminToken);
+export function fetchAdminDownloads(deviceId: string, userToken: string) {
+  return request<{ items: DownloadJob[] }>("/api/admin/downloads", {}, deviceId, userToken);
 }
 
-export function fetchAdminDownloads(deviceId: string, adminToken: string) {
-  return request<{ items: DownloadJob[] }>("/api/admin/downloads", {}, deviceId, undefined, adminToken);
-}
-
-export function fetchAdminDownloadCandidates(deviceId: string, adminToken: string, jobId: number) {
+export function fetchAdminDownloadCandidates(deviceId: string, userToken: string, jobId: number) {
   return request<{ downloadJobId: number; items: ResourceCandidate[] }>(
     `/api/admin/downloads/${jobId}/candidates`,
     {},
     deviceId,
-    undefined,
-    adminToken
+    userToken
   );
 }
 
-export function fetchAdminDownloadExecutions(deviceId: string, adminToken: string, jobId: number) {
+export function fetchAdminDownloadExecutions(deviceId: string, userToken: string, jobId: number) {
   return request<{ downloadJobId: number; items: DownloadExecution[] }>(
     `/api/admin/downloads/${jobId}/executions`,
     {},
     deviceId,
-    undefined,
-    adminToken
+    userToken
   );
 }
 
-export function fetchAdminExecutionEvents(deviceId: string, adminToken: string, executionId: number) {
+export function fetchAdminExecutionEvents(deviceId: string, userToken: string, executionId: number) {
   return request<{ downloadExecutionId: number; items: DownloadExecutionEvent[] }>(
     `/api/admin/executions/${executionId}/events`,
     {},
     deviceId,
-    undefined,
-    adminToken
+    userToken
   );
 }
 
-export function forceAdminDownload(deviceId: string, adminToken: string, subjectId: number) {
+export function forceAdminDownload(deviceId: string, userToken: string, subjectId: number) {
   return request<{ bangumiSubjectId: number }>(
     `/api/admin/downloads/${subjectId}/force`,
     { method: "POST" },
     deviceId,
-    undefined,
-    adminToken
+    userToken
   );
 }
 
-export function activateAdminDownload(deviceId: string, adminToken: string, jobId: number) {
+export function activateAdminDownload(deviceId: string, userToken: string, jobId: number) {
   return request<{ downloadJobId: number }>(
     `/api/admin/downloads/${jobId}/execute`,
     { method: "POST" },
     deviceId,
-    undefined,
-    adminToken
+    userToken
   );
 }
 
@@ -277,7 +264,7 @@ export function fetchActiveDownloads(deviceId: string, userToken: string | null)
   return request<ActiveDownloadsResponse>("/api/public/downloads/active", {}, deviceId, userToken ?? undefined);
 }
 
-export function updatePolicy(deviceId: string, adminToken: string, policy: Policy) {
+export function updatePolicy(deviceId: string, userToken: string, policy: Policy) {
   return request<Policy>(
     "/api/admin/policy",
     {
@@ -285,14 +272,13 @@ export function updatePolicy(deviceId: string, adminToken: string, policy: Polic
       body: JSON.stringify(policy)
     },
     deviceId,
-    undefined,
-    adminToken
+    userToken
   );
 }
 
 export function createFansubRule(
   deviceId: string,
-  adminToken: string,
+  userToken: string,
   payload: { fansubName: string; localePreference: string; priority: number; isBlacklist: boolean }
 ) {
   return request<AdminDashboardResponse["fansubRules"][number]>(
@@ -302,11 +288,6 @@ export function createFansubRule(
       body: JSON.stringify(payload)
     },
     deviceId,
-    undefined,
-    adminToken
+    userToken
   );
-}
-
-export function adminLogout(deviceId: string, adminToken: string) {
-  return request<boolean>("/api/admin/logout", { method: "POST" }, deviceId, undefined, adminToken);
 }

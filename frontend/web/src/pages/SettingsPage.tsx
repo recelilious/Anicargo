@@ -8,7 +8,7 @@ import {
   RadioGroup,
   Switch,
   Text,
-  makeStyles
+  makeStyles,
 } from "@fluentui/react-components";
 
 import { useAppearance } from "../appearance";
@@ -19,51 +19,46 @@ const useStyles = makeStyles({
   page: {
     display: "flex",
     flexDirection: "column",
-    gap: "18px"
+    gap: "18px",
   },
   cards: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-    gap: "16px"
+    gap: "16px",
   },
   form: {
     display: "flex",
     flexDirection: "column",
-    gap: "12px"
+    gap: "12px",
   },
   muted: {
-    color: "var(--app-muted)"
+    color: "var(--app-muted)",
   },
   card: {
     backgroundColor: "var(--app-surface-1)",
     border: "1px solid var(--app-border)",
-    boxShadow: "var(--app-card-shadow)"
-  }
+    boxShadow: "var(--app-card-shadow)",
+  },
 });
 
 export function SettingsPage() {
   const styles = useStyles();
   const {
-    adminUsername,
     bootstrap,
     deepNightMode,
     displayName,
     isAdmin,
     isGuestViewer,
-    loginAdmin,
     loginAccount,
-    logoutAdmin,
     logoutAccount,
     registerAccount,
     setDeepNightMode,
-    systemTimeZone
+    systemTimeZone,
   } = useSession();
   const { themePreference, resolvedAppearance, setThemePreference } = useAppearance();
   const [registerForm, setRegisterForm] = useState({ username: "", password: "" });
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
-  const [adminForm, setAdminForm] = useState({ username: "", password: "" });
   const [error, setError] = useState<string | null>(null);
-  const [adminError, setAdminError] = useState<string | null>(null);
 
   async function onRegisterSubmit(event: FormEvent) {
     event.preventDefault();
@@ -86,18 +81,6 @@ export function SettingsPage() {
       setError(null);
     } catch (nextError) {
       setError((nextError as Error).message);
-    }
-  }
-
-  async function onAdminLoginSubmit(event: FormEvent) {
-    event.preventDefault();
-
-    try {
-      await loginAdmin(adminForm.username, adminForm.password);
-      setAdminForm({ username: "", password: "" });
-      setAdminError(null);
-    } catch (nextError) {
-      setAdminError((nextError as Error).message);
     }
   }
 
@@ -150,40 +133,22 @@ export function SettingsPage() {
         </Card>
 
         <Card className={`${styles.card} app-motion-surface`} style={{ ["--motion-delay" as string]: "132ms" }}>
-          <Text weight="semibold">管理</Text>
-          {isAdmin ? (
+          <Text weight="semibold">管理权限</Text>
+          {isGuestViewer ? (
             <>
-              <Text>{adminUsername ? `管理员：${adminUsername}` : "管理员已登录"}</Text>
-              <Button appearance="secondary" onClick={() => void logoutAdmin()}>
-                退出管理员
-              </Button>
+              <Text>管理员功能跟随账号身份显示，游客状态下不会出现管理栏目。</Text>
+              <Text className={styles.muted}>使用管理员账号按正常账号流程登录后，左侧才会出现管理入口。</Text>
+            </>
+          ) : isAdmin ? (
+            <>
+              <Text>当前账号具备管理员权限。</Text>
+              <Text className={styles.muted}>左侧边栏已经开放管理栏目，可直接进入。</Text>
             </>
           ) : (
-            <form className={styles.form} onSubmit={(event) => void onAdminLoginSubmit(event)}>
-              <Field label="管理员用户名">
-                <Input
-                  value={adminForm.username}
-                  onChange={(_, data) =>
-                    setAdminForm((current) => ({ ...current, username: data.value }))
-                  }
-                />
-              </Field>
-              <Field label="管理员密码">
-                <Input
-                  type="password"
-                  value={adminForm.password}
-                  onChange={(_, data) =>
-                    setAdminForm((current) => ({ ...current, password: data.value }))
-                  }
-                />
-              </Field>
-              <Button type="submit" appearance="secondary">
-                登录管理员
-              </Button>
-              <MotionPresence show={Boolean(adminError)} mode="soft">
-                {adminError ? <Text>{adminError}</Text> : null}
-              </MotionPresence>
-            </form>
+            <>
+              <Text>当前账号没有管理员权限。</Text>
+              <Text className={styles.muted}>只有管理员账号按普通账号方式登录后，管理栏目才会显示。</Text>
+            </>
           )}
         </Card>
       </div>
@@ -196,18 +161,14 @@ export function SettingsPage() {
               <Field label="用户名">
                 <Input
                   value={registerForm.username}
-                  onChange={(_, data) =>
-                    setRegisterForm((current) => ({ ...current, username: data.value }))
-                  }
+                  onChange={(_, data) => setRegisterForm((current) => ({ ...current, username: data.value }))}
                 />
               </Field>
               <Field label="密码">
                 <Input
                   type="password"
                   value={registerForm.password}
-                  onChange={(_, data) =>
-                    setRegisterForm((current) => ({ ...current, password: data.value }))
-                  }
+                  onChange={(_, data) => setRegisterForm((current) => ({ ...current, password: data.value }))}
                 />
               </Field>
               <Button type="submit" appearance="primary">
@@ -222,18 +183,14 @@ export function SettingsPage() {
               <Field label="用户名">
                 <Input
                   value={loginForm.username}
-                  onChange={(_, data) =>
-                    setLoginForm((current) => ({ ...current, username: data.value }))
-                  }
+                  onChange={(_, data) => setLoginForm((current) => ({ ...current, username: data.value }))}
                 />
               </Field>
               <Field label="密码">
                 <Input
                   type="password"
                   value={loginForm.password}
-                  onChange={(_, data) =>
-                    setLoginForm((current) => ({ ...current, password: data.value }))
-                  }
+                  onChange={(_, data) => setLoginForm((current) => ({ ...current, password: data.value }))}
                 />
               </Field>
               <Button type="submit" appearance="primary">

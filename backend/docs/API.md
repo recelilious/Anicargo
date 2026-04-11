@@ -24,7 +24,8 @@ All JSON responses are wrapped as:
 
 ### Admin
 
-- `x-anicargo-admin-token: <admin-token>`
+- Preferred: `Authorization: Bearer <user-token>` for an account with `is_admin = true`
+- Legacy compatibility: `x-anicargo-admin-token: <admin-token>`
 
 ## 2. Public Routes
 
@@ -85,8 +86,8 @@ Search supports the filters currently wired in the web client and backend:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/api/admin/login` | Admin login |
-| POST | `/api/admin/logout` | Admin logout |
+| POST | `/api/admin/login` | Compatibility login that accepts a normal user credential pair and succeeds only for an admin-capable account |
+| POST | `/api/admin/logout` | End the current admin-capable session |
 | GET | `/api/admin/dashboard` | Counts, policy, fansub rules |
 | GET | `/api/admin/runtime` | Runtime telemetry snapshot |
 | GET | `/api/admin/downloads` | Download jobs |
@@ -97,6 +98,8 @@ Search supports the filters currently wired in the web client and backend:
 | POST | `/api/admin/downloads/{subject_id}/force` | Force a subject into the pipeline |
 | PUT | `/api/admin/policy` | Update policy values |
 | POST | `/api/admin/fansub-rules` | Add or update fansub policy rules |
+
+Admin routes are intended to be called with the same login session used by normal user pages. The web client no longer uses a separate admin-only sign-in flow.
 
 ## 5. Playback Notes
 

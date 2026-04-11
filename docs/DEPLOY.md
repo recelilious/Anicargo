@@ -6,7 +6,7 @@ This document describes how to run the full repository locally and what to chang
 
 Anicargo currently has three active runtime components:
 
-- `backend/`: the main API, scheduler, metadata cache, playback service, and admin surface.
+- `backend/`: the main API, scheduler, metadata cache, playback service, and management APIs.
 - `frontend/web/`: the web UI.
 - `services/downloader/`: the torrent engine module used by the backend, optionally exposed as its own HTTP service.
 
@@ -53,7 +53,7 @@ npm.cmd run dev
 Open:
 
 - `http://127.0.0.1:5173`
-- `http://127.0.0.1:5173/admin`
+- Sign in with an admin-capable account, then open the `Manage` item in the sidebar
 
 ## 4. LAN Development
 
