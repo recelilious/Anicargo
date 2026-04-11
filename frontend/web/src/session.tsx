@@ -1,11 +1,13 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
-import { fetchBootstrap, login, logout, register } from "./api";
+import { adminLogin, adminLogout, fetchBootstrap, login, logout, register } from "./api";
 import type { BootstrapResponse, ViewerSummary } from "./types";
 
 const DEVICE_KEY = "anicargo.device_id";
 const GUEST_NAME_KEY = "anicargo.guest_name";
 const USER_TOKEN_KEY = "anicargo.user_token";
+const ADMIN_TOKEN_KEY = "anicargo.admin_token";
+const ADMIN_NAME_KEY = "anicargo.admin_username";
 const DEEP_NIGHT_MODE_KEY = "anicargo.deep_night_mode";
 const GUEST_PREFIXES = ["晨星", "雾海", "白塔", "晴岚", "落樱", "月砂", "霜原", "潮音"];
 const GUEST_SUFFIXES = ["旅人", "观测者", "追番者", "记录员", "领航员", "收藏家", "放映员", "信使"];
@@ -15,18 +17,23 @@ type SessionContextValue = {
   deviceId: string;
   guestName: string;
   userToken: string | null;
+  adminToken: string | null;
+  adminUsername: string | null;
   systemTimeZone: string;
   deepNightMode: boolean;
   displayName: string;
   viewerModeLabel: string;
   viewerSubline: string;
   isGuestViewer: boolean;
+  isAdmin: boolean;
   isReady: boolean;
   refresh: () => Promise<void>;
   setDeepNightMode: (next: boolean) => void;
   registerAccount: (username: string, password: string) => Promise<void>;
   loginAccount: (username: string, password: string) => Promise<void>;
   logoutAccount: () => Promise<void>;
+  loginAdmin: (username: string, password: string) => Promise<void>;
+  logoutAdmin: () => Promise<void>;
   setViewerFromAuth: (viewer: ViewerSummary, token: string) => void;
 };
 
@@ -134,6 +141,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [deviceId] = useState(() => ensureDeviceId());
   const [guestName] = useState(() => ensureGuestName(deviceId));
   const [userToken, setUserToken] = useState<string | null>(() => safeLocalStorageGet(USER_TOKEN_KEY));
+  const [adminToken, setAdminToken] = useState<string | null>(() => safeLocalStorageGet(ADMIN_TOKEN_KEY));
+  const [adminUsername, setAdminUsername] = useState<string | null>(() => safeLocalStorageGet(ADMIN_NAME_KEY));
   const [systemTimeZone] = useState(() => detectSystemTimeZone());
   const [deepNightMode, setDeepNightModeState] = useState(() => ensureDeepNightMode());
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
@@ -186,6 +195,25 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     await refresh();
   }
 
+  async function loginAdmin(username: string, password: string) {
+    const response = await adminLogin(username, password);
+    safeLocalStorageSet(ADMIN_TOKEN_KEY, response.token);
+    safeLocalStorageSet(ADMIN_NAME_KEY, response.adminUsername);
+    setAdminToken(response.token);
+    setAdminUsername(response.adminUsername);
+  }
+
+  async function logoutAdmin() {
+    if (adminToken) {
+      await adminLogout(deviceId, adminToken);
+    }
+
+    safeLocalStorageRemove(ADMIN_TOKEN_KEY);
+    safeLocalStorageRemove(ADMIN_NAME_KEY);
+    setAdminToken(null);
+    setAdminUsername(null);
+  }
+
   function setDeepNightMode(next: boolean) {
     safeLocalStorageSet(DEEP_NIGHT_MODE_KEY, String(next));
     setDeepNightModeState(next);
@@ -205,6 +233,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }
 
   const isGuestViewer = bootstrap?.viewer.kind !== "user";
+  const isAdmin = Boolean(adminToken);
   const displayName = isGuestViewer ? guestName : bootstrap?.viewer.label ?? guestName;
   const viewerModeLabel = isGuestViewer ? "设备订阅" : "账号订阅";
   const viewerSubline = isGuestViewer ? `设备 ${deviceId.slice(0, 8)}` : "账号已连接";
@@ -214,18 +243,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     deviceId,
     guestName,
     userToken,
+    adminToken,
+    adminUsername,
     systemTimeZone,
     deepNightMode,
     displayName,
     viewerModeLabel,
     viewerSubline,
     isGuestViewer,
+    isAdmin,
     isReady,
     refresh,
     setDeepNightMode,
     registerAccount,
     loginAccount,
     logoutAccount,
+    loginAdmin,
+    logoutAdmin,
     setViewerFromAuth
   };
 

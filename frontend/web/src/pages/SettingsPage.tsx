@@ -44,11 +44,15 @@ const useStyles = makeStyles({
 export function SettingsPage() {
   const styles = useStyles();
   const {
+    adminUsername,
     bootstrap,
     deepNightMode,
     displayName,
+    isAdmin,
     isGuestViewer,
+    loginAdmin,
     loginAccount,
+    logoutAdmin,
     logoutAccount,
     registerAccount,
     setDeepNightMode,
@@ -57,7 +61,9 @@ export function SettingsPage() {
   const { themePreference, resolvedAppearance, setThemePreference } = useAppearance();
   const [registerForm, setRegisterForm] = useState({ username: "", password: "" });
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
+  const [adminForm, setAdminForm] = useState({ username: "", password: "" });
   const [error, setError] = useState<string | null>(null);
+  const [adminError, setAdminError] = useState<string | null>(null);
 
   async function onRegisterSubmit(event: FormEvent) {
     event.preventDefault();
@@ -80,6 +86,18 @@ export function SettingsPage() {
       setError(null);
     } catch (nextError) {
       setError((nextError as Error).message);
+    }
+  }
+
+  async function onAdminLoginSubmit(event: FormEvent) {
+    event.preventDefault();
+
+    try {
+      await loginAdmin(adminForm.username, adminForm.password);
+      setAdminForm({ username: "", password: "" });
+      setAdminError(null);
+    } catch (nextError) {
+      setAdminError((nextError as Error).message);
     }
   }
 
@@ -129,6 +147,44 @@ export function SettingsPage() {
           <Text size={300} className={styles.muted}>
             开启后，凌晨 06:00 之前会按前一日显示为 24+ 小时制。
           </Text>
+        </Card>
+
+        <Card className={`${styles.card} app-motion-surface`} style={{ ["--motion-delay" as string]: "132ms" }}>
+          <Text weight="semibold">管理</Text>
+          {isAdmin ? (
+            <>
+              <Text>{adminUsername ? `管理员：${adminUsername}` : "管理员已登录"}</Text>
+              <Button appearance="secondary" onClick={() => void logoutAdmin()}>
+                退出管理员
+              </Button>
+            </>
+          ) : (
+            <form className={styles.form} onSubmit={(event) => void onAdminLoginSubmit(event)}>
+              <Field label="管理员用户名">
+                <Input
+                  value={adminForm.username}
+                  onChange={(_, data) =>
+                    setAdminForm((current) => ({ ...current, username: data.value }))
+                  }
+                />
+              </Field>
+              <Field label="管理员密码">
+                <Input
+                  type="password"
+                  value={adminForm.password}
+                  onChange={(_, data) =>
+                    setAdminForm((current) => ({ ...current, password: data.value }))
+                  }
+                />
+              </Field>
+              <Button type="submit" appearance="secondary">
+                登录管理员
+              </Button>
+              <MotionPresence show={Boolean(adminError)} mode="soft">
+                {adminError ? <Text>{adminError}</Text> : null}
+              </MotionPresence>
+            </form>
+          )}
         </Card>
       </div>
 

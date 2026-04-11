@@ -5,7 +5,8 @@ import {
   CalendarLtrRegular,
   HistoryRegular,
   SearchRegular,
-  SettingsRegular
+  SettingsRegular,
+  ShieldRegular
 } from "@fluentui/react-icons";
 import { Button, Text, makeStyles, tokens } from "@fluentui/react-components";
 import { NavLink, useLocation, useOutlet } from "react-router-dom";
@@ -110,7 +111,7 @@ export function AppShell() {
   const styles = useStyles();
   const location = useLocation();
   const outlet = useOutlet();
-  const { deviceId, userToken } = useSession();
+  const { deviceId, userToken, isAdmin } = useSession();
   const [catalogManifest, setCatalogManifest] = useState({
     previewAvailable: false
   });
@@ -167,8 +168,12 @@ export function AppShell() {
       { to: "/settings", label: "设置", icon: SettingsRegular }
     );
 
+    if (isAdmin) {
+      items.push({ to: "/manage", label: "管理", icon: ShieldRegular });
+    }
+
     return items;
-  }, [catalogManifest.previewAvailable]);
+  }, [catalogManifest.previewAvailable, isAdmin]);
 
   return (
     <div className={styles.layout}>

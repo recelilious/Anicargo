@@ -1,4 +1,5 @@
 import { type FormEvent, useEffect, useState } from "react";
+import { Navigate } from "react-router-dom";
 import {
   Badge,
   Button,
@@ -7,13 +8,11 @@ import {
   Input,
   Switch,
   Text,
-  makeStyles
+  makeStyles,
 } from "@fluentui/react-components";
 
 import {
   activateAdminDownload,
-  adminLogin,
-  adminLogout,
   createFansubRule,
   fetchAdminDashboard,
   fetchAdminDownloadCandidates,
@@ -22,7 +21,7 @@ import {
   fetchAdminExecutionEvents,
   fetchAdminRuntime,
   forceAdminDownload,
-  updatePolicy
+  updatePolicy,
 } from "../api";
 import { useLoadingStatus } from "../loading-status";
 import { MotionPage, MotionPresence, motionDelayStyle } from "../motion";
@@ -33,45 +32,42 @@ import type {
   DownloadExecution,
   DownloadExecutionEvent,
   DownloadJob,
-  ResourceCandidate
+  ResourceCandidate,
 } from "../types";
-
-const ADMIN_TOKEN_KEY = "anicargo.admin_token";
 
 const useStyles = makeStyles({
   page: {
-    minHeight: "100vh",
-    padding: "28px",
+    minHeight: "100%",
     display: "flex",
     flexDirection: "column",
     gap: "18px",
-    backgroundColor: "var(--app-bg)"
   },
   header: {
-    padding: "18px 20px",
+    padding: "20px 22px",
     display: "flex",
     justifyContent: "space-between",
+    alignItems: "flex-start",
     gap: "16px",
-    alignItems: "center",
     backgroundColor: "var(--app-surface-1)",
     border: "1px solid var(--app-border)",
-    boxShadow: "var(--app-card-shadow)"
+    boxShadow: "var(--app-card-shadow)",
   },
   grid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: "12px"
+    gap: "12px",
   },
   layout: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 1.1fr) minmax(360px, 0.9fr)",
+    gridTemplateColumns: "minmax(0, 1.1fr) minmax(340px, 0.9fr)",
     gap: "18px",
-    alignItems: "start"
+    alignItems: "start",
   },
   column: {
     display: "flex",
     flexDirection: "column",
-    gap: "18px"
+    gap: "18px",
+    minWidth: 0,
   },
   panel: {
     padding: "18px 20px",
@@ -80,17 +76,18 @@ const useStyles = makeStyles({
     gap: "14px",
     backgroundColor: "var(--app-surface-1)",
     border: "1px solid var(--app-border)",
-    boxShadow: "var(--app-card-shadow)"
+    boxShadow: "var(--app-card-shadow)",
+    minWidth: 0,
   },
   form: {
     display: "flex",
     flexDirection: "column",
-    gap: "12px"
+    gap: "12px",
   },
   downloadsList: {
     display: "flex",
     flexDirection: "column",
-    gap: "10px"
+    gap: "10px",
   },
   downloadCard: {
     padding: "14px 16px",
@@ -98,36 +95,43 @@ const useStyles = makeStyles({
     flexDirection: "column",
     gap: "8px",
     backgroundColor: "var(--app-surface-2)",
-    border: "1px solid var(--app-border)"
+    border: "1px solid var(--app-border)",
+    minWidth: 0,
   },
   activeDownloadCard: {
-    outline: "2px solid var(--app-selected-fg)"
+    outline: "2px solid var(--app-selected-fg)",
   },
   cardRow: {
     display: "flex",
     justifyContent: "space-between",
     gap: "12px",
     alignItems: "center",
-    flexWrap: "wrap"
+    flexWrap: "wrap",
   },
   compactGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-    gap: "10px"
+    gap: "10px",
   },
   muted: {
-    color: "var(--app-muted)"
+    color: "var(--app-muted)",
   },
   actions: {
     display: "flex",
     gap: "10px",
-    flexWrap: "wrap"
+    flexWrap: "wrap",
   },
   stack: {
     display: "flex",
     flexDirection: "column",
-    gap: "10px"
-  }
+    gap: "10px",
+    minWidth: 0,
+  },
+  summaryValue: {
+    fontSize: "22px",
+    fontWeight: 700,
+    lineHeight: 1.2,
+  },
 });
 
 function formatBytes(value: number) {
@@ -138,6 +142,7 @@ function formatBytes(value: number) {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let size = value;
   let unitIndex = 0;
+
   while (size >= 1024 && unitIndex < units.length - 1) {
     size /= 1024;
     unitIndex += 1;
@@ -152,7 +157,7 @@ function formatSpeed(value: number) {
 
 function formatExecutionProgress(execution: DownloadExecution | null) {
   if (!execution) {
-    return "暂无执行";
+    return "No active execution";
   }
 
   const totalBytes = Math.max(execution.sourceSizeBytes, execution.downloadedBytes);
@@ -164,10 +169,10 @@ function formatExecutionProgress(execution: DownloadExecution | null) {
   return formatBytes(execution.downloadedBytes);
 }
 
-export function AdminPage() {
+export function ManagementPage() {
   const styles = useStyles();
-  const { deviceId } = useSession();
-  const [token, setToken] = useState<string | null>(() => window.localStorage.getItem(ADMIN_TOKEN_KEY));
+  const { deviceId, adminToken, adminUsername, isAdmin, logoutAdmin } = useSession();
+
   const [dashboard, setDashboard] = useState<AdminDashboardResponse | null>(null);
   const [runtime, setRuntime] = useState<AdminRuntimeResponse | null>(null);
   const [downloads, setDownloads] = useState<DownloadJob[]>([]);
@@ -178,52 +183,51 @@ export function AdminPage() {
   const [selectedExecutionId, setSelectedExecutionId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  useLoadingStatus(isLoading ? "正在同步管理状态..." : null);
-  const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [forceSubjectId, setForceSubjectId] = useState("");
   const [ruleForm, setRuleForm] = useState({
     fansubName: "",
     localePreference: "zh-Hans",
     priority: 50,
-    isBlacklist: false
+    isBlacklist: false,
   });
 
+  useLoadingStatus(isLoading ? "正在同步管理状态..." : null);
+
   useEffect(() => {
-    if (!token) {
+    if (!adminToken) {
       return;
     }
 
-    const adminToken = token;
-    let isMounted = true;
+    const token = adminToken;
+    let disposed = false;
 
     async function loadAdminState() {
       setIsLoading(true);
+
       try {
         const [dashboardResponse, runtimeResponse, downloadsResponse] = await Promise.all([
-          fetchAdminDashboard(deviceId, adminToken),
-          fetchAdminRuntime(deviceId, adminToken),
-          fetchAdminDownloads(deviceId, adminToken)
+          fetchAdminDashboard(deviceId, token),
+          fetchAdminRuntime(deviceId, token),
+          fetchAdminDownloads(deviceId, token),
         ]);
 
-        if (!isMounted) {
+        if (disposed) {
           return;
         }
 
         setDashboard(dashboardResponse);
         setRuntime(runtimeResponse);
         setDownloads(downloadsResponse.items);
-        setSelectedJobId((current) => current ?? downloadsResponse.items[0]?.id ?? null);
+        setSelectedJobId((current) =>
+          downloadsResponse.items.some((job) => job.id === current) ? current : (downloadsResponse.items[0]?.id ?? null),
+        );
         setError(null);
       } catch (nextError) {
-        if (!isMounted) {
-          return;
+        if (!disposed) {
+          setError((nextError as Error).message);
         }
-
-        setError((nextError as Error).message);
-        window.localStorage.removeItem(ADMIN_TOKEN_KEY);
-        setToken(null);
       } finally {
-        if (isMounted) {
+        if (!disposed) {
           setIsLoading(false);
         }
       }
@@ -235,13 +239,13 @@ export function AdminPage() {
     }, 5000);
 
     return () => {
-      isMounted = false;
+      disposed = true;
       window.clearInterval(interval);
     };
-  }, [deviceId, token]);
+  }, [adminToken, deviceId]);
 
   useEffect(() => {
-    if (!token || !selectedJobId) {
+    if (!adminToken || !selectedJobId) {
       setCandidates([]);
       setExecutions([]);
       setEvents([]);
@@ -249,233 +253,276 @@ export function AdminPage() {
       return;
     }
 
-    let isMounted = true;
-    void Promise.all([
-      fetchAdminDownloadCandidates(deviceId, token, selectedJobId),
-      fetchAdminDownloadExecutions(deviceId, token, selectedJobId)
-    ]).then(([candidateResponse, executionResponse]) => {
-      if (!isMounted) {
-        return;
-      }
+    const token = adminToken;
+    const jobId = selectedJobId;
+    let disposed = false;
 
-      setCandidates(candidateResponse.items);
-      setExecutions(executionResponse.items);
-      setSelectedExecutionId((current) => current ?? executionResponse.items[0]?.id ?? null);
-    });
+    async function loadJobDetails() {
+      try {
+        const [candidateResponse, executionResponse] = await Promise.all([
+          fetchAdminDownloadCandidates(deviceId, token, jobId),
+          fetchAdminDownloadExecutions(deviceId, token, jobId),
+        ]);
+
+        if (disposed) {
+          return;
+        }
+
+        setCandidates(candidateResponse.items);
+        setExecutions(executionResponse.items);
+        setSelectedExecutionId((current) =>
+          executionResponse.items.some((execution) => execution.id === current)
+            ? current
+            : (executionResponse.items[0]?.id ?? null),
+        );
+      } catch (nextError) {
+        if (!disposed) {
+          setError((nextError as Error).message);
+        }
+      }
+    }
+
+    void loadJobDetails();
 
     return () => {
-      isMounted = false;
+      disposed = true;
     };
-  }, [deviceId, selectedJobId, token]);
+  }, [adminToken, deviceId, selectedJobId]);
 
   useEffect(() => {
-    if (!token || !selectedExecutionId) {
+    if (!adminToken || !selectedExecutionId) {
       setEvents([]);
       return;
     }
 
-    let isMounted = true;
-    void fetchAdminExecutionEvents(deviceId, token, selectedExecutionId).then((response) => {
-      if (isMounted) {
-        setEvents(response.items);
+    const token = adminToken;
+    const executionId = selectedExecutionId;
+    let disposed = false;
+
+    async function loadEvents() {
+      try {
+        const response = await fetchAdminExecutionEvents(deviceId, token, executionId);
+        if (!disposed) {
+          setEvents(response.items);
+        }
+      } catch (nextError) {
+        if (!disposed) {
+          setError((nextError as Error).message);
+        }
       }
-    });
+    }
+
+    void loadEvents();
 
     return () => {
-      isMounted = false;
+      disposed = true;
     };
-  }, [deviceId, selectedExecutionId, token]);
+  }, [adminToken, deviceId, selectedExecutionId]);
 
-  async function onAdminLogin(event: FormEvent) {
+  async function onPolicySave(event: FormEvent) {
     event.preventDefault();
+    if (!adminToken || !dashboard) {
+      return;
+    }
 
+    const token = adminToken;
     try {
-      const response = await adminLogin(loginForm.username, loginForm.password);
-      window.localStorage.setItem(ADMIN_TOKEN_KEY, response.token);
-      setToken(response.token);
-      setLoginForm({ username: "", password: "" });
+      const policy = await updatePolicy(deviceId, token, dashboard.policy);
+      setDashboard((current) => (current ? { ...current, policy } : current));
       setError(null);
     } catch (nextError) {
       setError((nextError as Error).message);
     }
   }
 
-  async function onPolicySave(event: FormEvent) {
-    event.preventDefault();
-    if (!token || !dashboard) {
-      return;
-    }
-
-    const policy = await updatePolicy(deviceId, token, dashboard.policy);
-    setDashboard((current) => (current ? { ...current, policy } : current));
-  }
-
   async function onRuleCreate(event: FormEvent) {
     event.preventDefault();
-    if (!token) {
+    if (!adminToken) {
       return;
     }
 
-    const nextRule = await createFansubRule(deviceId, token, ruleForm);
-    setDashboard((current) =>
-      current
-        ? {
-            ...current,
-            fansubRules: [nextRule, ...current.fansubRules]
-          }
-        : current
-    );
-    setRuleForm({
-      fansubName: "",
-      localePreference: "zh-Hans",
-      priority: 50,
-      isBlacklist: false
-    });
+    const token = adminToken;
+    try {
+      const nextRule = await createFansubRule(deviceId, token, ruleForm);
+      setDashboard((current) =>
+        current
+          ? {
+              ...current,
+              fansubRules: [nextRule, ...current.fansubRules],
+              counts: {
+                ...current.counts,
+                fansubRules: current.counts.fansubRules + 1,
+              },
+            }
+          : current,
+      );
+      setRuleForm({
+        fansubName: "",
+        localePreference: "zh-Hans",
+        priority: 50,
+        isBlacklist: false,
+      });
+      setError(null);
+    } catch (nextError) {
+      setError((nextError as Error).message);
+    }
   }
 
   async function onForceDownload() {
-    if (!token || !forceSubjectId.trim()) {
+    if (!adminToken || !forceSubjectId.trim()) {
       return;
     }
 
-    await forceAdminDownload(deviceId, token, Number(forceSubjectId));
-    const downloadsResponse = await fetchAdminDownloads(deviceId, token);
-    setDownloads(downloadsResponse.items);
-    setSelectedJobId(downloadsResponse.items[0]?.id ?? null);
-    setForceSubjectId("");
+    const token = adminToken;
+    try {
+      await forceAdminDownload(deviceId, token, Number(forceSubjectId));
+      const downloadsResponse = await fetchAdminDownloads(deviceId, token);
+      setDownloads(downloadsResponse.items);
+      setSelectedJobId(downloadsResponse.items[0]?.id ?? null);
+      setForceSubjectId("");
+      setError(null);
+    } catch (nextError) {
+      setError((nextError as Error).message);
+    }
   }
 
   async function onActivateDownload(jobId: number) {
-    if (!token) {
+    if (!adminToken) {
       return;
     }
 
-    await activateAdminDownload(deviceId, token, jobId);
-    const [executionResponse, downloadsResponse] = await Promise.all([
-      fetchAdminDownloadExecutions(deviceId, token, jobId),
-      fetchAdminDownloads(deviceId, token)
-    ]);
-    setExecutions(executionResponse.items);
-    setSelectedExecutionId(executionResponse.items[0]?.id ?? null);
-    setDownloads(downloadsResponse.items);
+    const token = adminToken;
+    try {
+      await activateAdminDownload(deviceId, token, jobId);
+      const [executionResponse, downloadsResponse] = await Promise.all([
+        fetchAdminDownloadExecutions(deviceId, token, jobId),
+        fetchAdminDownloads(deviceId, token),
+      ]);
+      setExecutions(executionResponse.items);
+      setSelectedExecutionId(executionResponse.items[0]?.id ?? null);
+      setDownloads(downloadsResponse.items);
+      setError(null);
+    } catch (nextError) {
+      setError((nextError as Error).message);
+    }
   }
 
   async function onAdminLogout() {
-    if (token) {
-      await adminLogout(deviceId, token);
-    }
-
-    window.localStorage.removeItem(ADMIN_TOKEN_KEY);
-    setToken(null);
     setDashboard(null);
     setRuntime(null);
     setDownloads([]);
     setCandidates([]);
     setExecutions([]);
     setEvents([]);
+    setSelectedJobId(null);
+    setSelectedExecutionId(null);
+    await logoutAdmin();
   }
 
-  if (!token) {
-    return (
-      <MotionPage className={styles.page}>
-        <form onSubmit={(event) => void onAdminLogin(event)}>
-          <Card className={`${styles.panel} app-motion-surface`}>
-            <Text weight="semibold" size={800}>
-              管理员登录
-            </Text>
-            <Field label="管理员用户名">
-              <Input
-                value={loginForm.username}
-                onChange={(_, data) => setLoginForm((current) => ({ ...current, username: data.value }))}
-              />
-            </Field>
-            <Field label="管理员密码">
-              <Input
-                type="password"
-                value={loginForm.password}
-                onChange={(_, data) => setLoginForm((current) => ({ ...current, password: data.value }))}
-              />
-            </Field>
-            <Button type="submit" appearance="primary">
-              登录
-            </Button>
-            {error ? <Text>{error}</Text> : null}
-          </Card>
-        </form>
-      </MotionPage>
-    );
+  if (!isAdmin || !adminToken) {
+    return <Navigate to="/settings" replace />;
   }
 
   const selectedJob = downloads.find((job) => job.id === selectedJobId) ?? null;
   const selectedExecution = executions.find((execution) => execution.id === selectedExecutionId) ?? executions[0] ?? null;
+  const currentAdminLabel = adminUsername ?? dashboard?.adminUsername ?? "admin";
 
   return (
     <MotionPage className={styles.page}>
       <Card className={`${styles.header} app-motion-surface`}>
         <div>
           <Text weight="semibold" size={800}>
-            管理面板
+            管理
           </Text>
-          <Text className={styles.muted}>下载、策略、资源与运行态统一管理。</Text>
+          <Text className={styles.muted}>管理员会话下统一查看运行状态、下载队列、策略与字幕组规则。</Text>
         </div>
 
         <div className={styles.actions}>
+          <Text className={styles.muted}>当前管理员 {currentAdminLabel}</Text>
           <Button appearance="secondary" onClick={() => void onAdminLogout()}>
-            退出
+            退出管理员
           </Button>
         </div>
       </Card>
+
       <MotionPresence show={Boolean(error)} mode="soft">
         {error ? <Text>{error}</Text> : null}
       </MotionPresence>
 
-      {runtime ? (
-        <div className={styles.grid}>
-          <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "38ms" }}>
-            <Text weight="semibold">服务地址</Text>
-            <Text>{runtime.serverAddress}</Text>
-            <Text className={styles.muted}>运行 {runtime.uptimeLabel}</Text>
-          </Card>
-          <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "74ms" }}>
-            <Text weight="semibold">活跃下载</Text>
-            <Text>{runtime.runtime.activeExecutions}</Text>
-            <Text className={styles.muted}>{formatSpeed(runtime.runtime.downloadRateBytes)}</Text>
-          </Card>
-          <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "110ms" }}>
-            <Text weight="semibold">下载任务</Text>
-            <Text>{runtime.runtime.openDownloadJobs}</Text>
-            <Text className={styles.muted}>已选资源 {runtime.runtime.jobsWithSelection}</Text>
-          </Card>
-          <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "146ms" }}>
-            <Text weight="semibold">HTTP 请求</Text>
-            <Text>{runtime.http.totalRequests}</Text>
-            <Text className={styles.muted}>失败 {runtime.http.failedRequests}</Text>
-          </Card>
-        </div>
-      ) : null}
+      <div className={styles.grid}>
+        {runtime ? (
+          <>
+            <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "36ms" }}>
+              <Text weight="semibold">服务地址</Text>
+              <Text className={styles.summaryValue}>{runtime.serverAddress}</Text>
+              <Text className={styles.muted}>运行 {runtime.uptimeLabel}</Text>
+            </Card>
+            <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "72ms" }}>
+              <Text weight="semibold">活动下载</Text>
+              <Text className={styles.summaryValue}>{runtime.runtime.activeExecutions}</Text>
+              <Text className={styles.muted}>{formatSpeed(runtime.runtime.downloadRateBytes)}</Text>
+            </Card>
+            <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "108ms" }}>
+              <Text weight="semibold">下载任务</Text>
+              <Text className={styles.summaryValue}>{runtime.runtime.openDownloadJobs}</Text>
+              <Text className={styles.muted}>已选资源 {runtime.runtime.jobsWithSelection}</Text>
+            </Card>
+            <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "144ms" }}>
+              <Text weight="semibold">HTTP 请求</Text>
+              <Text className={styles.summaryValue}>{runtime.http.totalRequests}</Text>
+              <Text className={styles.muted}>失败 {runtime.http.failedRequests}</Text>
+            </Card>
+          </>
+        ) : null}
+
+        {dashboard ? (
+          <>
+            <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "180ms" }}>
+              <Text weight="semibold">设备</Text>
+              <Text className={styles.summaryValue}>{dashboard.counts.devices}</Text>
+              <Text className={styles.muted}>已记录设备数</Text>
+            </Card>
+            <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "216ms" }}>
+              <Text weight="semibold">用户</Text>
+              <Text className={styles.summaryValue}>{dashboard.counts.users}</Text>
+              <Text className={styles.muted}>注册用户数</Text>
+            </Card>
+            <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "252ms" }}>
+              <Text weight="semibold">订阅</Text>
+              <Text className={styles.summaryValue}>{dashboard.counts.subscriptions}</Text>
+              <Text className={styles.muted}>当前订阅总数</Text>
+            </Card>
+            <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "288ms" }}>
+              <Text weight="semibold">字幕组规则</Text>
+              <Text className={styles.summaryValue}>{dashboard.counts.fansubRules}</Text>
+              <Text className={styles.muted}>已登记规则数</Text>
+            </Card>
+          </>
+        ) : null}
+      </div>
 
       <div className={styles.layout}>
         <div className={styles.column}>
-          <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "48ms" }}>
+          <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "64ms" }}>
             <Text weight="semibold">手动触发下载</Text>
             <div className={styles.actions}>
               <Field label="Bangumi Subject ID" style={{ flex: 1 }}>
                 <Input value={forceSubjectId} onChange={(_, data) => setForceSubjectId(data.value)} />
               </Field>
               <Button appearance="primary" onClick={() => void onForceDownload()}>
-                强制触发
+                立即触发
               </Button>
             </div>
           </Card>
 
-          <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "86ms" }}>
+          <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "96ms" }}>
             <Text weight="semibold">下载队列</Text>
             <div className={styles.downloadsList}>
-              {downloads.map((job) => (
+              {downloads.map((job, index) => (
                 <Card
                   key={job.id}
                   className={`${styles.downloadCard} ${selectedJobId === job.id ? styles.activeDownloadCard : ""} app-motion-item`}
-                  style={motionDelayStyle(downloads.indexOf(job), 24, 120)}
+                  style={motionDelayStyle(index, 24, 120)}
                   onClick={() => setSelectedJobId(job.id)}
                 >
                   <div className={styles.cardRow}>
@@ -488,46 +535,48 @@ export function AdminPage() {
                   <Text>
                     订阅 {job.subscriptionCount} / {job.thresholdSnapshot}
                   </Text>
-                  <Text className={styles.muted}>搜索状态：{job.searchStatus}</Text>
+                  <Text className={styles.muted}>搜索状态 {job.searchStatus}</Text>
                   <div className={styles.actions}>
                     <Button appearance="secondary" onClick={() => void onActivateDownload(job.id)}>
-                      执行所选资源
+                      执行已选资源
                     </Button>
                   </div>
                 </Card>
               ))}
+              {downloads.length === 0 ? <Text className={styles.muted}>当前没有开放的下载任务。</Text> : null}
             </div>
           </Card>
 
           {selectedJob ? (
             <>
-              <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "124ms" }}>
+              <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "128ms" }}>
                 <Text weight="semibold">候选资源</Text>
                 <div className={styles.stack}>
-                  {candidates.map((candidate) => (
-                    <Card key={candidate.id} className={`${styles.downloadCard} app-motion-item`} style={motionDelayStyle(candidates.indexOf(candidate), 24, 150)}>
+                  {candidates.map((candidate, index) => (
+                    <Card key={candidate.id} className={`${styles.downloadCard} app-motion-item`} style={motionDelayStyle(index, 24, 140)}>
                       <div className={styles.cardRow}>
                         <Text weight="semibold">{candidate.fansubName ?? candidate.publisherName}</Text>
                         <Badge appearance={candidate.rejectedReason ? "outline" : "filled"}>{candidate.slotKey}</Badge>
                       </div>
                       <Text>{candidate.title}</Text>
                       <Text className={styles.muted}>
-                        分数 {candidate.score.toFixed(1)} · {candidate.resolution ?? "未知分辨率"}
+                        分数 {candidate.score.toFixed(1)} · {candidate.resolution ?? "Unknown"}
                       </Text>
                       {candidate.rejectedReason ? <Text>{candidate.rejectedReason}</Text> : null}
                     </Card>
                   ))}
+                  {candidates.length === 0 ? <Text className={styles.muted}>当前任务还没有候选资源。</Text> : null}
                 </div>
               </Card>
 
-              <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "162ms" }}>
+              <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "160ms" }}>
                 <Text weight="semibold">执行实例</Text>
                 <div className={styles.stack}>
-                  {executions.map((execution) => (
+                  {executions.map((execution, index) => (
                     <Card
                       key={execution.id}
                       className={`${styles.downloadCard} ${selectedExecutionId === execution.id ? styles.activeDownloadCard : ""} app-motion-item`}
-                      style={motionDelayStyle(executions.indexOf(execution), 24, 170)}
+                      style={motionDelayStyle(index, 24, 160)}
                       onClick={() => setSelectedExecutionId(execution.id)}
                     >
                       <div className={styles.cardRow}>
@@ -541,6 +590,7 @@ export function AdminPage() {
                       </Text>
                     </Card>
                   ))}
+                  {executions.length === 0 ? <Text className={styles.muted}>当前任务还没有执行实例。</Text> : null}
                 </div>
               </Card>
             </>
@@ -549,7 +599,7 @@ export function AdminPage() {
 
         <div className={styles.column}>
           {selectedExecution ? (
-            <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "96ms" }}>
+            <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "84ms" }}>
               <Text weight="semibold">当前执行详情</Text>
               <div className={styles.compactGrid}>
                 <Card className={styles.downloadCard}>
@@ -572,11 +622,11 @@ export function AdminPage() {
             </Card>
           ) : null}
 
-          <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "134ms" }}>
+          <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "118ms" }}>
             <Text weight="semibold">执行事件</Text>
             <div className={styles.stack}>
-              {events.map((event) => (
-                <Card key={event.id} className={`${styles.downloadCard} app-motion-item`} style={motionDelayStyle(events.indexOf(event), 20, 160)}>
+              {events.map((event, index) => (
+                <Card key={event.id} className={`${styles.downloadCard} app-motion-item`} style={motionDelayStyle(index, 20, 150)}>
                   <div className={styles.cardRow}>
                     <Text weight="semibold">{event.eventKind}</Text>
                     <Badge appearance={event.level === "error" ? "filled" : "outline"}>{event.level}</Badge>
@@ -592,12 +642,106 @@ export function AdminPage() {
           {dashboard ? (
             <>
               <form onSubmit={(event) => void onPolicySave(event)}>
-                <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "172ms" }}>
+                <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "152ms" }}>
                   <Text weight="semibold">下载策略</Text>
-                  <Field label="订阅阈值">
-                    <Input
-                      type="number"
-                      value={String(dashboard.policy.subscriptionThreshold)}
+                  <div className={styles.form}>
+                    <Field label="订阅阈值">
+                      <Input
+                        type="number"
+                        value={String(dashboard.policy.subscriptionThreshold)}
+                        onChange={(_, data) =>
+                          setDashboard((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  policy: {
+                                    ...current.policy,
+                                    subscriptionThreshold: Number(data.value || 0),
+                                  },
+                                }
+                              : current,
+                          )
+                        }
+                      />
+                    </Field>
+                    <Field label="换源窗口（小时）">
+                      <Input
+                        type="number"
+                        value={String(dashboard.policy.replacementWindowHours)}
+                        onChange={(_, data) =>
+                          setDashboard((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  policy: {
+                                    ...current.policy,
+                                    replacementWindowHours: Number(data.value || 0),
+                                  },
+                                }
+                              : current,
+                          )
+                        }
+                      />
+                    </Field>
+                    <Field label="最大同时下载数">
+                      <Input
+                        type="number"
+                        value={String(dashboard.policy.maxConcurrentDownloads)}
+                        onChange={(_, data) =>
+                          setDashboard((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  policy: {
+                                    ...current.policy,
+                                    maxConcurrentDownloads: Math.max(1, Number(data.value || 0)),
+                                  },
+                                }
+                              : current,
+                          )
+                        }
+                      />
+                    </Field>
+                    <Field label="上行限速（MB/s，0 为不限速）">
+                      <Input
+                        type="number"
+                        value={String(dashboard.policy.uploadLimitMb)}
+                        onChange={(_, data) =>
+                          setDashboard((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  policy: {
+                                    ...current.policy,
+                                    uploadLimitMb: Math.max(0, Number(data.value || 0)),
+                                  },
+                                }
+                              : current,
+                          )
+                        }
+                      />
+                    </Field>
+                    <Field label="下行限速（MB/s，0 为不限速）">
+                      <Input
+                        type="number"
+                        value={String(dashboard.policy.downloadLimitMb)}
+                        onChange={(_, data) =>
+                          setDashboard((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  policy: {
+                                    ...current.policy,
+                                    downloadLimitMb: Math.max(0, Number(data.value || 0)),
+                                  },
+                                }
+                              : current,
+                          )
+                        }
+                      />
+                    </Field>
+                    <Switch
+                      checked={dashboard.policy.preferSameFansub}
                       onChange={(_, data) =>
                         setDashboard((current) =>
                           current
@@ -605,145 +749,73 @@ export function AdminPage() {
                                 ...current,
                                 policy: {
                                   ...current.policy,
-                                  subscriptionThreshold: Number(data.value || 0)
-                                }
+                                  preferSameFansub: data.checked,
+                                },
                               }
-                            : current
+                            : current,
                         )
                       }
+                      label="优先延续上一集字幕组"
                     />
-                  </Field>
-                  <Field label="替换窗口（小时）">
-                    <Input
-                      type="number"
-                      value={String(dashboard.policy.replacementWindowHours)}
-                      onChange={(_, data) =>
-                        setDashboard((current) =>
-                          current
-                            ? {
-                                ...current,
-                                policy: {
-                                  ...current.policy,
-                                  replacementWindowHours: Number(data.value || 0)
-                                }
-                              }
-                            : current
-                        )
-                      }
-                    />
-                  </Field>
-                  <Field label="最大同时下载数">
-                    <Input
-                      type="number"
-                      value={String(dashboard.policy.maxConcurrentDownloads)}
-                      onChange={(_, data) =>
-                        setDashboard((current) =>
-                          current
-                            ? {
-                                ...current,
-                                policy: {
-                                  ...current.policy,
-                                  maxConcurrentDownloads: Math.max(1, Number(data.value || 0))
-                                }
-                              }
-                            : current
-                        )
-                      }
-                    />
-                  </Field>
-                  <Field label="上行限速（MB/s，0 为不限速）">
-                    <Input
-                      type="number"
-                      value={String(dashboard.policy.uploadLimitMb)}
-                      onChange={(_, data) =>
-                        setDashboard((current) =>
-                          current
-                            ? {
-                                ...current,
-                                policy: {
-                                  ...current.policy,
-                                  uploadLimitMb: Math.max(0, Number(data.value || 0))
-                                }
-                              }
-                            : current
-                        )
-                      }
-                    />
-                  </Field>
-                  <Field label="下行限速（MB/s，0 为不限速）">
-                    <Input
-                      type="number"
-                      value={String(dashboard.policy.downloadLimitMb)}
-                      onChange={(_, data) =>
-                        setDashboard((current) =>
-                          current
-                            ? {
-                                ...current,
-                                policy: {
-                                  ...current.policy,
-                                  downloadLimitMb: Math.max(0, Number(data.value || 0))
-                                }
-                              }
-                            : current
-                        )
-                      }
-                    />
-                  </Field>
-                  <Switch
-                    checked={dashboard.policy.preferSameFansub}
-                    onChange={(_, data) =>
-                      setDashboard((current) =>
-                        current
-                          ? {
-                              ...current,
-                              policy: {
-                                ...current.policy,
-                                preferSameFansub: data.checked
-                              }
-                            }
-                          : current
-                      )
-                    }
-                    label="优先延续上一集字幕组"
-                  />
-                  <Button type="submit" appearance="primary">
-                    保存策略
-                  </Button>
+                    <Button type="submit" appearance="primary">
+                      保存策略
+                    </Button>
+                  </div>
                 </Card>
               </form>
 
               <form onSubmit={(event) => void onRuleCreate(event)}>
-                <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "208ms" }}>
+                <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "186ms" }}>
                   <Text weight="semibold">新增字幕组规则</Text>
-                  <Field label="字幕组">
-                    <Input
-                      value={ruleForm.fansubName}
-                      onChange={(_, data) => setRuleForm((current) => ({ ...current, fansubName: data.value }))}
+                  <div className={styles.form}>
+                    <Field label="字幕组">
+                      <Input
+                        value={ruleForm.fansubName}
+                        onChange={(_, data) => setRuleForm((current) => ({ ...current, fansubName: data.value }))}
+                      />
+                    </Field>
+                    <Field label="语言偏好">
+                      <Input
+                        value={ruleForm.localePreference}
+                        onChange={(_, data) => setRuleForm((current) => ({ ...current, localePreference: data.value }))}
+                      />
+                    </Field>
+                    <Field label="优先级">
+                      <Input
+                        type="number"
+                        value={String(ruleForm.priority)}
+                        onChange={(_, data) => setRuleForm((current) => ({ ...current, priority: Number(data.value || 0) }))}
+                      />
+                    </Field>
+                    <Switch
+                      checked={ruleForm.isBlacklist}
+                      onChange={(_, data) => setRuleForm((current) => ({ ...current, isBlacklist: data.checked }))}
+                      label="加入黑名单"
                     />
-                  </Field>
-                  <Field label="语言偏好">
-                    <Input
-                      value={ruleForm.localePreference}
-                      onChange={(_, data) => setRuleForm((current) => ({ ...current, localePreference: data.value }))}
-                    />
-                  </Field>
-                  <Field label="优先级">
-                    <Input
-                      type="number"
-                      value={String(ruleForm.priority)}
-                      onChange={(_, data) => setRuleForm((current) => ({ ...current, priority: Number(data.value || 0) }))}
-                    />
-                  </Field>
-                  <Switch
-                    checked={ruleForm.isBlacklist}
-                    onChange={(_, data) => setRuleForm((current) => ({ ...current, isBlacklist: data.checked }))}
-                    label="加入黑名单"
-                  />
-                  <Button type="submit" appearance="primary">
-                    保存规则
-                  </Button>
+                    <Button type="submit" appearance="primary">
+                      保存规则
+                    </Button>
+                  </div>
                 </Card>
               </form>
+
+              <Card className={`${styles.panel} app-motion-surface`} style={{ ["--motion-delay" as string]: "220ms" }}>
+                <Text weight="semibold">现有字幕组规则</Text>
+                <div className={styles.stack}>
+                  {dashboard.fansubRules.map((rule, index) => (
+                    <Card key={rule.id} className={`${styles.downloadCard} app-motion-item`} style={motionDelayStyle(index, 20, 180)}>
+                      <div className={styles.cardRow}>
+                        <Text weight="semibold">{rule.fansubName}</Text>
+                        <Badge appearance={rule.isBlacklist ? "filled" : "outline"}>
+                          {rule.isBlacklist ? "黑名单" : `P${rule.priority}`}
+                        </Badge>
+                      </div>
+                      <Text className={styles.muted}>{rule.localePreference}</Text>
+                    </Card>
+                  ))}
+                  {dashboard.fansubRules.length === 0 ? <Text className={styles.muted}>当前还没有字幕组规则。</Text> : null}
+                </div>
+              </Card>
             </>
           ) : null}
         </div>

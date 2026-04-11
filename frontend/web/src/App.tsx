@@ -1,7 +1,7 @@
 import { Route, Routes } from "react-router-dom";
 
 import { AppShell } from "./components/AppShell";
-import { AdminPage } from "./pages/AdminPage";
+import { ManagementPage } from "./pages/AdminPage";
 import { HistoryPage } from "./pages/HistoryPage";
 import { ResourcesPage } from "./pages/ResourcesPage";
 import { SearchPage } from "./pages/SearchPage";
@@ -15,7 +15,6 @@ import { PreviewPage } from "./pages/YucCatalogPage";
 export default function App() {
   return (
     <Routes>
-      <Route path="/admin" element={<AdminPage />} />
       <Route element={<AppShell />}>
         <Route path="/" element={<SeasonPage />} />
         <Route path="/search" element={<SearchPage />} />
@@ -24,6 +23,7 @@ export default function App() {
         <Route path="/resources" element={<ResourcesPage />} />
         <Route path="/history" element={<HistoryPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/manage" element={<ManagementPage />} />
         <Route path="/title/:subjectId" element={<SubjectPage />} />
         <Route path="/watch/:subjectId/:episodeId" element={<WatchPage />} />
       </Route>
