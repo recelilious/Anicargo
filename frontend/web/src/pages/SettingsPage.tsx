@@ -87,29 +87,21 @@ const useStyles = makeStyles({
     gap: "10px",
     paddingTop: "4px",
   },
-  uiSizeSlider: {
-    paddingInline: "10px",
-  },
   uiSizeHeader: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     gap: "12px",
   },
-  uiScaleMarks: {
-    position: "relative",
-    height: "24px",
-    marginTop: "2px",
-    paddingInline: "10px",
+  uiSizeSlider: {
+    width: "100%",
   },
-  uiScaleMark: {
-    position: "absolute",
-    top: 0,
-    transform: "translateX(-50%)",
-    color: "var(--app-muted)",
-  },
-  uiScaleMarkActive: {
-    color: "var(--app-text)",
+  sectionBlock: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+    paddingTop: "10px",
+    borderTop: "1px solid var(--app-border)",
   },
 });
 
@@ -139,14 +131,14 @@ export function SettingsPage() {
     setDeepNightMode,
     systemTimeZone,
   } = useSession();
-  const { themePreference, resolvedAppearance, setThemePreference } = useAppearance();
+  const { themePreference, setThemePreference } = useAppearance();
   const { uiScaleLevel, setUiScaleLevel } = useUiPreferences();
   const [registerForm, setRegisterForm] = useState({ username: "", password: "" });
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [error, setError] = useState<string | null>(null);
 
   const identityLabel = getIdentityLabel(isGuestViewer, isAdmin);
-  const identityHash = bootstrap?.deviceId ?? "—";
+  const identityHash = bootstrap?.deviceId ?? "--";
 
   async function onRegisterSubmit(event: FormEvent) {
     event.preventDefault();
@@ -218,7 +210,7 @@ export function SettingsPage() {
                 ? "当前处于设备订阅模式。"
                 : isAdmin
                   ? "当前账号已启用管理员权限，左侧会显示管理栏目。"
-                  : "当前账号已登录，可在不同设备间同步账号订阅。 "}
+                  : "当前账号已登录，可在不同设备间同步账号订阅。"}
             </Text>
 
             {!isGuestViewer ? (
@@ -231,7 +223,10 @@ export function SettingsPage() {
           <MotionPresence show={isGuestViewer}>
             <>
               <form onSubmit={(event) => void onLoginSubmit(event)}>
-                <Card className={`${styles.card} ${styles.form} app-motion-surface`} style={{ ["--motion-delay" as string]: "44ms" }}>
+                <Card
+                  className={`${styles.card} ${styles.form} app-motion-surface`}
+                  style={{ ["--motion-delay" as string]: "44ms" }}
+                >
                   <div className={styles.titleGroup}>
                     <Text weight="semibold">登录账号</Text>
                     <Text size={300} className={styles.muted}>
@@ -242,7 +237,9 @@ export function SettingsPage() {
                   <Field label="用户名">
                     <Input
                       value={loginForm.username}
-                      onChange={(_, data) => setLoginForm((current) => ({ ...current, username: data.value }))}
+                      onChange={(_, data) =>
+                        setLoginForm((current) => ({ ...current, username: data.value }))
+                      }
                     />
                   </Field>
 
@@ -250,7 +247,9 @@ export function SettingsPage() {
                     <Input
                       type="password"
                       value={loginForm.password}
-                      onChange={(_, data) => setLoginForm((current) => ({ ...current, password: data.value }))}
+                      onChange={(_, data) =>
+                        setLoginForm((current) => ({ ...current, password: data.value }))
+                      }
                     />
                   </Field>
 
@@ -261,18 +260,23 @@ export function SettingsPage() {
               </form>
 
               <form onSubmit={(event) => void onRegisterSubmit(event)}>
-                <Card className={`${styles.card} ${styles.form} app-motion-surface`} style={{ ["--motion-delay" as string]: "88ms" }}>
+                <Card
+                  className={`${styles.card} ${styles.form} app-motion-surface`}
+                  style={{ ["--motion-delay" as string]: "88ms" }}
+                >
                   <div className={styles.titleGroup}>
                     <Text weight="semibold">注册账号</Text>
                     <Text size={300} className={styles.muted}>
-                      注册后会立即切换到新账号，并使用账号身份保存订阅。
+                      注册后会立刻切换到新账号，并使用账号身份保存订阅。
                     </Text>
                   </div>
 
                   <Field label="用户名">
                     <Input
                       value={registerForm.username}
-                      onChange={(_, data) => setRegisterForm((current) => ({ ...current, username: data.value }))}
+                      onChange={(_, data) =>
+                        setRegisterForm((current) => ({ ...current, username: data.value }))
+                      }
                     />
                   </Field>
 
@@ -280,7 +284,9 @@ export function SettingsPage() {
                     <Input
                       type="password"
                       value={registerForm.password}
-                      onChange={(_, data) => setRegisterForm((current) => ({ ...current, password: data.value }))}
+                      onChange={(_, data) =>
+                        setRegisterForm((current) => ({ ...current, password: data.value }))
+                      }
                     />
                   </Field>
 
@@ -319,64 +325,38 @@ export function SettingsPage() {
                 </Text>
               </div>
 
-              <div className={styles.uiSizeSlider}>
-                <Slider
-                  min={1}
-                  max={5}
-                  step={1}
-                  value={uiScaleLevel}
-                  onChange={(_, data) => setUiScaleLevel(data.value)}
-                />
-              </div>
-
-              <div className={styles.uiScaleMarks}>
-                {[1, 2, 3, 4, 5].map((level) => (
-                  <Text
-                    key={level}
-                    size={200}
-                    className={`${styles.uiScaleMark} ${uiScaleLevel === level ? styles.uiScaleMarkActive : ""}`.trim()}
-                    style={{
-                      left: `${((level - 1) / 4) * 100}%`,
-                      transform:
-                        level === 1
-                          ? "translateX(0)"
-                          : level === 5
-                            ? "translateX(-100%)"
-                            : "translateX(-50%)",
-                    }}
-                  >
-                    {level}
-                  </Text>
-                ))}
-              </div>
+              <Slider
+                className={styles.uiSizeSlider}
+                min={1}
+                max={5}
+                step={1}
+                value={uiScaleLevel}
+                onChange={(_, data) => setUiScaleLevel(data.value)}
+              />
             </div>
 
-            <Text size={300} className={styles.muted}>
-              当前生效：{resolvedAppearance === "dark" ? "深色" : "浅色"}
-            </Text>
-          </Card>
+            <div className={styles.sectionBlock}>
+              <div className={styles.titleGroup}>
+                <Text weight="medium">时间显示</Text>
+                <Text size={300} className={styles.muted}>
+                  控制时区显示方式与深夜模式的日期归属逻辑。
+                </Text>
+              </div>
 
-          <Card className={`${styles.card} app-motion-surface`} style={{ ["--motion-delay" as string]: "176ms" }}>
-            <div className={styles.titleGroup}>
-              <Text weight="semibold">时间显示</Text>
+              <Switch
+                checked={deepNightMode}
+                label={deepNightMode ? "深夜模式已开启" : "深夜模式已关闭"}
+                onChange={(_, data) => setDeepNightMode(Boolean(data.checked))}
+              />
+
               <Text size={300} className={styles.muted}>
-                控制时区展示方式与深夜模式的日期归属逻辑。
+                当前时区：{systemTimeZone}
+              </Text>
+
+              <Text size={300} className={styles.muted}>
+                开启后，凌晨 06:00 之前会按前一日显示为 24+ 小时制。
               </Text>
             </div>
-
-            <Switch
-              checked={deepNightMode}
-              label={deepNightMode ? "深夜模式已开启" : "深夜模式已关闭"}
-              onChange={(_, data) => setDeepNightMode(Boolean(data.checked))}
-            />
-
-            <Text size={300} className={styles.muted}>
-              当前时区：{systemTimeZone}
-            </Text>
-
-            <Text size={300} className={styles.muted}>
-              开启后，凌晨 06:00 之前会按前一日显示为 24+ 小时制。
-            </Text>
           </Card>
         </div>
       </div>
