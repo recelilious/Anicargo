@@ -271,12 +271,17 @@ a {
   position: relative;
   width: 100%;
   height: 100%;
+  overflow: hidden;
+  border-radius: inherit;
+  background: #070a10;
 }
 
 .anicargo-player-host,
 .anicargo-player {
   width: 100%;
   height: 100%;
+  border-radius: inherit;
+  overflow: hidden;
 }
 
 .anicargo-player .art-video-player {
@@ -285,7 +290,7 @@ a {
   --art-background-color: #070a10;
   --art-font-color: #f4efe9;
   --art-text-shadow-color: rgba(0, 0, 0, 0.72);
-  --art-border-radius: 22px;
+  --art-border-radius: 0px;
   --art-control-height: 44px;
   --art-control-opacity: 0.9;
   --art-control-icon-size: 34px;
@@ -296,6 +301,14 @@ a {
   --art-subtitle-border: rgba(0, 0, 0, 0.92);
   --art-theme: #4b2c23;
   font-family: "JetBrains Mono Variable", "Maple Mono CN", monospace;
+}
+
+.anicargo-player .art-video-player,
+.anicargo-player .art-video-player video,
+.anicargo-player video {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
 }
 
 .anicargo-player .art-video-player .art-subtitle {

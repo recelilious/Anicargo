@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeftRegular } from "@fluentui/react-icons";
-import { Badge, Button, Card, Text, makeStyles, tokens } from "@fluentui/react-components";
+import { Button, Card, Text, makeStyles, tokens } from "@fluentui/react-components";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import {
@@ -90,10 +90,10 @@ const useStyles = makeStyles({
   playerPanel: {
     minWidth: 0,
     minHeight: 0,
-    padding: "14px",
+    padding: "0",
     display: "flex",
     alignItems: "stretch",
-    justifyContent: "center",
+    justifyContent: "stretch",
     backgroundColor: "var(--app-surface-1)",
     border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)",
@@ -104,19 +104,16 @@ const useStyles = makeStyles({
     height: "100%",
     minHeight: 0,
     display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "center",
+    alignItems: "stretch",
+    justifyContent: "stretch",
   },
   playerFrame: {
     width: "100%",
-    maxWidth: "100%",
-    maxHeight: "100%",
-    aspectRatio: "16 / 9",
-    borderRadius: "22px",
+    height: "100%",
+    minHeight: 0,
     overflow: "hidden",
+    borderRadius: tokens.borderRadiusLarge,
     backgroundColor: "#070a10",
-    border: "1px solid rgba(255, 255, 255, 0.06)",
-    boxShadow: "0 20px 44px rgba(0, 0, 0, 0.28)",
   },
   fallbackSurface: {
     width: "100%",
@@ -144,8 +141,6 @@ const useStyles = makeStyles({
   },
   sidebarHeader: {
     display: "flex",
-    justifyContent: "space-between",
-    gap: "12px",
     alignItems: "center",
   },
   episodeList: {
@@ -153,7 +148,7 @@ const useStyles = makeStyles({
     overflowY: "auto",
     overflowX: "hidden",
     display: "grid",
-    gridAutoRows: "112px",
+    gridAutoRows: "88px",
     gap: "10px",
     paddingRight: "6px",
   },
@@ -166,8 +161,8 @@ const useStyles = makeStyles({
     padding: "14px 16px",
     display: "flex",
     flexDirection: "column",
-    gap: "8px",
-    justifyContent: "space-between",
+    justifyContent: "center",
+    gap: "6px",
     backgroundColor: "var(--app-surface-1)",
     border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)",
@@ -185,35 +180,22 @@ const useStyles = makeStyles({
     backgroundColor: "var(--app-selected-bg)",
     border: "1px solid var(--app-border-strong)",
   },
-  episodeTop: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "10px",
-    alignItems: "flex-start",
-  },
   episodeTitleWrap: {
     minWidth: 0,
     display: "flex",
     flexDirection: "column",
-    gap: "4px",
-  },
-  episodeTitle: {
-    display: "-webkit-box",
-    overflow: "hidden",
-    WebkitLineClamp: "2",
-    WebkitBoxOrient: "vertical",
-    lineHeight: "1.45",
-  },
-  episodeMeta: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "4px",
-    minWidth: 0,
+    gap: "6px",
   },
   singleLine: {
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
+  },
+  episodeTitle: {
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    lineHeight: "1.45",
   },
   emptyState: {
     minHeight: 0,
@@ -227,9 +209,6 @@ const useStyles = makeStyles({
     border: "1px dashed var(--app-border)",
     borderRadius: "18px",
     backgroundColor: "var(--app-surface-2)",
-  },
-  muted: {
-    color: "var(--app-muted)",
   },
 });
 
@@ -424,7 +403,6 @@ export function WatchPage() {
             <Text weight="semibold" size={700}>
               剧集
             </Text>
-            <Text className={styles.muted}>{visibleEpisodes.length} 集可播放</Text>
           </div>
 
           {visibleEpisodes.length > 0 ? (
@@ -443,23 +421,11 @@ export function WatchPage() {
                     <Card
                       className={`${styles.episodeCard} ${isCurrentEpisode ? styles.episodeCardActive : ""}`.trim()}
                     >
-                      <div className={styles.episodeTop}>
-                        <div className={styles.episodeTitleWrap}>
-                          <Text weight="semibold" className={styles.singleLine}>
-                            第 {item.episodeNumber ?? item.sort} 集
-                          </Text>
-                          <Text className={styles.episodeTitle}>{item.titleCn || item.title || "未命名剧集"}</Text>
-                        </div>
-                        <Badge appearance="filled">可播放</Badge>
-                      </div>
-
-                      <div className={styles.episodeMeta}>
-                        <Text className={`${styles.singleLine} ${styles.muted}`.trim()}>
-                          {item.availabilityNote ?? "已入库，可直接播放"}
+                      <div className={styles.episodeTitleWrap}>
+                        <Text weight="semibold" className={styles.singleLine}>
+                          第 {item.episodeNumber ?? item.sort} 集
                         </Text>
-                        {item.airdate ? (
-                          <Text className={`${styles.singleLine} ${styles.muted}`.trim()}>{item.airdate}</Text>
-                        ) : null}
+                        <Text className={styles.episodeTitle}>{item.titleCn || item.title || "未命名剧集"}</Text>
                       </div>
                     </Card>
                   </Link>
