@@ -516,7 +516,7 @@ export function ResourcesPage() {
               资源
             </Text>
             <Text size={300} className={styles.headerSource}>
-              下载进度与已完成资源会在这里自动同步
+              查看所有正在下载或者已入库的番剧信息
             </Text>
           </div>
         </div>

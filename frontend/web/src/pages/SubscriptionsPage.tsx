@@ -172,7 +172,7 @@ export function SubscriptionsPage() {
             我的订阅
           </Text>
           <Text size={300} className={styles.headerSource}>
-            当前设备与账号订阅状态
+            当前账号订阅的番剧
           </Text>
         </div>
       </Card>

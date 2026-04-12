@@ -34,6 +34,11 @@ const useStyles = makeStyles({
     gap: "16px",
     flexWrap: "wrap",
   },
+  headerTitleGroup: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+  },
   statBox: {
     padding: "12px 14px",
     minWidth: "132px",
@@ -278,9 +283,14 @@ export function HistoryPage() {
     <MotionPage className={styles.page}>
       <Card className={`${styles.surfaceCard} app-motion-surface`}>
         <div className={styles.headerRow}>
-          <Text weight="semibold" size={800}>
-            历史记录
-          </Text>
+          <div className={styles.headerTitleGroup}>
+            <Text weight="semibold" size={800}>
+              历史记录
+            </Text>
+            <Text size={300} className={styles.muted}>
+              播放过的剧集
+            </Text>
+          </div>
 
           <div className={styles.statBox}>
             <Text size={200} className={styles.muted}>

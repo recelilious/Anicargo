@@ -74,36 +74,37 @@ const useStyles = makeStyles({
   },
   contentGrid: {
     minHeight: 0,
+    height: "100%",
     display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) 320px",
+    gridTemplateColumns: "minmax(0, 1fr) clamp(280px, 24vw, 360px)",
     gap: "18px",
     overflow: "hidden",
-    "@media (max-width: 1260px)": {
-      gridTemplateColumns: "minmax(0, 1fr) 288px",
+    "@media (max-width: 1120px)": {
+      gridTemplateColumns: "minmax(0, 1fr) 300px",
     },
-    "@media (max-width: 1024px)": {
+    "@media (max-width: 940px)": {
       gridTemplateColumns: "1fr",
-      gridTemplateRows: "minmax(0, auto) minmax(260px, 1fr)",
-      overflowY: "auto",
+      gridTemplateRows: "minmax(0, 1fr) minmax(220px, 34vh)",
     },
   },
   playerPanel: {
     minWidth: 0,
     minHeight: 0,
-    padding: "18px",
+    padding: "14px",
     display: "flex",
-    alignItems: "center",
+    alignItems: "stretch",
     justifyContent: "center",
     backgroundColor: "var(--app-surface-1)",
     border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)",
+    overflow: "hidden",
   },
   playerViewport: {
     width: "100%",
     height: "100%",
     minHeight: 0,
     display: "flex",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "center",
   },
   playerFrame: {
@@ -214,6 +215,19 @@ const useStyles = makeStyles({
     overflow: "hidden",
     textOverflow: "ellipsis",
   },
+  emptyState: {
+    minHeight: 0,
+    height: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    textAlign: "center",
+    color: "var(--app-muted)",
+    padding: "18px",
+    border: "1px dashed var(--app-border)",
+    borderRadius: "18px",
+    backgroundColor: "var(--app-surface-2)",
+  },
   muted: {
     color: "var(--app-muted)",
   },
@@ -243,10 +257,6 @@ function formatUpdatedAt(value: string | null | undefined) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
-}
-
-function formatAvailabilityBadge(episode: Episode) {
-  return episode.isAvailable ? "可播放" : "待入库";
 }
 
 export function WatchPage() {
@@ -350,12 +360,17 @@ export function WatchPage() {
     [backPath],
   );
 
+  const visibleEpisodes = useMemo(
+    () => (detail?.episodes ?? []).filter((item) => item.isAvailable),
+    [detail],
+  );
+
   const streamUrl = playback?.media ? buildApiUrl(playback.media.streamUrl) : null;
   const posterUrl = detail?.subject.imageBanner ?? detail?.subject.imagePortrait ?? null;
   const pageTitle = detail?.subject.titleCn || detail?.subject.title || "播放";
   const episodeLabel = formatEpisodeLabel(episode);
   const episodeTitle = episode?.titleCn || episode?.title || "未命名剧集";
-  const fansubLabel = playback?.media?.sourceFansubName ?? "字幕组未标注";
+  const fansubLabel = playback?.media?.sourceFansubName ?? "来源未知";
   const updatedLabel = formatUpdatedAt(playback?.media?.updatedAt);
 
   if (isLoading) {
@@ -409,49 +424,53 @@ export function WatchPage() {
             <Text weight="semibold" size={700}>
               剧集
             </Text>
-            <Text className={styles.muted}>{detail?.episodes.length ?? 0} 集</Text>
+            <Text className={styles.muted}>{visibleEpisodes.length} 集可播放</Text>
           </div>
 
-          <div className={styles.episodeList}>
-            {detail?.episodes.map((item, index) => {
-              const isCurrentEpisode = item.bangumiEpisodeId === Number(episodeId);
+          {visibleEpisodes.length > 0 ? (
+            <div className={styles.episodeList}>
+              {visibleEpisodes.map((item, index) => {
+                const isCurrentEpisode = item.bangumiEpisodeId === Number(episodeId);
 
-              return (
-                <Link
-                  key={item.bangumiEpisodeId}
-                  to={`/watch/${subjectId}/${item.bangumiEpisodeId}`}
-                  state={watchRouteState}
-                  className={styles.episodeLink}
-                  style={motionDelayStyle(index, 26, 120)}
-                >
-                  <Card
-                    className={`${styles.episodeCard} ${isCurrentEpisode ? styles.episodeCardActive : ""}`.trim()}
+                return (
+                  <Link
+                    key={item.bangumiEpisodeId}
+                    to={`/watch/${subjectId}/${item.bangumiEpisodeId}`}
+                    state={watchRouteState}
+                    className={styles.episodeLink}
+                    style={motionDelayStyle(index, 26, 120)}
                   >
-                    <div className={styles.episodeTop}>
-                      <div className={styles.episodeTitleWrap}>
-                        <Text weight="semibold" className={styles.singleLine}>
-                          第 {item.episodeNumber ?? item.sort} 集
-                        </Text>
-                        <Text className={styles.episodeTitle}>{item.titleCn || item.title || "未命名剧集"}</Text>
+                    <Card
+                      className={`${styles.episodeCard} ${isCurrentEpisode ? styles.episodeCardActive : ""}`.trim()}
+                    >
+                      <div className={styles.episodeTop}>
+                        <div className={styles.episodeTitleWrap}>
+                          <Text weight="semibold" className={styles.singleLine}>
+                            第 {item.episodeNumber ?? item.sort} 集
+                          </Text>
+                          <Text className={styles.episodeTitle}>{item.titleCn || item.title || "未命名剧集"}</Text>
+                        </div>
+                        <Badge appearance="filled">可播放</Badge>
                       </div>
-                      <Badge appearance={item.isAvailable ? "filled" : "outline"}>
-                        {formatAvailabilityBadge(item)}
-                      </Badge>
-                    </div>
 
-                    <div className={styles.episodeMeta}>
-                      <Text className={`${styles.singleLine} ${styles.muted}`.trim()}>
-                        {item.availabilityNote ?? "资源状态未知"}
-                      </Text>
-                      {item.airdate ? (
-                        <Text className={`${styles.singleLine} ${styles.muted}`.trim()}>{item.airdate}</Text>
-                      ) : null}
-                    </div>
-                  </Card>
-                </Link>
-              );
-            })}
-          </div>
+                      <div className={styles.episodeMeta}>
+                        <Text className={`${styles.singleLine} ${styles.muted}`.trim()}>
+                          {item.availabilityNote ?? "已入库，可直接播放"}
+                        </Text>
+                        {item.airdate ? (
+                          <Text className={`${styles.singleLine} ${styles.muted}`.trim()}>{item.airdate}</Text>
+                        ) : null}
+                      </div>
+                    </Card>
+                  </Link>
+                );
+              })}
+            </div>
+          ) : (
+            <div className={styles.emptyState}>
+              <Text>当前还没有可播放的剧集。</Text>
+            </div>
+          )}
         </aside>
       </div>
     </MotionPage>

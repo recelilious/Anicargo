@@ -328,7 +328,7 @@ export function SeasonPage() {
           新番时间表
         </Text>
         <Text size={300} className={styles.headerSource}>
-          Yuc 新番时间表 · Bangumi 元数据与状态补全
+          長門番堂 新番时间表 · Bangumi 动画条目
         </Text>
       </Card>
       {error ? <Text>{error}</Text> : null}

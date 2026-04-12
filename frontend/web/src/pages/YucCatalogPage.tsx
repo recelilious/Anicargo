@@ -79,7 +79,7 @@ const useStyles = makeStyles({
 function pageCopy() {
   return {
     title: "新季度前瞻",
-    source: "新番卫星观测站 | 長門番堂",
+    source: "長門番堂 新番卫星观测站",
     emptyTitle: "暂时还没有新的前瞻条目",
     emptyNote: "如果 Yuc 还没放出下一个季度页面或前瞻内容，这里会暂时保持为空。",
   };

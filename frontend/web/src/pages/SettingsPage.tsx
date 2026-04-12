@@ -24,6 +24,15 @@ const useStyles = makeStyles({
     gap: "18px",
     minHeight: "100%",
   },
+  headerCard: {
+    backgroundColor: "var(--app-surface-1)",
+    border: "1px solid var(--app-border)",
+    boxShadow: "var(--app-card-shadow)",
+    padding: "20px 22px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+  },
   layout: {
     display: "grid",
     gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
@@ -81,7 +90,7 @@ const useStyles = makeStyles({
   hashValue: {
     wordBreak: "break-all",
   },
-  uiSizeBlock: {
+  sectionBlock: {
     display: "flex",
     flexDirection: "column",
     gap: "10px",
@@ -97,12 +106,8 @@ const useStyles = makeStyles({
   uiSizeSlider: {
     width: "100%",
   },
-  sectionBlock: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "10px",
-    paddingTop: "10px",
-    borderTop: "1px solid var(--app-border)",
+  themeRow: {
+    width: "100%",
   },
 });
 
@@ -171,13 +176,22 @@ export function SettingsPage() {
         {error ? <Text>{error}</Text> : null}
       </MotionPresence>
 
+      <Card className={`${styles.headerCard} app-motion-surface`}>
+        <Text weight="semibold" size={800}>
+          设置
+        </Text>
+        <Text size={300} className={styles.muted}>
+          登陆、注册、管理账户信息和调整外观
+        </Text>
+      </Card>
+
       <div className={styles.layout}>
         <div className={styles.column}>
           <Card className={`${styles.card} app-motion-surface`}>
             <div className={styles.titleGroup}>
               <Text weight="semibold">身份</Text>
               <Text size={300} className={styles.muted}>
-                当前设备与账号身份信息会显示在这里。
+                当前身份、名称和设备哈希会显示在这里。
               </Text>
             </div>
 
@@ -211,7 +225,7 @@ export function SettingsPage() {
                 ? "当前处于设备订阅模式。"
                 : isAdmin
                   ? "当前账号已启用管理员权限，左侧会显示管理栏目。"
-                  : "当前账号已登录，可在不同设备间同步账号订阅。"}
+                  : "当前账号已登录，可以在不同设备间同步订阅。"}
             </Text>
 
             {!isGuestViewer ? (
@@ -229,7 +243,7 @@ export function SettingsPage() {
                   style={{ ["--motion-delay" as string]: "44ms" }}
                 >
                   <div className={styles.titleGroup}>
-                    <Text weight="semibold">登录账号</Text>
+                    <Text weight="semibold">登陆账号</Text>
                     <Text size={300} className={styles.muted}>
                       使用已有账号登录，登录后将切换到账号订阅模式。
                     </Text>
@@ -255,7 +269,7 @@ export function SettingsPage() {
                   </Field>
 
                   <Button type="submit" appearance="primary">
-                    登录
+                    登陆
                   </Button>
                 </Card>
               </form>
@@ -303,13 +317,12 @@ export function SettingsPage() {
         <div className={styles.column}>
           <Card className={`${styles.card} app-motion-surface`} style={{ ["--motion-delay" as string]: "132ms" }}>
             <div className={styles.titleGroup}>
-              <Text weight="semibold">外观</Text>
-              <Text size={300} className={styles.muted}>
-                切换当前页面的明暗主题与跟随系统模式。
-              </Text>
+              <Text weight="semibold">明暗主题</Text>
             </div>
 
             <RadioGroup
+              className={styles.themeRow}
+              layout="horizontal"
               value={themePreference}
               onChange={(_, data) => setThemePreference(data.value as "system" | "light" | "dark")}
             >
@@ -318,7 +331,7 @@ export function SettingsPage() {
               <Radio value="dark" label="深色" />
             </RadioGroup>
 
-            <div className={styles.uiSizeBlock}>
+            <div className={styles.sectionBlock}>
               <div className={styles.uiSizeHeader}>
                 <Text weight="medium">UI 大小</Text>
                 <Text size={300} className={styles.muted}>
@@ -340,7 +353,7 @@ export function SettingsPage() {
               <div className={styles.titleGroup}>
                 <Text weight="medium">时间显示</Text>
                 <Text size={300} className={styles.muted}>
-                  控制时区显示方式与深夜模式的日期归属逻辑。
+                  当前时区：{systemTimeZone}
                 </Text>
               </div>
 
@@ -349,10 +362,6 @@ export function SettingsPage() {
                 label={deepNightMode ? "深夜模式已开启" : "深夜模式已关闭"}
                 onChange={(_, data) => setDeepNightMode(Boolean(data.checked))}
               />
-
-              <Text size={300} className={styles.muted}>
-                当前时区：{systemTimeZone}
-              </Text>
 
               <Text size={300} className={styles.muted}>
                 开启后，凌晨 06:00 之前会按前一日显示为 24+ 小时制。

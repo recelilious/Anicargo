@@ -117,7 +117,9 @@ export function AppShell() {
     previewAvailable: false
   });
   const usesContainedScroll =
-    location.pathname.startsWith("/resources") || location.pathname.startsWith("/history");
+    location.pathname.startsWith("/resources") ||
+    location.pathname.startsWith("/history") ||
+    location.pathname.startsWith("/watch");
 
   useEffect(() => {
     let cancelled = false;
