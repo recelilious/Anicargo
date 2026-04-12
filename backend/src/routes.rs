@@ -1268,11 +1268,15 @@ async fn resolve_subject_search_profile(
 
             let season_hint =
                 infer_season_hint_from_texts([subject.name.as_str(), subject.name_cn.as_str()]);
-            let part_hint =
+            let mut part_hint =
                 infer_part_hint_from_texts([subject.name.as_str(), subject.name_cn.as_str()]);
             let mut aliases = subject_search_aliases(&subject);
-            if let Ok(Some(group)) = subject_parts::resolve_subject_part_group(bangumi, subject_id).await
+            if let Ok(Some(group)) =
+                subject_parts::resolve_subject_part_group(bangumi, subject_id).await
             {
+                if let Some(current_segment) = subject_parts::current_segment(&group, subject_id) {
+                    part_hint = Some(part_hint.unwrap_or(current_segment.part_index.max(1)));
+                }
                 for segment in group.segments {
                     if segment.bangumi_subject_id == subject_id {
                         continue;

@@ -854,6 +854,12 @@ fn evaluate_candidate(
     let locale_hint = detect_locale_hint(resource);
     let is_raw = detect_raw(resource, locale_hint.as_deref());
     let normalized_fansub = resource.fansub_name.as_deref().map(normalize_name);
+    let inferred_installment = resource
+        .parsed_season_number
+        .or_else(|| infer_season_hint_from_texts([resource.title.as_str()]));
+    let inferred_part = resource
+        .parsed_part_number
+        .or_else(|| infer_part_hint_from_texts([resource.title.as_str()]));
 
     if let Some(reason) = detect_non_video_candidate(resource, resolution.as_deref()) {
         return CandidateEvaluation {
@@ -866,7 +872,7 @@ fn evaluate_candidate(
     }
 
     if let Some(expected_installment) = profile.installment_hint {
-        if let Some(actual_installment) = resource.parsed_season_number {
+        if let Some(actual_installment) = inferred_installment {
             if actual_installment != expected_installment {
                 return CandidateEvaluation {
                     score: -1000.0,
@@ -883,7 +889,7 @@ fn evaluate_candidate(
     }
 
     if let Some(expected_part) = profile.part_hint {
-        if let Some(actual_part) = resource.parsed_part_number {
+        if let Some(actual_part) = inferred_part {
             if actual_part != expected_part {
                 return CandidateEvaluation {
                     score: -1000.0,
@@ -1194,6 +1200,8 @@ fn infer_season_hint_from_text(value: &str) -> Option<i64> {
         season_suffix_regex(),
         japanese_season_regex(),
         english_season_regex(),
+        ascii_roman_trailing_season_regex(),
+        unicode_roman_trailing_season_regex(),
     ] {
         if let Some(captures) = regex.captures(value) {
             for index in 1..captures.len() {
@@ -1211,7 +1219,7 @@ fn infer_season_hint_from_text(value: &str) -> Option<i64> {
 }
 
 fn infer_part_hint_from_text(value: &str) -> Option<i64> {
-    for regex in [part_suffix_regex(), chinese_part_regex()] {
+    for regex in [part_suffix_regex(), chinese_part_regex(), cour_part_regex()] {
         if let Some(captures) = regex.captures(value) {
             for index in 1..captures.len() {
                 let Some(group) = captures.get(index) else {
@@ -1224,6 +1232,18 @@ fn infer_part_hint_from_text(value: &str) -> Option<i64> {
         }
     }
 
+    if let Some(captures) = unicode_half_part_regex().captures(value) {
+        let marker = captures
+            .get(1)
+            .map(|value| value.as_str())
+            .unwrap_or_default();
+        return match marker {
+            "\u{524D}\u{534A}" => Some(1),
+            "\u{5F8C}\u{534A}" | "\u{540E}\u{534A}" => Some(2),
+            _ => None,
+        };
+    }
+
     None
 }
 
@@ -1233,7 +1253,7 @@ fn parse_season_capture(value: &str) -> Option<i64> {
         return (parsed > 0).then_some(parsed);
     }
 
-    chinese_numeral_to_i64(trimmed)
+    chinese_numeral_to_i64(trimmed).or_else(|| roman_numeral_to_i64(trimmed))
 }
 
 fn chinese_numeral_to_i64(value: &str) -> Option<i64> {
@@ -1310,6 +1330,78 @@ fn english_season_regex() -> &'static Regex {
     })
 }
 
+fn ascii_roman_trailing_season_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r"(?i)(?:^|[\s_/])([ivx]{1,4})(?:\s*[\[\](){}~/\-_:]|\s*$)")
+            .expect("valid ascii roman trailing season regex")
+    })
+}
+
+fn unicode_roman_trailing_season_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r"([ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]{1,4})(?:\s*[\[\](){}~/\-_:]|\s*$)")
+            .expect("valid unicode roman trailing season regex")
+    })
+}
+
+fn cour_part_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(
+            "(?:\\u{7B2C}\\s*([0-9]{1,2}|[\\u{4E00}\\u{4E8C}\\u{4E09}\\u{56DB}\\u{4E94}\\u{516D}\\u{4E03}\\u{516B}\\u{4E5D}\\u{5341}\\u{4E24}]+)\\s*\\u{30AF}\\u{30FC}\\u{30EB})",
+        )
+        .expect("valid cour part regex")
+    })
+}
+
+fn unicode_half_part_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new("(\\u{524D}\\u{534A}|\\u{5F8C}\\u{534A}|\\u{540E}\\u{534A})")
+            .expect("valid unicode half part regex")
+    })
+}
+
+fn roman_numeral_to_i64(value: &str) -> Option<i64> {
+    let normalized = value
+        .trim()
+        .replace('\u{2160}', "I")
+        .replace('\u{2161}', "II")
+        .replace('\u{2162}', "III")
+        .replace('\u{2163}', "IV")
+        .replace('\u{2164}', "V")
+        .replace('\u{2165}', "VI")
+        .replace('\u{2166}', "VII")
+        .replace('\u{2167}', "VIII")
+        .replace('\u{2168}', "IX")
+        .replace('\u{2169}', "X")
+        .to_ascii_uppercase();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    let mut total = 0;
+    let mut previous = 0;
+    for character in normalized.chars().rev() {
+        let value = match character {
+            'I' => 1,
+            'V' => 5,
+            'X' => 10,
+            _ => return None,
+        };
+        if value < previous {
+            total -= value;
+        } else {
+            total += value;
+            previous = value;
+        }
+    }
+
+    (total > 0).then_some(total)
+}
+
 fn normalize_name(value: &str) -> String {
     value
         .chars()
@@ -1338,8 +1430,8 @@ mod tests {
     use anicargo_metadata_parser::FileRole;
 
     use super::{
-        detect_non_video_candidate, evaluate_candidate, infer_season_hint_from_texts,
-        normalize_resource_release_slots, replacement_window_elapsed,
+        detect_non_video_candidate, evaluate_candidate, infer_part_hint_from_texts,
+        infer_season_hint_from_texts, normalize_resource_release_slots, replacement_window_elapsed,
     };
     use crate::animegarden::{AnimeGardenResource, AnimeGardenSearchProfile};
     use crate::media::ParsedReleaseSlot;
@@ -1356,6 +1448,26 @@ mod tests {
             infer_season_hint_from_texts(["Example Title S2", "Example Title Season 2"]),
             Some(2)
         );
+        assert_eq!(infer_season_hint_from_texts(["Mushoku Tensei II"]), Some(2));
+        assert_eq!(
+            infer_season_hint_from_texts([
+                "\u{65E0}\u{804C}\u{8F6C}\u{751F}\u{2162} ~\u{5230}\u{4E86}\u{5F02}\u{4E16}\u{754C}\u{5C31}\u{62FF}\u{51FA}\u{771F}\u{672C}\u{4E8B}~"
+            ]),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn parses_part_hints_from_half_and_cour_markers() {
+        assert_eq!(
+            infer_part_hint_from_texts([
+                "Mushoku Tensei Part 2",
+                "\u{7B2C}2\u{30AF}\u{30FC}\u{30EB}"
+            ]),
+            Some(2)
+        );
+        assert_eq!(infer_part_hint_from_texts(["\u{524D}\u{534A}"]), Some(1));
+        assert_eq!(infer_part_hint_from_texts(["\u{5F8C}\u{534A}"]), Some(2));
     }
 
     #[test]
@@ -1572,6 +1684,45 @@ mod tests {
 
         assert!(!replacement_window_elapsed(Some(recent.as_str()), 72));
         assert!(replacement_window_elapsed(Some(expired.as_str()), 72));
+    }
+
+    #[test]
+    fn rejects_unicode_roman_season_candidates_when_installment_differs() {
+        let resource = sample_collection_resource(
+            "[\u{52A8}\u{6F2B}\u{56FD}] \u{65E0}\u{804C}\u{8F6C}\u{751F}\u{2161} ~\u{5230}\u{4E86}\u{5F02}\u{4E16}\u{754C}\u{5C31}\u{62FF}\u{51FA}\u{771F}\u{672C}\u{4E8B}~ [00-24]",
+            "2026-01-01T00:00:00Z",
+            0.0,
+            24.0,
+            None,
+        );
+        let profile = AnimeGardenSearchProfile {
+            bangumi_subject_id: 1,
+            title: "\u{65E0}\u{804C}\u{8F6C}\u{751F}\u{FF5E}\u{5230}\u{4E86}\u{5F02}\u{4E16}\u{754C}\u{5C31}\u{62FF}\u{51FA}\u{771F}\u{672C}\u{4E8B}\u{FF5E}".to_owned(),
+            title_cn: "\u{65E0}\u{804C}\u{8F6C}\u{751F}\u{FF5E}\u{5230}\u{4E86}\u{5F02}\u{4E16}\u{754C}\u{5C31}\u{62FF}\u{51FA}\u{771F}\u{672C}\u{4E8B}\u{FF5E}".to_owned(),
+            aliases: Vec::new(),
+            season_hint: None,
+            installment_hint: Some(1),
+            part_hint: Some(1),
+        };
+        let evaluation = evaluate_candidate(
+            &resource,
+            &Vec::<FansubRuleDto>::new(),
+            None,
+            &PolicyDto {
+                subscription_threshold: 1,
+                replacement_window_hours: 72,
+                prefer_same_fansub: true,
+                max_concurrent_downloads: 5,
+                upload_limit_mb: 0,
+                download_limit_mb: 5,
+            },
+            "completed",
+            &profile,
+        );
+        assert_eq!(
+            evaluation.rejected_reason.as_deref(),
+            Some("installment mismatch: expected 1, got 2")
+        );
     }
 
     fn sample_resource(
