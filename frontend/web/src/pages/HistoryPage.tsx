@@ -183,6 +183,7 @@ function HistoryPoster({ imagePortrait }: { imagePortrait: string | null }) {
           src={imagePortrait ?? undefined}
           alt=""
           loading="lazy"
+          decoding="async"
           style={{
             width: "100%",
             height: "100%",

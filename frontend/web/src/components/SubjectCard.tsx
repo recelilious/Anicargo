@@ -7,6 +7,7 @@ import { motionDelayStyle } from "../motion";
 import { buildRoutePath, rememberReturnTarget, type RouteState } from "../navigation";
 import { useSession } from "../session";
 import type { SubjectCard as SubjectCardModel } from "../types";
+import { fetchSubjectDetailCached, primeSubjectPreview } from "../view-cache";
 import { CardCoverFallback } from "./CardCoverFallback";
 
 type SubjectCardMetaVariant = "schedule" | "catalog" | "preview" | "related";
@@ -325,6 +326,10 @@ export function SubjectCard({
   const shouldShowPoster = Boolean(subject.imagePortrait) && !hasPosterError;
 
   useEffect(() => {
+    primeSubjectPreview(subject);
+  }, [subject]);
+
+  useEffect(() => {
     if (!isLinkedCard) {
       return;
     }
@@ -490,6 +495,10 @@ export function SubjectCard({
   function handleCardClick() {
     const scrollTop = document.getElementById("app-scroll-root")?.scrollTop ?? 0;
     rememberReturnTarget(fromPath, scrollTop);
+    primeSubjectPreview(subject);
+    if (isLinkedCard) {
+      void fetchSubjectDetailCached(subject.bangumiSubjectId, deviceId, userToken);
+    }
   }
 
   const isTagRailShown = displayedTags.length > 0 && isTagRailReady && !isHovering;
@@ -517,6 +526,7 @@ export function SubjectCard({
             src={subject.imagePortrait ?? undefined}
             alt=""
             loading="lazy"
+            decoding="async"
             onError={() => setHasPosterError(true)}
           />
         ) : null}

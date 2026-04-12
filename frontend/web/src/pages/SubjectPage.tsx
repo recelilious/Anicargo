@@ -3,14 +3,22 @@ import { ArrowLeftRegular } from "@fluentui/react-icons";
 import { Badge, Button, Card, Text, makeStyles, tokens } from "@fluentui/react-components";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
-import { fetchSubjectDetail, toggleSubscription } from "../api";
+import { toggleSubscription } from "../api";
 import { EpisodeCard } from "../components/EpisodeCard";
 import { SubjectCard } from "../components/SubjectCard";
 import { useLoadingStatus } from "../loading-status";
 import { MotionPage, MotionPresence } from "../motion";
 import { resolveReturnScrollTop, type RouteState } from "../navigation";
 import { useSession } from "../session";
-import type { SubjectDetailResponse } from "../types";
+import type { SubjectCard as SubjectCardModel, SubjectDetailResponse } from "../types";
+import {
+  fetchSubjectDetailCached,
+  getCachedSubjectDetail,
+  getCachedSubjectPreview,
+  revalidateSubjectDetail,
+  subjectCardFromDetail,
+  subjectDetailPreviewFromCard,
+} from "../view-cache";
 
 const useStyles = makeStyles({
   page: {
@@ -222,43 +230,62 @@ export function SubjectPage() {
   const location = useLocation();
   const { subjectId } = useParams();
   const { deviceId, userToken } = useSession();
-  const [detail, setDetail] = useState<SubjectDetailResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const numericSubjectId = subjectId ? Number(subjectId) : null;
+  const [preview, setPreview] = useState<SubjectCardModel | null>(() =>
+    numericSubjectId != null ? getCachedSubjectPreview(numericSubjectId) : null,
+  );
+  const [detail, setDetail] = useState<SubjectDetailResponse | null>(() =>
+    numericSubjectId != null ? getCachedSubjectDetail(numericSubjectId, deviceId, userToken) : null,
+  );
+  const [isLoading, setIsLoading] = useState(() =>
+    numericSubjectId != null ? getCachedSubjectDetail(numericSubjectId, deviceId, userToken) == null : false,
+  );
   const [isSubscribing, setIsSubscribing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useLoadingStatus(isLoading ? "正在加载条目..." : isSubscribing ? "正在更新订阅..." : null);
   const routeState = (location.state as RouteState | null) ?? null;
 
   useEffect(() => {
-    if (!subjectId) {
+    if (numericSubjectId == null) {
       return;
     }
 
-    let isMounted = true;
-    setIsLoading(true);
+    let cancelled = false;
+    const cachedPreview = getCachedSubjectPreview(numericSubjectId);
+    const cachedDetail = getCachedSubjectDetail(numericSubjectId, deviceId, userToken);
 
-    void fetchSubjectDetail(Number(subjectId), deviceId, userToken)
+    setPreview(cachedPreview);
+    setDetail(cachedDetail);
+    setError(null);
+    setIsLoading(cachedDetail == null);
+
+    const request = cachedDetail
+      ? revalidateSubjectDetail(numericSubjectId, deviceId, userToken)
+      : fetchSubjectDetailCached(numericSubjectId, deviceId, userToken);
+
+    void request
       .then((response) => {
-        if (isMounted) {
+        if (!cancelled) {
           setDetail(response);
+          setPreview(subjectCardFromDetail(response.subject));
           setError(null);
         }
       })
       .catch((nextError: Error) => {
-        if (isMounted) {
+        if (!cancelled) {
           setError(nextError.message);
         }
       })
       .finally(() => {
-        if (isMounted) {
+        if (!cancelled) {
           setIsLoading(false);
         }
       });
 
     return () => {
-      isMounted = false;
+      cancelled = true;
     };
-  }, [deviceId, subjectId, userToken]);
+  }, [deviceId, numericSubjectId, userToken]);
 
   async function handleToggleSubscription() {
     if (!subjectId || !detail) {
@@ -324,18 +351,27 @@ export function SubjectPage() {
     });
   }
 
-  if (isLoading) {
-    return null;
+  const displaySubject = detail?.subject ?? (preview ? subjectDetailPreviewFromCard(preview) : null);
+
+  if (!displaySubject) {
+    return <Text>{error ?? "Loading..."}</Text>;
   }
 
-  if (!detail) {
+  if (!detail && !preview && !isLoading) {
     return <Text>{error ?? "条目不存在。"}</Text>;
   }
 
-  const subscriptionAction = resolveSubscriptionAction(detail);
-  const visibleInfobox = detail.subject.infobox.filter((item) => !shouldHideInfoboxItem(item.key));
-  const openingThemes = formatThemeList(detail.subject.openingThemes);
-  const endingThemes = formatThemeList(detail.subject.endingThemes);
+  const subscriptionAction = detail
+    ? resolveSubscriptionAction(detail)
+    : {
+        label: "Loading...",
+        disabled: true,
+      };
+  const visibleInfobox = detail
+    ? detail.subject.infobox.filter((item) => !shouldHideInfoboxItem(item.key))
+    : [];
+  const openingThemes = detail ? formatThemeList(detail.subject.openingThemes) : "";
+  const endingThemes = detail ? formatThemeList(detail.subject.endingThemes) : "";
 
   return (
     <MotionPage className={styles.page}>
@@ -343,10 +379,10 @@ export function SubjectPage() {
         <div
           className={styles.heroBackdrop}
           style={{
-            backgroundImage: detail.subject.imageBanner
-              ? `url(${detail.subject.imageBanner})`
-              : detail.subject.imagePortrait
-                ? `url(${detail.subject.imagePortrait})`
+            backgroundImage: displaySubject.imageBanner
+              ? `url(${displaySubject.imageBanner})`
+              : displaySubject.imagePortrait
+                ? `url(${displaySubject.imagePortrait})`
                 : undefined,
             backgroundColor: "var(--app-fallback-hero)",
           }}
@@ -362,14 +398,14 @@ export function SubjectPage() {
 
           <div className={styles.titleGroup}>
             <Text weight="semibold" size={900}>
-              {detail.subject.titleCn || detail.subject.title}
+              {displaySubject.titleCn || displaySubject.title}
             </Text>
-            <Text className={styles.subtitle}>{detail.subject.title}</Text>
+            <Text className={styles.subtitle}>{displaySubject.title}</Text>
           </div>
 
-          {detail.subject.tags.length > 0 ? (
+          {displaySubject.tags.length > 0 ? (
             <div className={styles.badges}>
-              {detail.subject.tags.map((tag) => (
+              {displaySubject.tags.map((tag) => (
                 <Badge key={tag} appearance="filled">
                   {tag}
                 </Badge>
@@ -395,7 +431,7 @@ export function SubjectPage() {
                   订阅
                 </Text>
                 <Text weight="semibold">
-                  {detail.subscription.subscriptionCount} / {detail.subscription.threshold}
+                  {detail ? `${detail.subscription.subscriptionCount} / ${detail.subscription.threshold}` : "-- / --"}
                 </Text>
               </div>
 
@@ -403,30 +439,32 @@ export function SubjectPage() {
                 <Text size={200} className={styles.statLabel}>
                   归属
                 </Text>
-                <Text weight="semibold">{formatSubscriptionSource(detail.subscription.source)}</Text>
+                <Text weight="semibold">
+                  {detail ? formatSubscriptionSource(detail.subscription.source) : "--"}
+                </Text>
               </div>
 
               <div className={styles.statCard}>
                 <Text size={200} className={styles.statLabel}>
                   放送
                 </Text>
-                <Text weight="semibold">{formatBroadcast(detail.subject)}</Text>
+                <Text weight="semibold">{formatBroadcast(displaySubject)}</Text>
               </div>
 
               <div className={styles.statCard}>
                 <Text size={200} className={styles.statLabel}>
                   评分
                 </Text>
-                <Text weight="semibold">{formatRating(detail.subject.ratingScore)}</Text>
+                <Text weight="semibold">{formatRating(displaySubject.ratingScore)}</Text>
               </div>
             </div>
 
-            {detail.subject.summary ? (
+            {displaySubject.summary ? (
               <div className={styles.summaryCard}>
                 <Text size={200} className={styles.statLabel}>
                   简介
                 </Text>
-                <Text className={styles.summaryText}>{detail.subject.summary}</Text>
+                <Text className={styles.summaryText}>{displaySubject.summary}</Text>
               </div>
             ) : null}
 
@@ -480,17 +518,21 @@ export function SubjectPage() {
         </Text>
 
         <div className={styles.episodesGrid}>
-          {detail.episodes.map((episode, index) => (
-            <EpisodeCard
-              key={episode.bangumiEpisodeId}
-              subjectId={detail.subject.bangumiSubjectId}
-              episode={episode}
-              motionIndex={index}
-            />
-          ))}
+          {detail ? (
+            detail.episodes.map((episode, index) => (
+              <EpisodeCard
+                key={episode.bangumiEpisodeId}
+                subjectId={detail.subject.bangumiSubjectId}
+                episode={episode}
+                motionIndex={index}
+              />
+            ))
+          ) : (
+            <Text>Loading episodes...</Text>
+          )}
         </div>
       </div>
-      {detail.subject.relatedSubjects.length > 0 ? (
+      {detail && detail.subject.relatedSubjects.length > 0 ? (
         <div
           className={`${styles.relatedSection} app-motion-surface`}
           style={{ ["--motion-delay" as string]: "84ms" }}

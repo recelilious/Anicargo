@@ -5,8 +5,6 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import {
   buildApiUrl,
-  fetchEpisodePlayback,
-  fetchSubjectDetail,
   recordPlaybackHistory,
 } from "../api";
 import { AnicargoPlayer } from "../components/AnicargoPlayer";
@@ -15,6 +13,14 @@ import { MotionPage, motionDelayStyle } from "../motion";
 import { resolveReturnScrollTop, type RouteState } from "../navigation";
 import { useSession } from "../session";
 import type { Episode, EpisodePlaybackResponse, SubjectDetailResponse } from "../types";
+import {
+  fetchEpisodePlaybackCached,
+  fetchSubjectDetailCached,
+  getCachedEpisodePlayback,
+  getCachedSubjectDetail,
+  revalidateEpisodePlayback,
+  revalidateSubjectDetail,
+} from "../view-cache";
 
 const useStyles = makeStyles({
   page: {
@@ -244,34 +250,58 @@ export function WatchPage() {
   const location = useLocation();
   const { subjectId, episodeId } = useParams();
   const { deviceId, userToken } = useSession();
+  const numericSubjectId = subjectId ? Number(subjectId) : null;
+  const numericEpisodeId = episodeId ? Number(episodeId) : null;
+  const cachedDetail =
+    numericSubjectId != null ? getCachedSubjectDetail(numericSubjectId, deviceId, userToken) : null;
+  const cachedPlayback =
+    numericSubjectId != null && numericEpisodeId != null
+      ? getCachedEpisodePlayback(numericSubjectId, numericEpisodeId, deviceId, userToken)
+      : null;
   const hasRecordedPlaybackRef = useRef(false);
-  const [detail, setDetail] = useState<SubjectDetailResponse | null>(null);
-  const [episode, setEpisode] = useState<Episode | null>(null);
-  const [playback, setPlayback] = useState<EpisodePlaybackResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [detail, setDetail] = useState<SubjectDetailResponse | null>(cachedDetail);
+  const [episode, setEpisode] = useState<Episode | null>(
+    cachedDetail?.episodes.find((item) => item.bangumiEpisodeId === numericEpisodeId) ?? null,
+  );
+  const [playback, setPlayback] = useState<EpisodePlaybackResponse | null>(cachedPlayback);
+  const [isLoading, setIsLoading] = useState(cachedDetail == null || cachedPlayback == null);
   const [error, setError] = useState<string | null>(null);
   useLoadingStatus(isLoading ? "正在准备播放..." : null);
   const routeState = (location.state as RouteState | null) ?? null;
 
   useEffect(() => {
-    if (!subjectId || !episodeId) {
+    if (numericSubjectId == null || numericEpisodeId == null) {
       return;
     }
 
-    let isMounted = true;
-    setIsLoading(true);
+    let cancelled = false;
+    const nextCachedDetail = getCachedSubjectDetail(numericSubjectId, deviceId, userToken);
+    const nextCachedPlayback = getCachedEpisodePlayback(
+      numericSubjectId,
+      numericEpisodeId,
+      deviceId,
+      userToken,
+    );
+
+    setDetail(nextCachedDetail);
+    setEpisode(
+      nextCachedDetail?.episodes.find((item) => item.bangumiEpisodeId === numericEpisodeId) ?? null,
+    );
+    setPlayback(nextCachedPlayback);
+    setIsLoading(nextCachedDetail == null || nextCachedPlayback == null);
     setError(null);
     hasRecordedPlaybackRef.current = false;
 
-    const numericSubjectId = Number(subjectId);
-    const numericEpisodeId = Number(episodeId);
+    const detailRequest = nextCachedDetail
+      ? revalidateSubjectDetail(numericSubjectId, deviceId, userToken)
+      : fetchSubjectDetailCached(numericSubjectId, deviceId, userToken);
+    const playbackRequest = nextCachedPlayback
+      ? revalidateEpisodePlayback(numericSubjectId, numericEpisodeId, deviceId, userToken)
+      : fetchEpisodePlaybackCached(numericSubjectId, numericEpisodeId, deviceId, userToken);
 
-    void Promise.all([
-      fetchSubjectDetail(numericSubjectId, deviceId, userToken),
-      fetchEpisodePlayback(numericSubjectId, numericEpisodeId, deviceId, userToken),
-    ])
+    void Promise.all([detailRequest, playbackRequest])
       .then(([detailResponse, playbackResponse]) => {
-        if (!isMounted) {
+        if (cancelled) {
           return;
         }
 
@@ -282,22 +312,22 @@ export function WatchPage() {
         setPlayback(playbackResponse);
       })
       .catch((requestError: Error) => {
-        if (!isMounted) {
+        if (cancelled) {
           return;
         }
 
         setError(requestError.message);
       })
       .finally(() => {
-        if (isMounted) {
+        if (!cancelled) {
           setIsLoading(false);
         }
       });
 
     return () => {
-      isMounted = false;
+      cancelled = true;
     };
-  }, [subjectId, episodeId, deviceId, userToken]);
+  }, [numericSubjectId, numericEpisodeId, deviceId, userToken]);
 
   async function handlePlaybackStart() {
     if (!subjectId || !episodeId || !playback?.media || hasRecordedPlaybackRef.current) {
@@ -351,10 +381,6 @@ export function WatchPage() {
   const episodeTitle = episode?.titleCn || episode?.title || "未命名剧集";
   const fansubLabel = playback?.media?.sourceFansubName ?? "来源未知";
   const updatedLabel = formatUpdatedAt(playback?.media?.updatedAt);
-
-  if (isLoading) {
-    return null;
-  }
 
   return (
     <MotionPage className={styles.page}>
