@@ -4,6 +4,17 @@
   --app-subject-card-fixed-width: 210px;
   --app-subject-card-height: 414px;
   --app-subject-card-poster-height: 238px;
+  --app-sidebar-width: 220px;
+  --app-rail-padding-x: 14px;
+  --app-rail-padding-y: 22px;
+  --app-rail-gap: 18px;
+  --app-nav-gap: 8px;
+  --app-brand-gap: 10px;
+  --app-brand-logo-width: 36px;
+  --app-brand-logo-height: 44px;
+  --app-content-padding-x: 28px;
+  --app-content-padding-top: 24px;
+  --app-content-padding-bottom: 40px;
   --app-bg: #f5f0eb;
   --app-rail: #fbf6f1;
   --app-surface-1: #fffaf6;

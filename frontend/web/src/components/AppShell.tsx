@@ -21,16 +21,16 @@ const useStyles = makeStyles({
   layout: {
     height: "100vh",
     display: "grid",
-    gridTemplateColumns: "220px 1fr",
+    gridTemplateColumns: "var(--app-sidebar-width) 1fr",
     backgroundColor: "var(--app-bg)",
     overflow: "hidden"
   },
   rail: {
     display: "flex",
     flexDirection: "column",
-    gap: "18px",
+    gap: "var(--app-rail-gap)",
     height: "100vh",
-    padding: "22px 14px",
+    padding: "var(--app-rail-padding-y) var(--app-rail-padding-x)",
     borderRight: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: "var(--app-rail)",
     overflow: "hidden"
@@ -38,12 +38,12 @@ const useStyles = makeStyles({
   brand: {
     display: "flex",
     alignItems: "center",
-    gap: "10px",
+    gap: "var(--app-brand-gap)",
     padding: "2px 6px 0"
   },
   brandLogo: {
-    width: "36px",
-    height: "44px",
+    width: "var(--app-brand-logo-width)",
+    height: "var(--app-brand-logo-height)",
     flexShrink: 0,
     color: "var(--app-text)"
   },
@@ -60,7 +60,7 @@ const useStyles = makeStyles({
   nav: {
     display: "flex",
     flexDirection: "column",
-    gap: "8px"
+    gap: "var(--app-nav-gap)"
   },
   navLink: {
     textDecorationLine: "none"
@@ -83,7 +83,8 @@ const useStyles = makeStyles({
   content: {
     minWidth: 0,
     height: "100vh",
-    padding: "24px 28px 40px",
+    padding:
+      "var(--app-content-padding-top) var(--app-content-padding-x) var(--app-content-padding-bottom)",
     overflow: "hidden",
     display: "flex",
     flexDirection: "column",

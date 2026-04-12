@@ -85,7 +85,8 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: "10px",
-    paddingTop: "4px",
+    paddingTop: "12px",
+    borderTop: "1px solid var(--app-border)",
   },
   uiSizeHeader: {
     display: "flex",
