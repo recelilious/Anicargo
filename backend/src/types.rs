@@ -605,6 +605,16 @@ pub struct ActiveDownloadsResponse {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EpisodeSubtitleTrackDto {
+    pub id: String,
+    pub label: String,
+    pub language: Option<String>,
+    pub kind: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EpisodePlaybackMediaDto {
     pub media_inventory_id: i64,
     pub file_name: String,
@@ -614,6 +624,7 @@ pub struct EpisodePlaybackMediaDto {
     pub source_fansub_name: Option<String>,
     pub updated_at: String,
     pub stream_url: String,
+    pub subtitle_tracks: Vec<EpisodeSubtitleTrackDto>,
 }
 
 #[derive(Debug, Serialize)]

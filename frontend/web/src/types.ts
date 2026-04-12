@@ -174,6 +174,13 @@ export type EpisodePlaybackResponse = {
     sourceFansubName: string | null;
     updatedAt: string;
     streamUrl: string;
+    subtitleTracks: Array<{
+      id: string;
+      label: string;
+      language: string | null;
+      kind: string;
+      url: string;
+    }>;
   } | null;
 };
 

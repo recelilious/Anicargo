@@ -5,11 +5,19 @@ import type { Option as ArtplayerOption } from "artplayer/types/option";
 type AnicargoPlayerProps = {
   streamUrl: string;
   posterUrl?: string | null;
-  subtitleUrl?: string | null;
+  subtitleTracks?: PlayerSubtitleTrack[];
   onPlaybackStart?: () => void;
 };
 
+type PlayerSubtitleTrack = {
+  id: string;
+  label: string;
+  language?: string | null;
+  url: string;
+};
+
 type SubtitleTrackOption = {
+  id: string;
   index: number;
   label: string;
   active: boolean;
@@ -56,6 +64,7 @@ function createTrackLabel(track: TextTrack, index: number) {
 
 function readSubtitleTracks(video: HTMLVideoElement | null): SubtitleTrackOption[] {
   return collectTextTracks(video).map((track, index) => ({
+    id: track.id || `track-${index}`,
     index,
     label: createTrackLabel(track, index),
     active: track.mode === "showing",
@@ -116,7 +125,7 @@ function readPlayerTheme(): PlayerThemeConfig {
 export function AnicargoPlayer({
   streamUrl,
   posterUrl,
-  subtitleUrl,
+  subtitleTracks = [],
   onPlaybackStart,
 }: AnicargoPlayerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -127,15 +136,39 @@ export function AnicargoPlayer({
   const hasStartedRef = useRef(false);
   const playbackStartRef = useRef(onPlaybackStart);
   const [useNativeVideo, setUseNativeVideo] = useState(false);
-  const [subtitleTracks, setSubtitleTracks] = useState<SubtitleTrackOption[]>([]);
+  const [selectableSubtitleTracks, setSelectableSubtitleTracks] = useState<SubtitleTrackOption[]>([]);
   const [isSubtitleMenuOpen, setIsSubtitleMenuOpen] = useState(false);
   const [themeConfig, setThemeConfig] = useState<PlayerThemeConfig>(() => readPlayerTheme());
 
   playbackStartRef.current = onPlaybackStart;
 
+  function attachExternalSubtitleTracks(video: HTMLVideoElement | null) {
+    if (!video) {
+      return;
+    }
+
+    video.querySelectorAll("track[data-anicargo-track='true']").forEach((trackElement) => {
+      trackElement.remove();
+    });
+
+    for (const track of subtitleTracks) {
+      const trackElement = document.createElement("track");
+      trackElement.kind = "subtitles";
+      trackElement.label = track.label;
+      trackElement.src = track.url;
+      trackElement.id = track.id;
+      trackElement.default = false;
+      if (track.language) {
+        trackElement.srclang = track.language;
+      }
+      trackElement.dataset.anicargoTrack = "true";
+      video.appendChild(trackElement);
+    }
+  }
+
   function syncSubtitleTracks(video: HTMLVideoElement | null = activeVideoRef.current) {
     const tracks = readSubtitleTracks(video);
-    setSubtitleTracks(tracks);
+    setSelectableSubtitleTracks(tracks);
     if (tracks.length === 0) {
       setIsSubtitleMenuOpen(false);
     }
@@ -148,6 +181,7 @@ export function AnicargoPlayer({
     }
 
     activeVideoRef.current = video;
+    attachExternalSubtitleTracks(video);
     syncSubtitleTracks(video);
 
     const handleTrackUpdate = () => syncSubtitleTracks(video);
@@ -217,22 +251,6 @@ export function AnicargoPlayer({
         crossOrigin: "anonymous",
         playsInline: true,
       },
-      subtitle: subtitleUrl
-        ? {
-            url: subtitleUrl,
-            type: subtitleUrl.endsWith(".ass")
-              ? "ass"
-              : subtitleUrl.endsWith(".srt")
-                ? "srt"
-                : "vtt",
-            style: {
-              fontFamily: "\"JetBrains Mono Variable\", \"Maple Mono CN\", monospace",
-              fontSize: "18px",
-              color: themeConfig.subtitleTextColor,
-              textShadow: themeConfig.subtitleTextShadow,
-            },
-          }
-        : undefined,
       cssVar: {
         "--art-theme": themeConfig.accent,
         "--art-font-color": themeConfig.fontColor,
@@ -299,7 +317,7 @@ export function AnicargoPlayer({
 
   useEffect(() => {
     setIsSubtitleMenuOpen(false);
-  }, [streamUrl, subtitleUrl]);
+  }, [streamUrl, subtitleTracks]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -309,7 +327,7 @@ export function AnicargoPlayer({
 
     hasStartedRef.current = false;
     setUseNativeVideo(false);
-    setSubtitleTracks([]);
+    setSelectableSubtitleTracks([]);
     container.innerHTML = "";
 
     let cancelled = false;
@@ -375,7 +393,7 @@ export function AnicargoPlayer({
       playerRef.current = null;
       activeVideoRef.current = null;
     };
-  }, [posterUrl, streamUrl, subtitleUrl, themeConfig]);
+  }, [posterUrl, streamUrl, subtitleTracks, themeConfig]);
 
   useEffect(() => {
     if (!useNativeVideo) {
@@ -383,7 +401,7 @@ export function AnicargoPlayer({
     }
 
     return bindVideoTracks(nativeVideoRef.current);
-  }, [useNativeVideo, posterUrl, streamUrl, subtitleUrl, themeConfig]);
+  }, [useNativeVideo, posterUrl, streamUrl, subtitleTracks, themeConfig]);
 
   function handleSubtitleSelect(trackIndex: number | null) {
     applySubtitleTrack(activeVideoRef.current, trackIndex);
@@ -391,11 +409,11 @@ export function AnicargoPlayer({
     setIsSubtitleMenuOpen(false);
   }
 
-  const activeSubtitle = subtitleTracks.find((track) => track.active);
+  const activeSubtitle = selectableSubtitleTracks.find((track) => track.active);
 
   return (
     <div className="anicargo-player-shell">
-      {subtitleTracks.length > 0 ? (
+      {selectableSubtitleTracks.length > 0 ? (
         <div className="anicargo-player-menu" ref={menuRef}>
           <button
             type="button"
@@ -415,7 +433,7 @@ export function AnicargoPlayer({
                 关闭字幕
               </button>
 
-              {subtitleTracks.map((track) => (
+              {selectableSubtitleTracks.map((track) => (
                 <button
                   key={track.index}
                   type="button"
@@ -448,7 +466,17 @@ export function AnicargoPlayer({
           style={{ width: "100%", height: "100%", backgroundColor: themeConfig.background }}
         >
           <source src={streamUrl} />
-          {subtitleUrl ? <track kind="subtitles" src={subtitleUrl} default /> : null}
+          {subtitleTracks.map((track) => (
+            <track
+              key={track.id}
+              id={track.id}
+              kind="subtitles"
+              label={track.label}
+              src={track.url}
+              srcLang={track.language ?? undefined}
+              data-anicargo-track="true"
+            />
+          ))}
         </video>
       ) : (
         <div

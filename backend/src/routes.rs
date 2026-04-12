@@ -13,7 +13,7 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    path::PathBuf,
+    path::{Path as FsPath, PathBuf},
     sync::Arc,
 };
 use tokio::time::{Duration as TokioDuration, sleep, timeout};
@@ -43,11 +43,10 @@ use crate::{
         AdminDownloadQueueResponse, AdminRuntimeResponse, ApiEnvelope, AppError, AuthResponse,
         BootstrapResponse, CalendarResponse, CatalogManifestResponse, CatalogPageResponse,
         CredentialsRequest, DownloadExecutionDto, DownloadJobDto, EpisodePlaybackMediaDto,
-        EpisodePlaybackResponse, FansubRuleDto, ForceDownloadResponse, HealthResponse,
-        PlaybackHistoryItemDto,
-        PlaybackHistoryRecordRequest, PlaybackHistoryResponse, PolicyDto, ResourceCandidateDto,
-        ResourceLibraryRequest, ResourceLibraryResponse, RuntimeHttpStatsDto, RuntimeOverviewDto,
-        ScheduleDisplayQuery, SearchRequest, SearchResponse, SubjectCardDto,
+        EpisodePlaybackResponse, EpisodeSubtitleTrackDto, FansubRuleDto, ForceDownloadResponse, HealthResponse,
+        PlaybackHistoryItemDto, PlaybackHistoryRecordRequest, PlaybackHistoryResponse, PolicyDto,
+        ResourceCandidateDto, ResourceLibraryRequest, ResourceLibraryResponse, RuntimeHttpStatsDto,
+        RuntimeOverviewDto, ScheduleDisplayQuery, SearchRequest, SearchResponse, SubjectCardDto,
         SubjectCollectionRequest, SubjectCollectionResponse, SubjectDetailDto,
         SubjectDetailResponse, SubscriptionStateDto, ToggleSubscriptionResponse,
         UpdatePolicyRequest, UpsertFansubRuleRequest, ViewerSummary,
@@ -92,6 +91,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/public/media/{media_id}/stream",
             get(stream_media_file),
+        )
+        .route(
+            "/api/public/media/{media_id}/subtitles/{track_id}",
+            get(stream_media_subtitle_file),
         )
         .route(
             "/api/public/subscriptions/{subject_id}/toggle",
@@ -610,6 +613,27 @@ async fn episode_playback(
 
     let media = db::find_episode_playback_media(&state.pool, subject_id, episode_number).await?;
     let response = if let Some(media) = media {
+        let subtitle_tracks = match media::probe_subtitle_tracks(FsPath::new(&media.absolute_path)) {
+            Ok(tracks) => tracks
+                .into_iter()
+                .map(|track| EpisodeSubtitleTrackDto {
+                    id: track.id.clone(),
+                    label: track.label,
+                    language: track.language,
+                    kind: track.kind,
+                    url: format!("/api/public/media/{}/subtitles/{}", media.id, track.id),
+                })
+                .collect(),
+            Err(error) => {
+                tracing::warn!(
+                    media_id = media.id,
+                    path = %media.absolute_path,
+                    error = %error,
+                    "Failed to probe subtitle tracks for playback media"
+                );
+                Vec::new()
+            }
+        };
         EpisodePlaybackResponse {
             bangumi_subject_id: subject_id,
             bangumi_episode_id: episode_id,
@@ -625,6 +649,7 @@ async fn episode_playback(
                 source_fansub_name: media.source_fansub_name,
                 updated_at: media.updated_at,
                 stream_url: format!("/api/public/media/{}/stream", media.id),
+                subtitle_tracks,
             }),
         }
     } else if db::has_partial_episode_media(&state.pool, subject_id, episode_number).await? {
@@ -668,6 +693,39 @@ async fn stream_media_file(
         .oneshot(request)
         .await
         .map_err(|_| AppError::internal("failed to stream media file"))
+}
+
+async fn stream_media_subtitle_file(
+    State(state): State<AppState>,
+    Path((media_id, track_id)): Path<(i64, String)>,
+    request: Request,
+) -> Result<impl IntoResponse, AppError> {
+    let media = db::resource_library_item_by_id(&state.pool, media_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("media item not found"))?;
+
+    let path = PathBuf::from(&media.absolute_path);
+    if !path.exists() {
+        return Err(AppError::not_found("media file not found on disk"));
+    }
+
+    let subtitle_asset =
+        media::materialize_subtitle_track(&path, &state.config.storage.media_root, media.id, &track_id)
+            .map_err(|error| {
+                tracing::warn!(
+                    media_id = media.id,
+                    track_id = %track_id,
+                    path = %media.absolute_path,
+                    error = %error,
+                    "Failed to materialize subtitle track"
+                );
+                AppError::internal("failed to prepare subtitle track")
+            })?;
+
+    ServeFile::new(subtitle_asset.path)
+        .oneshot(request)
+        .await
+        .map_err(|_| AppError::internal("failed to stream subtitle file"))
 }
 
 async fn toggle_subscription(

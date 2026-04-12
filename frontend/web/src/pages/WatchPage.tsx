@@ -376,6 +376,16 @@ export function WatchPage() {
 
   const streamUrl = playback?.media ? buildApiUrl(playback.media.streamUrl) : null;
   const posterUrl = detail?.subject.imageBanner ?? detail?.subject.imagePortrait ?? null;
+  const subtitleTracks = useMemo(
+    () =>
+      playback?.media?.subtitleTracks.map((track) => ({
+        id: track.id,
+        label: track.label,
+        language: track.language,
+        url: buildApiUrl(track.url),
+      })) ?? [],
+    [playback?.media?.subtitleTracks],
+  );
   const pageTitle = detail?.subject.titleCn || detail?.subject.title || "播放";
   const episodeLabel = formatEpisodeLabel(episode);
   const episodeTitle = episode?.titleCn || episode?.title || "未命名剧集";
@@ -410,6 +420,7 @@ export function WatchPage() {
                 <AnicargoPlayer
                   streamUrl={streamUrl}
                   posterUrl={posterUrl}
+                  subtitleTracks={subtitleTracks}
                   onPlaybackStart={() => void handlePlaybackStart()}
                 />
               ) : (

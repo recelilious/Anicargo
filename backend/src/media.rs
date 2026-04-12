@@ -1,5 +1,6 @@
 use std::{
     fs,
+    process::Command,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
@@ -10,6 +11,7 @@ use anicargo_metadata_parser::{
 };
 use anyhow::Context;
 use regex::Regex;
+use serde::Deserialize;
 
 #[derive(Debug, Clone)]
 pub struct ParsedReleaseSlot {
@@ -30,6 +32,19 @@ pub struct IndexedMediaFile {
     pub episode_index: Option<f64>,
     pub episode_end_index: Option<f64>,
     pub is_collection: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreparedSubtitleTrack {
+    pub id: String,
+    pub label: String,
+    pub language: Option<String>,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreparedSubtitleAsset {
+    pub path: PathBuf,
 }
 
 pub fn infer_release_slot(
@@ -118,6 +133,109 @@ pub fn scan_video_files(
 
     files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     Ok(files)
+}
+
+pub fn probe_subtitle_tracks(media_path: &Path) -> anyhow::Result<Vec<PreparedSubtitleTrack>> {
+    let output = Command::new("ffprobe")
+        .arg("-v")
+        .arg("error")
+        .arg("-print_format")
+        .arg("json")
+        .arg("-show_streams")
+        .arg(media_path)
+        .output()
+        .with_context(|| {
+            format!(
+                "failed to launch ffprobe while probing subtitle tracks for {}",
+                media_path.display()
+            )
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        anyhow::bail!(
+            "ffprobe failed while probing subtitle tracks for {}: {}",
+            media_path.display(),
+            if stderr.is_empty() { "unknown error" } else { &stderr }
+        );
+    }
+
+    let parsed = serde_json::from_slice::<FfprobeOutput>(&output.stdout).with_context(|| {
+        format!(
+            "failed to parse ffprobe subtitle probe output for {}",
+            media_path.display()
+        )
+    })?;
+
+    Ok(parsed
+        .streams
+        .into_iter()
+        .filter_map(|stream| stream.to_prepared_track())
+        .collect())
+}
+
+pub fn materialize_subtitle_track(
+    media_path: &Path,
+    media_root: &Path,
+    media_inventory_id: i64,
+    track_id: &str,
+) -> anyhow::Result<PreparedSubtitleAsset> {
+    let stream_index = parse_embedded_track_id(track_id)?;
+    let subtitle_root = media_root
+        .join("_subtitles")
+        .join(media_inventory_id.to_string());
+    fs::create_dir_all(&subtitle_root).with_context(|| {
+        format!(
+            "failed to create subtitle cache directory {}",
+            subtitle_root.display()
+        )
+    })?;
+
+    let output_path = subtitle_root.join(format!("stream-{stream_index}.vtt"));
+    if output_path.exists() {
+        return Ok(PreparedSubtitleAsset { path: output_path });
+    }
+
+    let output = Command::new("ffmpeg")
+        .arg("-y")
+        .arg("-v")
+        .arg("error")
+        .arg("-i")
+        .arg(media_path)
+        .arg("-map")
+        .arg(format!("0:{stream_index}"))
+        .arg("-c:s")
+        .arg("webvtt")
+        .arg(&output_path)
+        .output()
+        .with_context(|| {
+            format!(
+                "failed to launch ffmpeg while extracting subtitle track {} for {}",
+                track_id,
+                media_path.display()
+            )
+        })?;
+
+    if !output.status.success() {
+        let _ = fs::remove_file(&output_path);
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        anyhow::bail!(
+            "ffmpeg failed while extracting subtitle track {} for {}: {}",
+            track_id,
+            media_path.display(),
+            if stderr.is_empty() { "unknown error" } else { &stderr }
+        );
+    }
+
+    Ok(PreparedSubtitleAsset { path: output_path })
+}
+
+pub fn parse_embedded_track_id(track_id: &str) -> anyhow::Result<i32> {
+    let raw = track_id
+        .strip_prefix("stream-")
+        .ok_or_else(|| anyhow::anyhow!("unsupported subtitle track id '{track_id}'"))?;
+    raw.parse::<i32>()
+        .with_context(|| format!("invalid subtitle stream index in track id '{track_id}'"))
 }
 
 fn infer_file_slot(file_name: &str, fallback_slot: &ParsedReleaseSlot) -> ParsedReleaseSlot {
@@ -348,6 +466,78 @@ fn is_video_extension(extension: &str) -> bool {
         extension,
         "mkv" | "mp4" | "avi" | "m2ts" | "ts" | "webm" | "mov" | "flv"
     )
+}
+
+fn is_text_subtitle_codec(codec_name: &str) -> bool {
+    matches!(
+        codec_name,
+        "subrip" | "ass" | "ssa" | "webvtt" | "mov_text" | "text"
+    )
+}
+
+fn build_subtitle_label(stream: &FfprobeStream) -> String {
+    if let Some(title) = stream
+        .tags
+        .as_ref()
+        .and_then(|tags| tags.title.as_deref())
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+    {
+        return title.to_owned();
+    }
+
+    if let Some(language) = stream
+        .tags
+        .as_ref()
+        .and_then(|tags| tags.language.as_deref())
+        .map(str::trim)
+        .filter(|language| !language.is_empty())
+    {
+        return format!("Subtitle {language}");
+    }
+
+    format!("Subtitle {}", stream.index)
+}
+
+#[derive(Debug, Deserialize)]
+struct FfprobeOutput {
+    #[serde(default)]
+    streams: Vec<FfprobeStream>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FfprobeStream {
+    index: i32,
+    codec_type: Option<String>,
+    codec_name: Option<String>,
+    #[serde(default)]
+    tags: Option<FfprobeTags>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct FfprobeTags {
+    language: Option<String>,
+    title: Option<String>,
+}
+
+impl FfprobeStream {
+    fn to_prepared_track(self) -> Option<PreparedSubtitleTrack> {
+        if self.codec_type.as_deref() != Some("subtitle") {
+            return None;
+        }
+
+        let codec_name = self.codec_name.as_deref()?;
+        if !is_text_subtitle_codec(codec_name) {
+            return None;
+        }
+
+        Some(PreparedSubtitleTrack {
+            id: format!("stream-{}", self.index),
+            label: build_subtitle_label(&self),
+            language: self.tags.as_ref().and_then(|tags| tags.language.clone()),
+            kind: "embedded".to_owned(),
+        })
+    }
 }
 
 fn collection_range_regex() -> &'static Regex {
