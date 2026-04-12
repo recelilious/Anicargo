@@ -15,6 +15,30 @@ type SubtitleTrackOption = {
   active: boolean;
 };
 
+type PlayerThemeConfig = {
+  accent: string;
+  background: string;
+  fontColor: string;
+  widgetBackground: string;
+  progressColor: string;
+  loadedColor: string;
+  subtitleTextColor: string;
+  subtitleTextShadow: string;
+  subtitleBorder: string;
+};
+
+const DEFAULT_PLAYER_THEME: PlayerThemeConfig = {
+  accent: "#4b2c23",
+  background: "#271813",
+  fontColor: "#f5eee8",
+  widgetBackground: "rgba(44, 29, 24, 0.92)",
+  progressColor: "rgba(255, 255, 255, 0.22)",
+  loadedColor: "rgba(255, 255, 255, 0.32)",
+  subtitleTextColor: "#f8f4f0",
+  subtitleTextShadow: "0 2px 6px rgba(0, 0, 0, 0.88)",
+  subtitleBorder: "rgba(0, 0, 0, 0.92)",
+};
+
 function collectTextTracks(video: HTMLVideoElement | null) {
   if (!video) {
     return [];
@@ -44,6 +68,51 @@ function applySubtitleTrack(video: HTMLVideoElement | null, trackIndex: number |
   }
 }
 
+function readThemeVariable(
+  styles: CSSStyleDeclaration,
+  name: string,
+  fallback: string,
+) {
+  const value = styles.getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+function readPlayerTheme(): PlayerThemeConfig {
+  if (typeof window === "undefined") {
+    return DEFAULT_PLAYER_THEME;
+  }
+
+  const styles = window.getComputedStyle(document.documentElement);
+
+  return {
+    accent: readThemeVariable(styles, "--app-player-theme", DEFAULT_PLAYER_THEME.accent),
+    background: readThemeVariable(styles, "--app-player-background", DEFAULT_PLAYER_THEME.background),
+    fontColor: readThemeVariable(styles, "--app-player-font", DEFAULT_PLAYER_THEME.fontColor),
+    widgetBackground: readThemeVariable(
+      styles,
+      "--app-player-widget",
+      DEFAULT_PLAYER_THEME.widgetBackground,
+    ),
+    progressColor: readThemeVariable(styles, "--app-player-progress", DEFAULT_PLAYER_THEME.progressColor),
+    loadedColor: readThemeVariable(styles, "--app-player-loaded", DEFAULT_PLAYER_THEME.loadedColor),
+    subtitleTextColor: readThemeVariable(
+      styles,
+      "--app-player-subtitle-text",
+      DEFAULT_PLAYER_THEME.subtitleTextColor,
+    ),
+    subtitleTextShadow: readThemeVariable(
+      styles,
+      "--app-player-subtitle-shadow",
+      DEFAULT_PLAYER_THEME.subtitleTextShadow,
+    ),
+    subtitleBorder: readThemeVariable(
+      styles,
+      "--app-player-subtitle-border",
+      DEFAULT_PLAYER_THEME.subtitleBorder,
+    ),
+  };
+}
+
 export function AnicargoPlayer({
   streamUrl,
   posterUrl,
@@ -60,6 +129,7 @@ export function AnicargoPlayer({
   const [useNativeVideo, setUseNativeVideo] = useState(false);
   const [subtitleTracks, setSubtitleTracks] = useState<SubtitleTrackOption[]>([]);
   const [isSubtitleMenuOpen, setIsSubtitleMenuOpen] = useState(false);
+  const [themeConfig, setThemeConfig] = useState<PlayerThemeConfig>(() => readPlayerTheme());
 
   playbackStartRef.current = onPlaybackStart;
 
@@ -106,7 +176,7 @@ export function AnicargoPlayer({
         container,
         url: streamUrl,
         poster: posterUrl ?? undefined,
-        theme: "#4b2c23",
+        theme: themeConfig.accent,
         volume: 0.8,
         autoplay: false,
         autoSize: true,
@@ -125,7 +195,7 @@ export function AnicargoPlayer({
       container,
       url: streamUrl,
       poster: posterUrl ?? undefined,
-      theme: "#4b2c23",
+      theme: themeConfig.accent,
       volume: 0.8,
       autoplay: false,
       autoSize: true,
@@ -158,20 +228,61 @@ export function AnicargoPlayer({
             style: {
               fontFamily: "\"JetBrains Mono Variable\", \"Maple Mono CN\", monospace",
               fontSize: "18px",
-              color: "#f8f4f0",
-              textShadow: "0 2px 6px rgba(0, 0, 0, 0.88)",
+              color: themeConfig.subtitleTextColor,
+              textShadow: themeConfig.subtitleTextShadow,
             },
           }
         : undefined,
       cssVar: {
-        "--art-theme": "#4b2c23",
-        "--art-font-color": "#f5eee8",
+        "--art-theme": themeConfig.accent,
+        "--art-font-color": themeConfig.fontColor,
         "--art-control-opacity": 0.92,
-        "--art-widget-background": "rgba(13, 18, 24, 0.92)",
+        "--art-widget-background": themeConfig.widgetBackground,
+        "--art-progress-color": themeConfig.progressColor,
+        "--art-loaded-color": themeConfig.loadedColor,
         "--art-subtitle-font-size": "18px",
+        "--art-subtitle-border": themeConfig.subtitleBorder,
       },
     };
   }
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const updateTheme = () => {
+      const nextTheme = readPlayerTheme();
+      setThemeConfig((currentTheme) => {
+        const currentSignature = Object.values(currentTheme).join("|");
+        const nextSignature = Object.values(nextTheme).join("|");
+        return currentSignature === nextSignature ? currentTheme : nextTheme;
+      });
+    };
+
+    updateTheme();
+
+    const observer = new MutationObserver(() => {
+      updateTheme();
+    });
+
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme", "class", "style"],
+    });
+
+    const mediaQuery = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const handleSystemThemeChange = () => {
+      updateTheme();
+    };
+
+    mediaQuery?.addEventListener?.("change", handleSystemThemeChange);
+
+    return () => {
+      observer.disconnect();
+      mediaQuery?.removeEventListener?.("change", handleSystemThemeChange);
+    };
+  }, []);
 
   useEffect(() => {
     const handlePointerDown = (event: PointerEvent) => {
@@ -264,7 +375,7 @@ export function AnicargoPlayer({
       playerRef.current = null;
       activeVideoRef.current = null;
     };
-  }, [posterUrl, streamUrl, subtitleUrl]);
+  }, [posterUrl, streamUrl, subtitleUrl, themeConfig]);
 
   useEffect(() => {
     if (!useNativeVideo) {
@@ -272,7 +383,7 @@ export function AnicargoPlayer({
     }
 
     return bindVideoTracks(nativeVideoRef.current);
-  }, [useNativeVideo, posterUrl, streamUrl, subtitleUrl]);
+  }, [useNativeVideo, posterUrl, streamUrl, subtitleUrl, themeConfig]);
 
   function handleSubtitleSelect(trackIndex: number | null) {
     applySubtitleTrack(activeVideoRef.current, trackIndex);
@@ -334,7 +445,7 @@ export function AnicargoPlayer({
             hasStartedRef.current = true;
             playbackStartRef.current?.();
           }}
-          style={{ width: "100%", height: "100%", backgroundColor: "#070a10" }}
+          style={{ width: "100%", height: "100%", backgroundColor: themeConfig.background }}
         >
           <source src={streamUrl} />
           {subtitleUrl ? <track kind="subtitles" src={subtitleUrl} default /> : null}

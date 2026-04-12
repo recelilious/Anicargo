@@ -35,6 +35,21 @@
   --app-focus-ring: #4b2c23;
   --app-card-shadow: 0 1px 2px rgba(75, 44, 35, 0.08), 0 8px 24px rgba(75, 44, 35, 0.06);
   --app-card-shadow-strong: 0 12px 32px rgba(75, 44, 35, 0.10);
+  --app-player-theme: #4b2c23;
+  --app-player-background: #271813;
+  --app-player-font: #f5eee8;
+  --app-player-widget: rgba(44, 29, 24, 0.92);
+  --app-player-progress: rgba(255, 255, 255, 0.22);
+  --app-player-loaded: rgba(255, 255, 255, 0.32);
+  --app-player-subtitle-text: #f8f4f0;
+  --app-player-subtitle-shadow: 0 2px 6px rgba(0, 0, 0, 0.88);
+  --app-player-subtitle-border: rgba(0, 0, 0, 0.92);
+  --app-player-overlay: rgba(39, 24, 19, 0.88);
+  --app-player-menu-surface: rgba(44, 29, 24, 0.86);
+  --app-player-menu-surface-strong: rgba(58, 38, 31, 0.96);
+  --app-player-menu-border: rgba(255, 255, 255, 0.18);
+  --app-player-menu-active-bg: rgba(95, 62, 50, 0.92);
+  --app-player-menu-active-border: rgba(214, 195, 178, 0.42);
   color: var(--app-text);
   background: var(--app-bg);
   font-family: "JetBrains Mono Variable", "Maple Mono CN", monospace;
@@ -65,6 +80,21 @@
   --app-focus-ring: #7e97b2;
   --app-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.34), 0 18px 36px rgba(0, 0, 0, 0.30);
   --app-card-shadow-strong: 0 24px 52px rgba(0, 0, 0, 0.36);
+  --app-player-theme: #7e97b2;
+  --app-player-background: #131a22;
+  --app-player-font: #edf2f7;
+  --app-player-widget: rgba(19, 26, 34, 0.92);
+  --app-player-progress: rgba(255, 255, 255, 0.22);
+  --app-player-loaded: rgba(126, 151, 178, 0.34);
+  --app-player-subtitle-text: #edf2f7;
+  --app-player-subtitle-shadow: 0 2px 6px rgba(0, 0, 0, 0.9);
+  --app-player-subtitle-border: rgba(0, 0, 0, 0.92);
+  --app-player-overlay: rgba(19, 26, 34, 0.9);
+  --app-player-menu-surface: rgba(19, 26, 34, 0.88);
+  --app-player-menu-surface-strong: rgba(27, 36, 46, 0.96);
+  --app-player-menu-border: rgba(126, 151, 178, 0.26);
+  --app-player-menu-active-bg: rgba(49, 66, 84, 0.92);
+  --app-player-menu-active-border: rgba(126, 151, 178, 0.44);
   color-scheme: dark;
 }
 
@@ -273,7 +303,7 @@ a {
   height: 100%;
   overflow: hidden;
   border-radius: inherit;
-  background: #070a10;
+  background: var(--app-player-background);
 }
 
 .anicargo-player-host,
@@ -287,19 +317,19 @@ a {
 .anicargo-player .art-video-player {
   width: 100%;
   height: 100%;
-  --art-background-color: #070a10;
-  --art-font-color: #f4efe9;
-  --art-text-shadow-color: rgba(0, 0, 0, 0.72);
+  --art-background-color: var(--app-player-background);
+  --art-font-color: var(--app-player-font);
+  --art-text-shadow-color: var(--app-player-subtitle-shadow);
   --art-border-radius: 0px;
   --art-control-height: 44px;
   --art-control-opacity: 0.9;
   --art-control-icon-size: 34px;
-  --art-widget-background: rgba(10, 14, 20, 0.9);
-  --art-progress-color: rgba(255, 255, 255, 0.2);
-  --art-loaded-color: rgba(255, 255, 255, 0.3);
+  --art-widget-background: var(--app-player-widget);
+  --art-progress-color: var(--app-player-progress);
+  --art-loaded-color: var(--app-player-loaded);
   --art-subtitle-font-size: 18px;
-  --art-subtitle-border: rgba(0, 0, 0, 0.92);
-  --art-theme: #4b2c23;
+  --art-subtitle-border: var(--app-player-subtitle-border);
+  --art-theme: var(--app-player-theme);
   font-family: "JetBrains Mono Variable", "Maple Mono CN", monospace;
 }
 
@@ -316,6 +346,30 @@ a {
   letter-spacing: 0.02em;
 }
 
+.anicargo-player .art-video-player .art-top {
+  background: linear-gradient(to bottom, var(--app-player-overlay), transparent);
+}
+
+.anicargo-player .art-video-player .art-bottom {
+  background: linear-gradient(to top, var(--app-player-overlay), transparent);
+}
+
+.anicargo-player .art-video-player .art-setting,
+.anicargo-player .art-video-player .art-contextmenus,
+.anicargo-player .art-video-player .art-info,
+.anicargo-player .art-video-player .art-notice {
+  color: var(--app-player-font);
+}
+
+.anicargo-player .art-video-player .art-setting,
+.anicargo-player .art-video-player .art-info,
+.anicargo-player .art-video-player .art-contextmenu,
+.anicargo-player .art-video-player .art-contextmenus,
+.anicargo-player .art-video-player .art-notice {
+  background: var(--app-player-widget) !important;
+  border-color: var(--app-player-menu-border) !important;
+}
+
 .anicargo-player-menu {
   position: absolute;
   top: 12px;
@@ -329,9 +383,9 @@ a {
 
 .anicargo-player-menu__button,
 .anicargo-player-menu__item {
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(10, 14, 20, 0.82);
-  color: #f4efe9;
+  border: 1px solid var(--app-player-menu-border);
+  background: var(--app-player-menu-surface);
+  color: var(--app-player-font);
   font: inherit;
   cursor: pointer;
   transition:
@@ -353,8 +407,8 @@ a {
 
 .anicargo-player-menu__button:hover,
 .anicargo-player-menu__item:hover {
-  border-color: rgba(255, 255, 255, 0.28);
-  background: rgba(16, 22, 30, 0.94);
+  border-color: var(--app-player-menu-active-border);
+  background: var(--app-player-menu-surface-strong);
   transform: translateY(-1px);
 }
 
@@ -366,8 +420,8 @@ a {
   gap: 6px;
   padding: 10px;
   border-radius: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(10, 14, 20, 0.92);
+  border: 1px solid var(--app-player-menu-border);
+  background: var(--app-player-menu-surface-strong);
   box-shadow: 0 18px 34px rgba(0, 0, 0, 0.26);
   backdrop-filter: blur(18px);
 }
@@ -380,6 +434,6 @@ a {
 }
 
 .anicargo-player-menu__item.is-active {
-  border-color: rgba(214, 195, 178, 0.42);
-  background: rgba(75, 44, 35, 0.78);
+  border-color: var(--app-player-menu-active-border);
+  background: var(--app-player-menu-active-bg);
 }
