@@ -3,6 +3,36 @@ import { webDarkTheme, webLightTheme } from "@fluentui/react-components";
 const fontFamilyBase = "\"JetBrains Mono Variable\", \"Maple Mono CN\", monospace";
 
 type FluentTheme = typeof webLightTheme;
+type MutableTheme = Record<string, string | number | undefined>;
+
+function scalePixelToken(value: string, scale: number) {
+  const match = /^(-?\d+(?:\.\d+)?)px$/.exec(value.trim());
+  if (!match) {
+    return value;
+  }
+
+  const scaled = Number(match[1]) * scale;
+  return `${Number(scaled.toFixed(2))}px`;
+}
+
+function scaleTypography(theme: FluentTheme, scale: number): FluentTheme {
+  if (scale === 1) {
+    return theme;
+  }
+
+  const scaledTheme = { ...theme } as unknown as MutableTheme;
+
+  for (const [key, value] of Object.entries(theme)) {
+    if (
+      typeof value === "string" &&
+      (key.startsWith("fontSize") || key.startsWith("lineHeight") || key.startsWith("spacing"))
+    ) {
+      scaledTheme[key] = scalePixelToken(value, scale);
+    }
+  }
+
+  return scaledTheme as unknown as FluentTheme;
+}
 
 function createLightTheme(): FluentTheme {
   return {
@@ -111,3 +141,7 @@ export const anicargoThemes = {
 
 export type ResolvedAppearance = keyof typeof anicargoThemes;
 export type ThemePreference = ResolvedAppearance | "system";
+
+export function getAnicargoTheme(appearance: ResolvedAppearance, scale = 1) {
+  return scaleTypography(anicargoThemes[appearance], scale);
+}

@@ -87,6 +87,9 @@ const useStyles = makeStyles({
     gap: "10px",
     paddingTop: "4px",
   },
+  uiSizeSlider: {
+    paddingInline: "10px",
+  },
   uiSizeHeader: {
     display: "flex",
     alignItems: "center",
@@ -94,12 +97,15 @@ const useStyles = makeStyles({
     gap: "12px",
   },
   uiScaleMarks: {
-    display: "grid",
-    gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-    gap: "8px",
+    position: "relative",
+    height: "24px",
+    marginTop: "2px",
+    paddingInline: "10px",
   },
   uiScaleMark: {
-    textAlign: "center",
+    position: "absolute",
+    top: 0,
+    transform: "translateX(-50%)",
     color: "var(--app-muted)",
   },
   uiScaleMarkActive: {
@@ -313,13 +319,15 @@ export function SettingsPage() {
                 </Text>
               </div>
 
-              <Slider
-                min={1}
-                max={5}
-                step={1}
-                value={uiScaleLevel}
-                onChange={(_, data) => setUiScaleLevel(data.value)}
-              />
+              <div className={styles.uiSizeSlider}>
+                <Slider
+                  min={1}
+                  max={5}
+                  step={1}
+                  value={uiScaleLevel}
+                  onChange={(_, data) => setUiScaleLevel(data.value)}
+                />
+              </div>
 
               <div className={styles.uiScaleMarks}>
                 {[1, 2, 3, 4, 5].map((level) => (
@@ -327,6 +335,15 @@ export function SettingsPage() {
                     key={level}
                     size={200}
                     className={`${styles.uiScaleMark} ${uiScaleLevel === level ? styles.uiScaleMarkActive : ""}`.trim()}
+                    style={{
+                      left: `${((level - 1) / 4) * 100}%`,
+                      transform:
+                        level === 1
+                          ? "translateX(0)"
+                          : level === 5
+                            ? "translateX(-100%)"
+                            : "translateX(-50%)",
+                    }}
                   >
                     {level}
                   </Text>
