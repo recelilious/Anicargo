@@ -66,7 +66,7 @@ const useStyles = makeStyles({
   list: {
     display: "grid",
     gridTemplateColumns: "1fr",
-    gridAutoRows: "148px",
+    gridAutoRows: "minmax(var(--app-history-entry-height), auto)",
     gap: "12px",
   },
   link: {
@@ -75,8 +75,9 @@ const useStyles = makeStyles({
   },
   historyCard: {
     height: "100%",
+    minHeight: "var(--app-history-entry-height)",
     display: "grid",
-    gridTemplateColumns: "92px minmax(0, 1fr)",
+    gridTemplateColumns: "var(--app-history-poster-width) minmax(0, 1fr)",
     gap: "14px",
     padding: "14px",
     backgroundColor: "var(--app-surface-1)",
@@ -85,7 +86,7 @@ const useStyles = makeStyles({
   },
   poster: {
     position: "relative",
-    width: "92px",
+    width: "var(--app-history-poster-width)",
     height: "100%",
     borderRadius: "16px",
     backgroundColor: "var(--app-fallback-hero)",
@@ -122,7 +123,7 @@ const useStyles = makeStyles({
   },
   metaRow: {
     display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
     gap: "10px",
     alignItems: "end",
   },

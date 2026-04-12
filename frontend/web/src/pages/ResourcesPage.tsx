@@ -108,11 +108,12 @@ const useStyles = makeStyles({
   progressGrid: {
     display: "grid",
     gridTemplateColumns: "1fr",
-    gridAutoRows: "156px",
+    gridAutoRows: "minmax(var(--app-resource-entry-height), auto)",
     gap: "12px",
   },
   progressCard: {
     height: "100%",
+    minHeight: "var(--app-resource-entry-height)",
     padding: "16px 18px",
     display: "flex",
     flexDirection: "column",
@@ -130,7 +131,7 @@ const useStyles = makeStyles({
   },
   progressMeta: {
     display: "grid",
-    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
     gap: "8px",
   },
   titleBlock: {
@@ -158,11 +159,12 @@ const useStyles = makeStyles({
   list: {
     display: "grid",
     gridTemplateColumns: "1fr",
-    gridAutoRows: "156px",
+    gridAutoRows: "minmax(var(--app-resource-entry-height), auto)",
     gap: "12px",
   },
   itemCard: {
     height: "100%",
+    minHeight: "var(--app-resource-entry-height)",
     padding: "16px 18px",
     display: "flex",
     flexDirection: "column",
@@ -170,6 +172,7 @@ const useStyles = makeStyles({
     backgroundColor: "var(--app-surface-1)",
     border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)",
+    minWidth: 0,
   },
   link: {
     color: "inherit",

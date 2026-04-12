@@ -15,6 +15,9 @@
   --app-content-padding-x: 28px;
   --app-content-padding-top: 24px;
   --app-content-padding-bottom: 40px;
+  --app-resource-entry-height: calc(156px * var(--app-ui-font-scale));
+  --app-history-entry-height: calc(148px * var(--app-ui-font-scale));
+  --app-history-poster-width: calc(92px * var(--app-ui-font-scale));
   --app-bg: #f5f0eb;
   --app-rail: #fbf6f1;
   --app-surface-1: #fffaf6;

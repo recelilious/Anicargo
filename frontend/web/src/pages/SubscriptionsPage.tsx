@@ -40,10 +40,14 @@ const useStyles = makeStyles({
   },
   controls: {
     display: "grid",
-    gridTemplateColumns: "minmax(220px, 1fr) 180px",
-    gap: "12px",
+    gridTemplateColumns: "minmax(320px, 1.6fr) minmax(220px, 1fr)",
+    gap: "16px",
     alignItems: "end",
-    width: "min(560px, 100%)",
+    width: "min(760px, 100%)",
+    minWidth: 0,
+    "@media (max-width: 960px)": {
+      gridTemplateColumns: "1fr",
+    },
   },
   headerStats: {
     display: "grid",
