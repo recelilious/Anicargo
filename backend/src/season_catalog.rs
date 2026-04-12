@@ -66,6 +66,11 @@ struct CatalogMatchRow {
     title: String,
     title_cn: String,
     title_original: Option<String>,
+    broadcast_label: Option<String>,
+    season_year: Option<i32>,
+    season_month: Option<i32>,
+    existing_subject_id: Option<i64>,
+    cached_air_date: Option<String>,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -400,17 +405,28 @@ async fn populate_missing_matches(
             yuc_catalog_entries.id,
             yuc_catalog_entries.title,
             yuc_catalog_entries.title_cn,
-            yuc_catalog_entries.title_original
+            yuc_catalog_entries.title_original,
+            yuc_catalog_entries.broadcast_label,
+            yuc_catalogs.season_year,
+            yuc_catalogs.season_month,
+            yuc_catalog_entries.bangumi_subject_id AS existing_subject_id,
+            bangumi_subject_cache.air_date AS cached_air_date
          FROM yuc_catalog_entries
          INNER JOIN yuc_catalogs ON yuc_catalogs.id = yuc_catalog_entries.yuc_catalog_id
+         LEFT JOIN bangumi_subject_cache
+           ON bangumi_subject_cache.bangumi_subject_id = yuc_catalog_entries.bangumi_subject_id
          WHERE yuc_catalogs.catalog_key = ?1
-           AND yuc_catalog_entries.bangumi_matched_at IS NULL
          ORDER BY yuc_catalog_entries.sort_index ASC",
     )
     .bind(catalog_key)
     .fetch_all(pool)
     .await
     .map_err(|_| AppError::internal("failed to list Yuc entries needing Bangumi match"))?;
+
+    let entries = entries
+        .into_iter()
+        .filter(|entry| entry.existing_subject_id.is_none() || catalog_match_needs_refresh(entry))
+        .collect::<Vec<_>>();
 
     if entries.is_empty() {
         return Ok(());
@@ -872,6 +888,7 @@ fn score_subject_candidate(subject: &SubjectRaw, entry: &CatalogMatchRow) -> f64
     let entry_hint = extract_catalog_installment_hint(entry);
     let subject_hint = extract_subject_installment_hint(subject);
     best = adjust_score_for_installment_hint(best, entry_hint, subject_hint);
+    best = adjust_score_for_air_date(best, entry, subject);
 
     best
 }
@@ -887,6 +904,59 @@ fn adjust_score_for_installment_hint(
         (Some(_), None) => (base_score - 36.0).max(0.0),
         _ => base_score,
     }
+}
+
+fn adjust_score_for_air_date(
+    base_score: f64,
+    entry: &CatalogMatchRow,
+    subject: &SubjectRaw,
+) -> f64 {
+    let Some(entry_date) = parse_catalog_air_date(entry) else {
+        return base_score;
+    };
+    let Some(subject_date) =
+        parse_subject_date(subject.air_date.as_ref().or(subject.date.as_ref()))
+    else {
+        return base_score;
+    };
+
+    let delta_days = (subject_date - entry_date).num_days().abs();
+    match delta_days {
+        0 => base_score + 84.0,
+        1..=3 => base_score + 56.0,
+        4..=10 => base_score + 28.0,
+        11..=21 => base_score + 8.0,
+        22..=45 => (base_score - 18.0).max(0.0),
+        _ => (base_score - 72.0).max(0.0),
+    }
+}
+
+fn parse_catalog_air_date(entry: &CatalogMatchRow) -> Option<NaiveDate> {
+    let label = entry.broadcast_label.as_deref()?.trim();
+    let captures = broadcast_label_date_regex().captures(label)?;
+    let month = captures.name("month")?.as_str().parse::<u32>().ok()?;
+    let day = captures.name("day")?.as_str().parse::<u32>().ok()?;
+    let mut year = entry.season_year?;
+    let season_month = entry.season_month.unwrap_or(month as i32);
+
+    if month + 6 < season_month as u32 {
+        year += 1;
+    } else if season_month > 6 && month > (season_month as u32 + 6) {
+        year -= 1;
+    }
+
+    NaiveDate::from_ymd_opt(year, month, day)
+}
+
+fn catalog_match_needs_refresh(entry: &CatalogMatchRow) -> bool {
+    let Some(entry_date) = parse_catalog_air_date(entry) else {
+        return false;
+    };
+    let Some(cached_air_date) = parse_subject_date(entry.cached_air_date.as_ref()) else {
+        return false;
+    };
+
+    (cached_air_date - entry_date).num_days().abs() > 45
 }
 
 fn extract_catalog_installment_hint(entry: &CatalogMatchRow) -> Option<i32> {
@@ -1523,6 +1593,14 @@ fn ordinal_season_regex() -> &'static Regex {
     })
 }
 
+fn broadcast_label_date_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r"(?P<month>\d{1,2})/(?P<day>\d{1,2})")
+            .expect("valid broadcast label date regex")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1658,6 +1736,11 @@ mod tests {
             title_original: Some(
                 "悲劇の元凶となる最強外道ラスボス女王は民の為に尽くします 第2期".to_owned(),
             ),
+            broadcast_label: None,
+            season_year: None,
+            season_month: None,
+            existing_subject_id: None,
+            cached_air_date: None,
         };
         let season_one = sample_subject_named(
             100,
@@ -1673,17 +1756,64 @@ mod tests {
         let score_one = score_subject_candidate(&season_one, &entry);
         let score_two = score_subject_candidate(&season_two, &entry);
 
-        assert!(score_two > score_one, "season two score {score_two} should exceed season one score {score_one}");
+        assert!(
+            score_two > score_one,
+            "season two score {score_two} should exceed season one score {score_one}"
+        );
+    }
+
+    #[test]
+    fn broadcast_date_prefers_matching_arc_window() {
+        let entry = CatalogMatchRow {
+            id: 23,
+            title: "Re:从零开始的 异世界生活 第4期".to_owned(),
+            title_cn: "Re:从零开始的 异世界生活 第4期".to_owned(),
+            title_original: Some("Re:ゼロから始める異世界生活 4th season".to_owned()),
+            broadcast_label: Some("4/8周三晚间".to_owned()),
+            season_year: Some(2026),
+            season_month: Some(4),
+            existing_subject_id: Some(633836),
+            cached_air_date: Some("2026-08-12".to_owned()),
+        };
+        let current_arc = sample_subject_named_with_date(
+            547888,
+            "Re：从零开始的异世界生活 第四季 丧失篇",
+            "Re:ゼロから始める異世界生活 4th season 反撃編",
+            Some("2026-04-08".to_owned()),
+        );
+        let future_arc = sample_subject_named_with_date(
+            633836,
+            "Re：从零开始的异世界生活 第四季 夺还篇",
+            "Re:ゼロから始める異世界生活 4th season 奪還編",
+            Some("2026-08-12".to_owned()),
+        );
+
+        let current_score = score_subject_candidate(&current_arc, &entry);
+        let future_score = score_subject_candidate(&future_arc, &entry);
+
+        assert!(
+            current_score > future_score,
+            "current arc score {current_score} should exceed future arc score {future_score}"
+        );
     }
 
     fn sample_subject_named(id: i64, name_cn: &str, name: &str) -> SubjectRaw {
+        sample_subject_named_with_date(id, name_cn, name, None)
+    }
+
+    fn sample_subject_named_with_date(
+        id: i64,
+        name_cn: &str,
+        name: &str,
+        air_date: Option<String>,
+    ) -> SubjectRaw {
         SubjectRaw {
             id,
             name: name.to_owned(),
             name_cn: name_cn.to_owned(),
             summary: String::new(),
-            date: None,
-            air_date: None,
+            date: air_date.clone(),
+            air_date,
             air_weekday: None,
             total_episodes: None,
             images: Some(ImageSetRaw {

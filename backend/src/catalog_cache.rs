@@ -1,10 +1,12 @@
 use std::{
     collections::{HashMap, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
+    sync::OnceLock,
 };
 
 use chrono::Utc;
 use futures::stream::{self, StreamExt};
+use regex::Regex;
 use sqlx::{FromRow, SqlitePool};
 use tracing::warn;
 
@@ -87,6 +89,9 @@ struct CatalogMatchRow {
     title: String,
     title_cn: String,
     title_original: Option<String>,
+    broadcast_label: Option<String>,
+    season_year: Option<i32>,
+    season_month: Option<i32>,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -595,7 +600,10 @@ async fn populate_missing_matches(
             yuc_catalog_entries.id,
             yuc_catalog_entries.title,
             yuc_catalog_entries.title_cn,
-            yuc_catalog_entries.title_original
+            yuc_catalog_entries.title_original,
+            yuc_catalog_entries.broadcast_label,
+            yuc_catalogs.season_year,
+            yuc_catalogs.season_month
          FROM yuc_catalog_entries
          INNER JOIN yuc_catalogs ON yuc_catalogs.id = yuc_catalog_entries.yuc_catalog_id
          WHERE yuc_catalogs.catalog_key = ?1
@@ -916,7 +924,55 @@ fn score_subject_candidate(subject: &SubjectRaw, entry: &CatalogMatchRow) -> f64
         }
     }
 
-    best
+    adjust_score_for_air_date(best, entry, subject)
+}
+
+fn adjust_score_for_air_date(
+    base_score: f64,
+    entry: &CatalogMatchRow,
+    subject: &SubjectRaw,
+) -> f64 {
+    let Some(entry_date) = parse_catalog_air_date(entry) else {
+        return base_score;
+    };
+    let Some(subject_date) =
+        parse_subject_date(subject.air_date.as_ref().or(subject.date.as_ref()))
+    else {
+        return base_score;
+    };
+
+    let delta_days = (subject_date - entry_date).num_days().abs();
+    match delta_days {
+        0 => base_score + 84.0,
+        1..=3 => base_score + 56.0,
+        4..=10 => base_score + 28.0,
+        11..=21 => base_score + 8.0,
+        22..=45 => (base_score - 18.0).max(0.0),
+        _ => (base_score - 72.0).max(0.0),
+    }
+}
+
+fn parse_catalog_air_date(entry: &CatalogMatchRow) -> Option<chrono::NaiveDate> {
+    let label = entry.broadcast_label.as_deref()?.trim();
+    let captures = broadcast_label_date_regex().captures(label)?;
+    let month = captures.name("month")?.as_str().parse::<u32>().ok()?;
+    let day = captures.name("day")?.as_str().parse::<u32>().ok()?;
+    let mut year = entry.season_year?;
+    let season_month = entry.season_month.unwrap_or(month as i32);
+
+    if month + 6 < season_month as u32 {
+        year += 1;
+    } else if season_month > 6 && month > (season_month as u32 + 6) {
+        year -= 1;
+    }
+
+    chrono::NaiveDate::from_ymd_opt(year, month, day)
+}
+
+fn parse_subject_date(value: Option<&String>) -> Option<chrono::NaiveDate> {
+    let value = value?;
+    let prefix = value.get(0..10)?;
+    chrono::NaiveDate::parse_from_str(prefix, "%Y-%m-%d").ok()
 }
 
 fn preferred_subject_title(subject: &SubjectRaw) -> String {
@@ -976,6 +1032,14 @@ fn strip_variant(value: &str) -> String {
         })
         .flat_map(char::to_lowercase)
         .collect()
+}
+
+fn broadcast_label_date_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r"(?P<month>\d{1,2})/(?P<day>\d{1,2})")
+            .expect("valid broadcast label date regex")
+    })
 }
 
 fn dice_coefficient(left: &str, right: &str) -> f32 {
