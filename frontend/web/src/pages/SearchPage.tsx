@@ -7,6 +7,7 @@ import { SubjectCard } from "../components/SubjectCard";
 import { useLoadingStatus } from "../loading-status";
 import { MotionPage, MotionPresence } from "../motion";
 import { useSession } from "../session";
+import { useUiPreferences } from "../ui-preferences";
 import type { SearchResponse, SubjectCard as SubjectCardModel } from "../types";
 
 type SearchFormState = {
@@ -61,7 +62,6 @@ const DEFAULT_FORM: SearchFormState = {
   ratingMax: "",
 };
 
-const CARD_MIN_WIDTH = 210;
 const CARD_GAP = 16;
 const LOAD_MORE_DISTANCE = 160;
 
@@ -136,7 +136,7 @@ const useStyles = makeStyles({
   },
   grid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fill, minmax(var(--app-subject-card-min-width), 1fr))",
     gap: "16px",
   },
   loadMoreRow: {
@@ -292,6 +292,7 @@ function createSearchCacheKey(deviceId: string, userToken: string | null) {
 export function SearchPage() {
   const styles = useStyles();
   const { deviceId, userToken } = useSession();
+  const { uiScaleProfile } = useUiPreferences();
   const cacheKey = createSearchCacheKey(deviceId, userToken);
   const cachedState = searchPageStateCache.get(cacheKey);
   const gridHostRef = useRef<HTMLDivElement | null>(null);
@@ -378,7 +379,10 @@ export function SearchPage() {
 
     const updatePageSize = () => {
       const width = element.clientWidth;
-      const columnCount = Math.max(1, Math.floor((width + CARD_GAP) / (CARD_MIN_WIDTH + CARD_GAP)));
+      const columnCount = Math.max(
+        1,
+        Math.floor((width + CARD_GAP) / (uiScaleProfile.subjectCardMinWidth + CARD_GAP)),
+      );
       const nextPageSize = Math.max(10, Math.min(60, columnCount * 5));
 
       setPageSize((current) => (current === nextPageSize ? current : nextPageSize));
@@ -395,7 +399,7 @@ export function SearchPage() {
     return () => {
       observer.disconnect();
     };
-  }, []);
+  }, [uiScaleProfile.subjectCardMinWidth]);
 
   useEffect(() => {
     if (querySignature === activeQuerySignature) {

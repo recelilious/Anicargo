@@ -10,6 +10,7 @@ import App from "./App";
 import { AppearanceProvider, useAppearance } from "./appearance";
 import { LoadingStatusProvider } from "./loading-status";
 import { SessionProvider } from "./session";
+import { UiPreferencesProvider } from "./ui-preferences";
 import "./styles.css";
 
 function AppRoot() {
@@ -17,21 +18,23 @@ function AppRoot() {
 
   return (
     <FluentProvider theme={fluentTheme} style={{ minHeight: "100vh" }}>
-      <SessionProvider>
-        <LoadingStatusProvider>
-          <BrowserRouter>
-            <App />
-          </BrowserRouter>
-        </LoadingStatusProvider>
-      </SessionProvider>
+      <LoadingStatusProvider>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </LoadingStatusProvider>
     </FluentProvider>
   );
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <AppearanceProvider>
-      <AppRoot />
-    </AppearanceProvider>
+    <SessionProvider>
+      <AppearanceProvider>
+        <UiPreferencesProvider>
+          <AppRoot />
+        </UiPreferencesProvider>
+      </AppearanceProvider>
+    </SessionProvider>
   </React.StrictMode>
 );

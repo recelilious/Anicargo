@@ -90,7 +90,7 @@ const useStyles = makeStyles({
   },
   grid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fill, minmax(var(--app-subject-card-min-width), 1fr))",
     gap: "16px",
     paddingTop: "4px",
   },

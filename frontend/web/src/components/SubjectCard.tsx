@@ -20,9 +20,9 @@ const useStyles = makeStyles({
     perspective: "1200px",
   },
   card: {
-    height: "414px",
+    height: "var(--app-subject-card-height)",
     display: "grid",
-    gridTemplateRows: "238px minmax(0, 1fr)",
+    gridTemplateRows: "var(--app-subject-card-poster-height) minmax(0, 1fr)",
     overflow: "hidden",
     backgroundColor: tokens.colorNeutralBackground1,
     border: "1px solid var(--app-border)",

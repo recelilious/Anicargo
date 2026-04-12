@@ -1,8 +1,10 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
+import { useSession } from "./session";
 import { anicargoThemes, type ResolvedAppearance, type ThemePreference } from "./theme";
 
 const APPEARANCE_KEY = "anicargo.theme_preference";
+const APPEARANCE_SUFFIX = "theme_preference";
 const FAVICON_ID = "anicargo-favicon";
 
 function buildFaviconHref(color: string) {
@@ -71,13 +73,21 @@ function safeLocalStorageSet(key: string, value: string) {
   }
 }
 
-function readStoredPreference(): ThemePreference {
-  const stored = safeLocalStorageGet(APPEARANCE_KEY);
+function readStoredPreference(key: string): ThemePreference | null {
+  const stored = safeLocalStorageGet(key);
   if (stored === "light" || stored === "dark" || stored === "system") {
     return stored;
   }
 
-  return "system";
+  return null;
+}
+
+function buildAppearanceStorageKey(userId: number | null) {
+  if (userId == null) {
+    return APPEARANCE_KEY;
+  }
+
+  return `anicargo.user.${userId}.${APPEARANCE_SUFFIX}`;
 }
 
 function readSystemDarkMode() {
@@ -89,8 +99,16 @@ function readSystemDarkMode() {
 }
 
 export function AppearanceProvider({ children }: { children: ReactNode }) {
-  const [themePreference, setThemePreference] = useState<ThemePreference>(() => readStoredPreference());
+  const { bootstrap } = useSession();
+  const viewer = bootstrap?.viewer;
+  const storageKey =
+    viewer?.kind === "user" ? buildAppearanceStorageKey(viewer.id) : APPEARANCE_KEY;
+  const [themePreference, setThemePreference] = useState<ThemePreference>(
+    () => readStoredPreference(APPEARANCE_KEY) ?? "system"
+  );
   const [systemPrefersDark, setSystemPrefersDark] = useState(() => readSystemDarkMode());
+  const previousStorageKeyRef = useRef(storageKey);
+  const skipNextPersistRef = useRef(false);
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") {
@@ -121,8 +139,30 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    safeLocalStorageSet(APPEARANCE_KEY, themePreference);
-  }, [themePreference]);
+    if (previousStorageKeyRef.current === storageKey) {
+      return;
+    }
+
+    previousStorageKeyRef.current = storageKey;
+    skipNextPersistRef.current = true;
+
+    const storedPreference = readStoredPreference(storageKey);
+    if (storedPreference) {
+      setThemePreference(storedPreference);
+      return;
+    }
+
+    safeLocalStorageSet(storageKey, themePreference);
+  }, [storageKey, themePreference]);
+
+  useEffect(() => {
+    if (skipNextPersistRef.current) {
+      skipNextPersistRef.current = false;
+      return;
+    }
+
+    safeLocalStorageSet(storageKey, themePreference);
+  }, [storageKey, themePreference]);
 
   const resolvedAppearance: ResolvedAppearance =
     themePreference === "system" ? (systemPrefersDark ? "dark" : "light") : themePreference;

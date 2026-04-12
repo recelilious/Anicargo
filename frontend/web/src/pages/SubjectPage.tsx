@@ -164,7 +164,8 @@ const useStyles = makeStyles({
   },
   relatedGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(210px, 210px))",
+    gridTemplateColumns:
+      "repeat(auto-fill, minmax(var(--app-subject-card-fixed-width), var(--app-subject-card-fixed-width)))",
     gap: "12px",
     justifyContent: "flex-start",
   },

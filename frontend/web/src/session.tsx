@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { fetchBootstrap, login, logout, register } from "./api";
 import type { BootstrapResponse, ViewerSummary } from "./types";
@@ -7,6 +7,7 @@ const DEVICE_KEY = "anicargo.device_id";
 const GUEST_NAME_KEY = "anicargo.guest_name";
 const USER_TOKEN_KEY = "anicargo.user_token";
 const DEEP_NIGHT_MODE_KEY = "anicargo.deep_night_mode";
+const DEEP_NIGHT_MODE_SUFFIX = "deep_night_mode";
 const GUEST_PREFIXES = ["晨星", "雾海", "白塔", "晴屿", "落樱", "月砂", "霜原", "潮音"];
 const GUEST_SUFFIXES = ["旅人", "观测者", "追番者", "记录员", "领航员", "收藏家", "放映员", "信使"];
 
@@ -121,14 +122,21 @@ function detectSystemTimeZone() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
-function ensureDeepNightMode() {
-  const stored = safeLocalStorageGet(DEEP_NIGHT_MODE_KEY);
+function readStoredDeepNightMode(key: string) {
+  const stored = safeLocalStorageGet(key);
   if (stored == null) {
-    safeLocalStorageSet(DEEP_NIGHT_MODE_KEY, "true");
-    return true;
+    return null;
   }
 
   return stored !== "false";
+}
+
+function buildDeepNightModeStorageKey(userId: number | null) {
+  if (userId == null) {
+    return DEEP_NIGHT_MODE_KEY;
+  }
+
+  return `anicargo.user.${userId}.${DEEP_NIGHT_MODE_SUFFIX}`;
 }
 
 export function SessionProvider({ children }: { children: ReactNode }) {
@@ -136,9 +144,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [guestName] = useState(() => ensureGuestName(deviceId));
   const [userToken, setUserToken] = useState<string | null>(() => safeLocalStorageGet(USER_TOKEN_KEY));
   const [systemTimeZone] = useState(() => detectSystemTimeZone());
-  const [deepNightMode, setDeepNightModeState] = useState(() => ensureDeepNightMode());
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [isReady, setIsReady] = useState(false);
+  const viewer = bootstrap?.viewer;
+  const deepNightStorageKey =
+    viewer?.kind === "user" ? buildDeepNightModeStorageKey(viewer.id) : DEEP_NIGHT_MODE_KEY;
+  const [deepNightMode, setDeepNightModeState] = useState(
+    () => readStoredDeepNightMode(DEEP_NIGHT_MODE_KEY) ?? true
+  );
+  const previousDeepNightStorageKeyRef = useRef(deepNightStorageKey);
+  const skipNextDeepNightPersistRef = useRef(false);
 
   async function refresh() {
     const data = await fetchBootstrap(deviceId, userToken);
@@ -148,6 +163,32 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refresh().finally(() => setIsReady(true));
   }, [deviceId, userToken]);
+
+  useEffect(() => {
+    if (previousDeepNightStorageKeyRef.current === deepNightStorageKey) {
+      return;
+    }
+
+    previousDeepNightStorageKeyRef.current = deepNightStorageKey;
+    skipNextDeepNightPersistRef.current = true;
+
+    const storedDeepNightMode = readStoredDeepNightMode(deepNightStorageKey);
+    if (storedDeepNightMode != null) {
+      setDeepNightModeState(storedDeepNightMode);
+      return;
+    }
+
+    safeLocalStorageSet(deepNightStorageKey, String(deepNightMode));
+  }, [deepNightMode, deepNightStorageKey]);
+
+  useEffect(() => {
+    if (skipNextDeepNightPersistRef.current) {
+      skipNextDeepNightPersistRef.current = false;
+      return;
+    }
+
+    safeLocalStorageSet(deepNightStorageKey, String(deepNightMode));
+  }, [deepNightMode, deepNightStorageKey]);
 
   async function registerAccount(username: string, password: string) {
     const response = await register(username, password);
@@ -188,7 +229,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }
 
   function setDeepNightMode(next: boolean) {
-    safeLocalStorageSet(DEEP_NIGHT_MODE_KEY, String(next));
     setDeepNightModeState(next);
   }
 

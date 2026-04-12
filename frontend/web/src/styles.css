@@ -1,4 +1,9 @@
 :root {
+  --app-ui-font-scale: 1;
+  --app-subject-card-min-width: 210px;
+  --app-subject-card-fixed-width: 210px;
+  --app-subject-card-height: 414px;
+  --app-subject-card-poster-height: 238px;
   --app-bg: #f5f0eb;
   --app-rail: #fbf6f1;
   --app-surface-1: #fffaf6;
@@ -58,6 +63,10 @@ body,
 #root {
   min-height: 100%;
   margin: 0;
+}
+
+html {
+  font-size: calc(16px * var(--app-ui-font-scale));
 }
 
 body,

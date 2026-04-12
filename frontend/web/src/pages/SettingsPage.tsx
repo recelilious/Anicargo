@@ -6,6 +6,7 @@ import {
   Input,
   Radio,
   RadioGroup,
+  Slider,
   Switch,
   Text,
   makeStyles,
@@ -14,6 +15,7 @@ import {
 import { useAppearance } from "../appearance";
 import { MotionPage, MotionPresence } from "../motion";
 import { useSession } from "../session";
+import { useUiPreferences } from "../ui-preferences";
 
 const useStyles = makeStyles({
   page: {
@@ -79,6 +81,30 @@ const useStyles = makeStyles({
   hashValue: {
     wordBreak: "break-all",
   },
+  uiSizeBlock: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+    paddingTop: "4px",
+  },
+  uiSizeHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "12px",
+  },
+  uiScaleMarks: {
+    display: "grid",
+    gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+    gap: "8px",
+  },
+  uiScaleMark: {
+    textAlign: "center",
+    color: "var(--app-muted)",
+  },
+  uiScaleMarkActive: {
+    color: "var(--app-text)",
+  },
 });
 
 function getIdentityLabel(isGuestViewer: boolean, isAdmin: boolean) {
@@ -108,6 +134,7 @@ export function SettingsPage() {
     systemTimeZone,
   } = useSession();
   const { themePreference, resolvedAppearance, setThemePreference } = useAppearance();
+  const { uiScaleLevel, setUiScaleLevel } = useUiPreferences();
   const [registerForm, setRegisterForm] = useState({ username: "", password: "" });
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [error, setError] = useState<string | null>(null);
@@ -277,6 +304,35 @@ export function SettingsPage() {
               <Radio value="light" label="浅色" />
               <Radio value="dark" label="深色" />
             </RadioGroup>
+
+            <div className={styles.uiSizeBlock}>
+              <div className={styles.uiSizeHeader}>
+                <Text weight="medium">UI 大小</Text>
+                <Text size={300} className={styles.muted}>
+                  {uiScaleLevel} / 5
+                </Text>
+              </div>
+
+              <Slider
+                min={1}
+                max={5}
+                step={1}
+                value={uiScaleLevel}
+                onChange={(_, data) => setUiScaleLevel(data.value)}
+              />
+
+              <div className={styles.uiScaleMarks}>
+                {[1, 2, 3, 4, 5].map((level) => (
+                  <Text
+                    key={level}
+                    size={200}
+                    className={`${styles.uiScaleMark} ${uiScaleLevel === level ? styles.uiScaleMarkActive : ""}`.trim()}
+                  >
+                    {level}
+                  </Text>
+                ))}
+              </div>
+            </div>
 
             <Text size={300} className={styles.muted}>
               当前生效：{resolvedAppearance === "dark" ? "深色" : "浅色"}
