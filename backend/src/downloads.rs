@@ -1263,13 +1263,23 @@ impl DownloadCoordinator {
                     .await?;
 
                     if should_refresh_media_index(&execution, &snapshot.state) {
-                        sync_execution_media_inventory(
+                        if let Err(error) = sync_execution_media_inventory(
                             pool,
                             self.bangumi.as_ref(),
                             &execution,
                             &snapshot.state,
                         )
-                        .await?;
+                        .await
+                        {
+                            warn!(
+                                execution_id = execution.id,
+                                job_id = execution.download_job_id,
+                                subject_id = execution.bangumi_subject_id,
+                                state = %snapshot.state,
+                                error = %error,
+                                "Failed to refresh media inventory for synced execution"
+                            );
+                        }
                     }
 
                     if execution.state != snapshot.state {
@@ -1823,4 +1833,119 @@ fn event_kind_for_state(state: &str) -> &'static str {
 
 fn event_level_for_state(state: &str) -> &'static str {
     if state == "failed" { "error" } else { "info" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{map_inventory_items_for_file, new_inventory_item};
+    use crate::{
+        media::IndexedMediaFile,
+        subject_parts::{SubjectPartGroup, SubjectPartSegment},
+        types::DownloadExecutionDto,
+    };
+
+    fn sample_execution() -> DownloadExecutionDto {
+        DownloadExecutionDto {
+            id: 42,
+            download_job_id: 7,
+            resource_candidate_id: 9,
+            bangumi_subject_id: 2002,
+            slot_key: "batch:1-23".to_owned(),
+            episode_index: Some(1.0),
+            episode_end_index: Some(23.0),
+            is_collection: true,
+            engine_name: "downloader".to_owned(),
+            engine_execution_ref: Some("task-42".to_owned()),
+            execution_role: "primary".to_owned(),
+            state: "downloading".to_owned(),
+            target_path: "runtime/media/subject-2002/job-7".to_owned(),
+            source_title: "Sample Collection".to_owned(),
+            source_magnet: "magnet:?xt=urn:btih:sample".to_owned(),
+            source_size_bytes: 1024,
+            source_fansub_name: Some("Sample Fansub".to_owned()),
+            downloaded_bytes: 0,
+            uploaded_bytes: 0,
+            download_rate_bytes: 0,
+            upload_rate_bytes: 0,
+            peer_count: 0,
+            notes: None,
+            created_at: "2026-04-13T00:00:00Z".to_owned(),
+            updated_at: "2026-04-13T00:00:00Z".to_owned(),
+            started_at: None,
+            completed_at: None,
+            replaced_at: None,
+            failed_at: None,
+            last_indexed_at: None,
+        }
+    }
+
+    fn sample_collection_file() -> IndexedMediaFile {
+        IndexedMediaFile {
+            relative_path: "Season/collection.mkv".to_owned(),
+            absolute_path: "E:/Dev/Web/Anicargo/runtime/media/Season/collection.mkv".to_owned(),
+            file_name: "collection.mkv".to_owned(),
+            file_ext: "mkv".to_owned(),
+            size_bytes: 2048,
+            slot_key: "batch:1-23".to_owned(),
+            episode_index: Some(1.0),
+            episode_end_index: Some(23.0),
+            is_collection: true,
+        }
+    }
+
+    #[test]
+    fn split_part_collection_indexing_keeps_one_row_per_subject_mapping() {
+        let execution = sample_execution();
+        let file = sample_collection_file();
+        let group = SubjectPartGroup {
+            segments: vec![
+                SubjectPartSegment {
+                    bangumi_subject_id: 2001,
+                    total_episodes: 11,
+                    part_index: 1,
+                    global_start: 1.0,
+                    global_end: 11.0,
+                },
+                SubjectPartSegment {
+                    bangumi_subject_id: 2002,
+                    total_episodes: 12,
+                    part_index: 2,
+                    global_start: 12.0,
+                    global_end: 23.0,
+                },
+            ],
+        };
+
+        let items = map_inventory_items_for_file(&execution, "partial", Some(&group), file);
+
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().all(|item| item.relative_path == "Season/collection.mkv"));
+        assert_eq!(items[0].bangumi_subject_id, 2001);
+        assert_eq!(items[0].slot_key, "batch:1-11");
+        assert_eq!(items[1].bangumi_subject_id, 2002);
+        assert_eq!(items[1].slot_key, "batch:1-12");
+    }
+
+    #[test]
+    fn non_split_inventory_mapping_stays_single_row() {
+        let execution = sample_execution();
+        let file = sample_collection_file();
+
+        let items = map_inventory_items_for_file(&execution, "partial", None, file.clone());
+
+        assert_eq!(items.len(), 1);
+
+        let item = new_inventory_item(
+            &execution,
+            "partial",
+            execution.bangumi_subject_id,
+            file.slot_key.clone(),
+            file.episode_index,
+            file.episode_end_index,
+            file.is_collection,
+            &file,
+        );
+        assert_eq!(items[0].bangumi_subject_id, item.bangumi_subject_id);
+        assert_eq!(items[0].slot_key, item.slot_key);
+    }
 }
