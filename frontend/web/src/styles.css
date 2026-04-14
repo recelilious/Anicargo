@@ -15,6 +15,12 @@
   --app-content-padding-x: 28px;
   --app-content-padding-top: 24px;
   --app-content-padding-bottom: 40px;
+  --app-loading-status-offset: calc(18px * var(--app-ui-font-scale));
+  --app-loading-status-width: calc(188px * var(--app-ui-font-scale));
+  --app-loading-status-gap: calc(10px * var(--app-ui-font-scale));
+  --app-loading-status-padding-y: calc(10px * var(--app-ui-font-scale));
+  --app-loading-status-padding-x: calc(12px * var(--app-ui-font-scale));
+  --app-loading-status-radius: calc(18px * var(--app-ui-font-scale));
   --app-resource-entry-height: calc(156px * var(--app-ui-font-scale));
   --app-history-entry-height: calc(148px * var(--app-ui-font-scale));
   --app-history-poster-width: calc(92px * var(--app-ui-font-scale));

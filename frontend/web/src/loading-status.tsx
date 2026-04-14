@@ -28,18 +28,19 @@ const LoadingStatusContext = createContext<LoadingStatusContextValue | null>(nul
 const useStyles = makeStyles({
   viewport: {
     position: "fixed",
-    left: "18px",
-    bottom: "18px",
+    left: "var(--app-loading-status-offset)",
+    bottom: "var(--app-loading-status-offset)",
     zIndex: 30,
-    width: "min(188px, calc(100vw - 36px))",
+    width:
+      "min(var(--app-loading-status-width), calc(100vw - (var(--app-loading-status-offset) * 2)))",
     pointerEvents: "none",
   },
   statusCard: {
     display: "flex",
     alignItems: "center",
-    gap: "10px",
-    padding: "10px 12px",
-    borderRadius: "18px",
+    gap: "var(--app-loading-status-gap)",
+    padding: "var(--app-loading-status-padding-y) var(--app-loading-status-padding-x)",
+    borderRadius: "var(--app-loading-status-radius)",
     backgroundColor: "var(--app-panel)",
     border: "1px solid var(--app-border)",
     boxShadow: "var(--app-card-shadow)",
