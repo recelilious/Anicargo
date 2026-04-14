@@ -1703,9 +1703,46 @@ async fn run_download_pipeline(
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone)]
+struct DownloadPlanChain {
+    priority: u32,
+    candidate_ids: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DownloadPlanStageMode {
+    StopAfterFirstSuccess,
+    ProcessAllChains,
+}
+
+#[derive(Debug, Clone)]
+struct DownloadPlanStage {
+    label: &'static str,
+    mode: DownloadPlanStageMode,
+    candidate_chains: Vec<DownloadPlanChain>,
+}
+
+#[derive(Debug, Default, Clone)]
 struct DownloadPlan {
-    candidate_chains: Vec<Vec<i64>>,
+    stages: Vec<DownloadPlanStage>,
+}
+
+impl DownloadPlan {
+    fn push_stage(&mut self, stage: DownloadPlanStage) {
+        if !stage.candidate_chains.is_empty() {
+            self.stages.push(stage);
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.stages.is_empty()
+    }
+}
+
+#[derive(Debug, Default)]
+struct CollectionPlanning {
+    skip_all: bool,
+    stages: Vec<DownloadPlanStage>,
 }
 
 async fn discover_candidates_with_retries(
@@ -1849,9 +1886,17 @@ async fn apply_download_plan(
     policy: &crate::types::PolicyDto,
     candidates: &[ResourceCandidateDto],
     targets: Option<&AiringEpisodeTargets>,
-) -> Result<(), AppError> {
+    ) -> Result<(), AppError> {
     let plan = if job.release_status == "airing" {
-        build_airing_download_plan(&state.pool, job, policy, candidates, targets).await?
+        build_airing_download_plan(
+            &state.pool,
+            Some(&state.bangumi),
+            job,
+            policy,
+            candidates,
+            targets,
+        )
+        .await?
     } else {
         build_completed_download_plan(
             &state.pool,
@@ -1867,16 +1912,107 @@ async fn apply_download_plan(
     tracing::info!(
         job_id = job.id,
         subject_id = job.bangumi_subject_id,
-        candidate_chains = ?plan.candidate_chains,
+        stage_count = plan.stages.len(),
+        stages = ?plan.stages.iter().map(|stage| {
+            (
+                stage.label,
+                stage.candidate_chains
+                    .iter()
+                    .map(|chain| (chain.priority, chain.candidate_ids.clone()))
+                    .collect::<Vec<_>>(),
+            )
+        }).collect::<Vec<_>>(),
         "Built download plan"
     );
 
-    for (index, candidate_chain) in plan.candidate_chains.into_iter().enumerate() {
-        materialize_candidate_chain_with_peer_fallback(state, job, index as u32, &candidate_chain)
-            .await?;
+    if plan.is_empty() {
+        return Ok(());
     }
 
-    Ok(())
+    let mut last_error = None;
+    for stage in plan.stages {
+        tracing::info!(
+            job_id = job.id,
+            subject_id = job.bangumi_subject_id,
+            stage = stage.label,
+            mode = ?stage.mode,
+            chain_count = stage.candidate_chains.len(),
+            "Applying download plan stage"
+        );
+
+        match stage.mode {
+            DownloadPlanStageMode::StopAfterFirstSuccess => {
+                for chain in stage.candidate_chains {
+                    match materialize_candidate_chain_with_peer_fallback(
+                        state,
+                        job,
+                        chain.priority,
+                        &chain.candidate_ids,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            tracing::info!(
+                                job_id = job.id,
+                                subject_id = job.bangumi_subject_id,
+                                stage = stage.label,
+                                priority = chain.priority,
+                                "Download plan stage succeeded"
+                            );
+                            return Ok(());
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                job_id = job.id,
+                                subject_id = job.bangumi_subject_id,
+                                stage = stage.label,
+                                priority = chain.priority,
+                                error = %error,
+                                "Download plan stage chain failed; trying the next fallback chain"
+                            );
+                            last_error = Some(error);
+                        }
+                    }
+                }
+            }
+            DownloadPlanStageMode::ProcessAllChains => {
+                let mut stage_success = false;
+                for chain in stage.candidate_chains {
+                    match materialize_candidate_chain_with_peer_fallback(
+                        state,
+                        job,
+                        chain.priority,
+                        &chain.candidate_ids,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            stage_success = true;
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                job_id = job.id,
+                                subject_id = job.bangumi_subject_id,
+                                stage = stage.label,
+                                priority = chain.priority,
+                                error = %error,
+                                "Download plan stage chain failed; continuing with remaining episode fallbacks"
+                            );
+                            last_error = Some(error);
+                        }
+                    }
+                }
+
+                if stage_success {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        AppError::bad_request("no scored candidate with reachable peers was available")
+    }))
 }
 
 async fn materialize_candidate_chain_with_peer_fallback(
@@ -2014,8 +2150,295 @@ async fn materialize_candidate_chain_with_peer_fallback(
     }))
 }
 
+fn stage_chain(priority: u32, candidate_ids: Vec<i64>) -> Option<DownloadPlanChain> {
+    if candidate_ids.is_empty() {
+        None
+    } else {
+        Some(DownloadPlanChain {
+            priority,
+            candidate_ids,
+        })
+    }
+}
+
+fn collection_stage(
+    label: &'static str,
+    ordered_candidates: Vec<&ResourceCandidateDto>,
+) -> Option<DownloadPlanStage> {
+    stage_chain(
+        0,
+        ordered_candidates
+            .into_iter()
+            .map(|candidate| candidate.id)
+            .collect(),
+    )
+    .map(|chain| DownloadPlanStage {
+        label,
+        mode: DownloadPlanStageMode::StopAfterFirstSuccess,
+        candidate_chains: vec![chain],
+    })
+}
+
+async fn build_collection_planning(
+    pool: &SqlitePool,
+    bangumi: Option<&BangumiClient>,
+    job: &crate::types::DownloadJobDto,
+    candidates: &[ResourceCandidateDto],
+    availability: &[db::SubjectEpisodeAvailability],
+    missing_episodes: &[f64],
+    preferred_fansub: Option<&str>,
+) -> Result<CollectionPlanning, AppError> {
+    let mut planning = CollectionPlanning::default();
+    let collection_candidates = candidates
+        .iter()
+        .filter(|candidate| candidate.rejected_reason.is_none() && candidate.is_collection)
+        .collect::<Vec<_>>();
+
+    let already_has_any_media = availability
+        .iter()
+        .any(|item| item.status == "ready" || item.status == "partial");
+    if already_has_any_media || missing_episodes.is_empty() || collection_candidates.is_empty() {
+        return Ok(planning);
+    }
+
+    let split_part_group = match bangumi {
+        Some(bangumi) => match subject_parts::resolve_subject_part_group(bangumi, job.bangumi_subject_id).await {
+            Ok(group) => group,
+            Err(error) => {
+                tracing::warn!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    error = %error,
+                    "Failed to resolve split-part Bangumi group while planning collection fallbacks"
+                );
+                None
+            }
+        },
+        None => None,
+    };
+
+    let mut excluded_candidate_ids = HashSet::new();
+    if let Some(group) = split_part_group.as_ref() {
+        let group_subject_ids = group
+            .segments
+            .iter()
+            .map(|segment| segment.bangumi_subject_id)
+            .collect::<Vec<_>>();
+        let current_segment = subject_parts::current_segment(group, job.bangumi_subject_id);
+        let grouped_jobs =
+            db::list_open_download_jobs_for_subjects(pool, &group_subject_ids, Some(job.id)).await?;
+        if let Some(current_segment) = current_segment {
+            let should_wait_for_earlier_group_job = current_segment.part_index > 1
+                && grouped_jobs.iter().any(|other_job| {
+                    let Some(other_segment) =
+                        subject_parts::current_segment(group, other_job.bangumi_subject_id)
+                    else {
+                        return false;
+                    };
+                    other_segment.part_index < current_segment.part_index
+                        && other_job.created_at <= job.created_at
+                });
+            if should_wait_for_earlier_group_job {
+                for _ in 0..10 {
+                    let grouped_selected_candidates =
+                        db::list_active_selected_candidates_for_subjects(
+                            pool,
+                            &group_subject_ids,
+                            Some(job.id),
+                        )
+                        .await?;
+                    if let Some(existing_candidate) =
+                        grouped_selected_candidates.iter().find(|candidate| {
+                            candidate.is_collection
+                                && candidate.rejected_reason.is_none()
+                                && collection_matches_split_part_group_total(
+                                    candidate,
+                                    group,
+                                    job.bangumi_subject_id,
+                                    missing_episodes,
+                                )
+                        })
+                    {
+                        tracing::info!(
+                            job_id = job.id,
+                            subject_id = job.bangumi_subject_id,
+                            existing_candidate_id = existing_candidate.id,
+                            existing_subject_id = existing_candidate.bangumi_subject_id,
+                            existing_slot_key = %existing_candidate.slot_key,
+                            missing_episodes = ?missing_episodes,
+                            "Skipping duplicate split-part collection planning because an earlier grouped full-season pack was selected during wait"
+                        );
+                        planning.skip_all = true;
+                        return Ok(planning);
+                    }
+                    sleep(TokioDuration::from_millis(500)).await;
+                }
+            }
+        }
+
+        let grouped_selected_candidates = db::list_active_selected_candidates_for_subjects(
+            pool,
+            &group_subject_ids,
+            Some(job.id),
+        )
+        .await?;
+        if let Some(existing_candidate) = grouped_selected_candidates.iter().find(|candidate| {
+            candidate.is_collection
+                && candidate.rejected_reason.is_none()
+                && collection_matches_split_part_group_total(
+                    candidate,
+                    group,
+                    job.bangumi_subject_id,
+                    missing_episodes,
+                )
+        }) {
+            tracing::info!(
+                job_id = job.id,
+                subject_id = job.bangumi_subject_id,
+                existing_candidate_id = existing_candidate.id,
+                existing_subject_id = existing_candidate.bangumi_subject_id,
+                existing_slot_key = %existing_candidate.slot_key,
+                missing_episodes = ?missing_episodes,
+                "Skipping duplicate split-part collection planning because a grouped full-season pack is already selected"
+            );
+            planning.skip_all = true;
+            return Ok(planning);
+        }
+
+        let grouped_executions = db::list_active_executions_for_subjects(pool, &group_subject_ids).await?;
+        if let Some(existing_execution) = grouped_executions.iter().find(|execution| {
+            execution.is_collection
+                && execution.state != "replaced"
+                && collection_execution_matches_split_part_group_total(
+                    execution,
+                    group,
+                    job.bangumi_subject_id,
+                    missing_episodes,
+                )
+        }) {
+            tracing::info!(
+                job_id = job.id,
+                subject_id = job.bangumi_subject_id,
+                existing_execution_id = existing_execution.id,
+                existing_subject_id = existing_execution.bangumi_subject_id,
+                existing_slot_key = %existing_execution.slot_key,
+                missing_episodes = ?missing_episodes,
+                "Skipping duplicate split-part collection planning because a grouped full-season pack already exists"
+            );
+            planning.skip_all = true;
+            return Ok(planning);
+        }
+
+        let grouped_collection_candidates = collection_candidates
+            .iter()
+            .copied()
+            .filter(|candidate| {
+                collection_matches_split_part_group_total(
+                    candidate,
+                    group,
+                    job.bangumi_subject_id,
+                    missing_episodes,
+                )
+            })
+            .collect::<Vec<_>>();
+        let eligible_grouped_candidates = ordered_slot_candidates(
+            &grouped_collection_candidates,
+            &job.release_status,
+            preferred_fansub,
+        );
+        if let Some(stage) = collection_stage(
+            "split-part-grouped-collection",
+            eligible_grouped_candidates.clone(),
+        ) {
+            if let Some(candidate) = eligible_grouped_candidates.first() {
+                tracing::info!(
+                    job_id = job.id,
+                    subject_id = job.bangumi_subject_id,
+                    missing_episodes = ?missing_episodes,
+                    candidate_id = candidate.id,
+                    title = %candidate.title,
+                    score = candidate.score,
+                    "Planned grouped full-season collection fallback stage"
+                );
+            }
+            excluded_candidate_ids.extend(
+                eligible_grouped_candidates
+                    .iter()
+                    .map(|candidate| candidate.id),
+            );
+            planning.stages.push(stage);
+        }
+    }
+
+    let direct_window_candidates = collection_candidates
+        .iter()
+        .copied()
+        .filter(|candidate| {
+            !excluded_candidate_ids.contains(&candidate.id)
+                && collection_matches_target_window(candidate, missing_episodes)
+        })
+        .collect::<Vec<_>>();
+    let eligible_direct_candidates = ordered_slot_candidates(
+        &direct_window_candidates,
+        &job.release_status,
+        preferred_fansub,
+    );
+    if let Some(stage) = collection_stage("current-window-collection", eligible_direct_candidates.clone()) {
+        if let Some(candidate) = eligible_direct_candidates.first() {
+            tracing::info!(
+                job_id = job.id,
+                subject_id = job.bangumi_subject_id,
+                missing_episodes = ?missing_episodes,
+                candidate_id = candidate.id,
+                title = %candidate.title,
+                score = candidate.score,
+                "Planned direct collection fallback stage"
+            );
+        }
+        excluded_candidate_ids.extend(
+            eligible_direct_candidates
+                .iter()
+                .map(|candidate| candidate.id),
+        );
+        planning.stages.push(stage);
+    }
+
+    let expanded_window_candidates = collection_candidates
+        .iter()
+        .copied()
+        .filter(|candidate| {
+            !excluded_candidate_ids.contains(&candidate.id)
+                && collection_matches_expanded_completed_window(candidate, missing_episodes)
+        })
+        .collect::<Vec<_>>();
+    let eligible_expanded_candidates = ordered_slot_candidates(
+        &expanded_window_candidates,
+        &job.release_status,
+        preferred_fansub,
+    );
+    if let Some(stage) =
+        collection_stage("expanded-window-collection", eligible_expanded_candidates.clone())
+    {
+        if let Some(candidate) = eligible_expanded_candidates.first() {
+            tracing::info!(
+                job_id = job.id,
+                subject_id = job.bangumi_subject_id,
+                missing_episodes = ?missing_episodes,
+                candidate_id = candidate.id,
+                title = %candidate.title,
+                score = candidate.score,
+                "Planned expanded collection fallback stage"
+            );
+        }
+        planning.stages.push(stage);
+    }
+
+    Ok(planning)
+}
+
 async fn build_airing_download_plan(
     pool: &SqlitePool,
+    bangumi: Option<&BangumiClient>,
     job: &crate::types::DownloadJobDto,
     policy: &crate::types::PolicyDto,
     candidates: &[ResourceCandidateDto],
@@ -2034,6 +2457,18 @@ async fn build_airing_download_plan(
     let current_selected = db::current_selected_candidate_for_job(pool, job.id).await?;
     let previous_selected =
         db::latest_selected_candidate_for_subject(pool, job.bangumi_subject_id).await?;
+    let tracked_episodes = targets
+        .map(AiringEpisodeTargets::search_targets)
+        .unwrap_or_default();
+    let missing_episodes = tracked_episodes
+        .iter()
+        .copied()
+        .filter(|episode| {
+            !availability
+                .iter()
+                .any(|item| availability_covers_episode(item, *episode))
+        })
+        .collect::<Vec<_>>();
 
     let mut candidates_by_episode = BTreeMap::<i64, Vec<&ResourceCandidateDto>>::new();
     for candidate in eligible {
@@ -2061,19 +2496,37 @@ async fn build_airing_download_plan(
                 .collect()
         });
 
+    let mut preferred_fansub = previous_selected
+        .as_ref()
+        .and_then(|candidate| candidate.fansub_name.clone());
+    let collection_planning = build_collection_planning(
+        pool,
+        bangumi,
+        job,
+        candidates,
+        &availability,
+        &missing_episodes,
+        preferred_fansub.as_deref(),
+    )
+    .await?;
+    if collection_planning.skip_all {
+        return Ok(DownloadPlan::default());
+    }
+
+    let mut plan = DownloadPlan {
+        stages: collection_planning.stages,
+    };
+    let mut episode_chains = Vec::new();
+
     if candidates_by_episode.is_empty()
         && latest_episode_key.is_none()
         && backlog_episodes.is_empty()
+        && plan.is_empty()
     {
         return Ok(DownloadPlan::default());
     }
 
-    let mut preferred_fansub = previous_selected
-        .as_ref()
-        .and_then(|candidate| candidate.fansub_name.clone());
-    let mut backlog_candidate_ids = Vec::new();
-
-    for episode_number in backlog_episodes {
+    for (priority_index, episode_number) in backlog_episodes.into_iter().enumerate() {
         let episode_key = episode_sort_key(episode_number);
         let Some(slot_candidates) = candidates_by_episode.get(&episode_key) else {
             tracing::info!(
@@ -2135,12 +2588,15 @@ async fn build_airing_download_plan(
         if let Some(fansub_name) = chosen.fansub_name.clone() {
             preferred_fansub = Some(fansub_name);
         }
-        backlog_candidate_ids.push(
+        if let Some(chain) = stage_chain(
+            priority_index as u32,
             ordered_candidates
                 .iter()
                 .map(|candidate| candidate.id)
                 .collect(),
-        );
+        ) {
+            episode_chains.push(chain);
+        }
     }
 
     let latest_candidates = latest_episode_key
@@ -2178,17 +2634,25 @@ async fn build_airing_download_plan(
         );
     }
 
-    let mut candidate_chains = backlog_candidate_ids;
-    let latest_candidate_chain = latest_candidates
-        .unwrap_or_default()
-        .into_iter()
-        .map(|candidate| candidate.id)
-        .collect::<Vec<_>>();
-    if !latest_candidate_chain.is_empty() {
-        candidate_chains.push(latest_candidate_chain);
+    if let Some(chain) = stage_chain(
+        episode_chains.len() as u32,
+        latest_candidates
+            .unwrap_or_default()
+            .into_iter()
+            .map(|candidate| candidate.id)
+            .collect(),
+    ) {
+        episode_chains.push(chain);
     }
 
-    Ok(DownloadPlan { candidate_chains })
+    plan.push_stage(DownloadPlanStage {
+        label: "airing-episodes",
+        mode: DownloadPlanStageMode::ProcessAllChains,
+        candidate_chains: episode_chains,
+    });
+
+    let _ = policy;
+    Ok(plan)
 }
 
 async fn build_completed_download_plan(
@@ -2218,255 +2682,18 @@ async fn build_completed_download_plan(
     let preferred_fansub = previous_selected
         .as_ref()
         .and_then(|candidate| candidate.fansub_name.as_deref());
-    let collection_candidates = candidates
-        .iter()
-        .filter(|candidate| candidate.rejected_reason.is_none() && candidate.is_collection)
-        .collect::<Vec<_>>();
-    let split_part_group = if collection_candidates.is_empty() {
-        None
-    } else {
-        match bangumi {
-            Some(bangumi) => match subject_parts::resolve_subject_part_group(
-                bangumi,
-                job.bangumi_subject_id,
-            )
-            .await
-            {
-                Ok(group) => group,
-                Err(error) => {
-                    tracing::warn!(
-                        job_id = job.id,
-                        subject_id = job.bangumi_subject_id,
-                        error = %error,
-                        "Failed to resolve split-part Bangumi group while planning completed-season downloads"
-                    );
-                    None
-                }
-            },
-            None => None,
-        }
-    };
-
-    let already_has_any_media = availability
-        .iter()
-        .any(|item| item.status == "ready" || item.status == "partial");
-    if !already_has_any_media && !missing_episodes.is_empty() && !collection_candidates.is_empty() {
-        if let Some(group) = split_part_group.as_ref() {
-            let group_subject_ids = group
-                .segments
-                .iter()
-                .map(|segment| segment.bangumi_subject_id)
-                .collect::<Vec<_>>();
-            let current_segment = subject_parts::current_segment(group, job.bangumi_subject_id);
-            let grouped_jobs =
-                db::list_open_download_jobs_for_subjects(pool, &group_subject_ids, Some(job.id))
-                    .await?;
-            if let Some(current_segment) = current_segment {
-                let should_wait_for_earlier_group_job = current_segment.part_index > 1
-                    && grouped_jobs.iter().any(|other_job| {
-                        let Some(other_segment) =
-                            subject_parts::current_segment(group, other_job.bangumi_subject_id)
-                        else {
-                            return false;
-                        };
-                        other_segment.part_index < current_segment.part_index
-                            && other_job.created_at <= job.created_at
-                    });
-                if should_wait_for_earlier_group_job {
-                    for _ in 0..10 {
-                        let grouped_selected_candidates =
-                            db::list_active_selected_candidates_for_subjects(
-                                pool,
-                                &group_subject_ids,
-                                Some(job.id),
-                            )
-                            .await?;
-                        if let Some(existing_candidate) =
-                            grouped_selected_candidates.iter().find(|candidate| {
-                                candidate.is_collection
-                                    && candidate.rejected_reason.is_none()
-                                    && collection_matches_split_part_group_total(
-                                        candidate,
-                                        group,
-                                        job.bangumi_subject_id,
-                                        &missing_episodes,
-                                    )
-                            })
-                        {
-                            tracing::info!(
-                                job_id = job.id,
-                                subject_id = job.bangumi_subject_id,
-                                existing_candidate_id = existing_candidate.id,
-                                existing_subject_id = existing_candidate.bangumi_subject_id,
-                                existing_slot_key = %existing_candidate.slot_key,
-                                missing_episodes = ?missing_episodes,
-                                "Skipping duplicate split-part collection planning because an earlier grouped full-season pack was selected during wait"
-                            );
-                            return Ok(DownloadPlan {
-                                candidate_chains: Vec::new(),
-                            });
-                        }
-                        sleep(TokioDuration::from_millis(500)).await;
-                    }
-                }
-            }
-
-            let grouped_selected_candidates = db::list_active_selected_candidates_for_subjects(
-                pool,
-                &group_subject_ids,
-                Some(job.id),
-            )
-            .await?;
-            if let Some(existing_candidate) = grouped_selected_candidates.iter().find(|candidate| {
-                candidate.is_collection
-                    && candidate.rejected_reason.is_none()
-                    && collection_matches_split_part_group_total(
-                        candidate,
-                        group,
-                        job.bangumi_subject_id,
-                        &missing_episodes,
-                    )
-            }) {
-                tracing::info!(
-                    job_id = job.id,
-                    subject_id = job.bangumi_subject_id,
-                    existing_candidate_id = existing_candidate.id,
-                    existing_subject_id = existing_candidate.bangumi_subject_id,
-                    existing_slot_key = %existing_candidate.slot_key,
-                    missing_episodes = ?missing_episodes,
-                    "Skipping duplicate split-part collection planning because a grouped full-season pack is already selected"
-                );
-                return Ok(DownloadPlan {
-                    candidate_chains: Vec::new(),
-                });
-            }
-
-            let grouped_executions =
-                db::list_active_executions_for_subjects(pool, &group_subject_ids).await?;
-            if let Some(existing_execution) = grouped_executions.iter().find(|execution| {
-                execution.is_collection
-                    && execution.state != "replaced"
-                    && collection_execution_matches_split_part_group_total(
-                        execution,
-                        group,
-                        job.bangumi_subject_id,
-                        &missing_episodes,
-                    )
-            }) {
-                tracing::info!(
-                    job_id = job.id,
-                    subject_id = job.bangumi_subject_id,
-                    existing_execution_id = existing_execution.id,
-                    existing_subject_id = existing_execution.bangumi_subject_id,
-                    existing_slot_key = %existing_execution.slot_key,
-                    missing_episodes = ?missing_episodes,
-                    "Skipping duplicate split-part collection planning because a grouped full-season pack already exists"
-                );
-                return Ok(DownloadPlan {
-                    candidate_chains: Vec::new(),
-                });
-            }
-
-            let grouped_collection_candidates = collection_candidates
-                .iter()
-                .copied()
-                .filter(|candidate| {
-                    collection_matches_split_part_group_total(
-                        candidate,
-                        group,
-                        job.bangumi_subject_id,
-                        &missing_episodes,
-                    )
-                })
-                .collect::<Vec<_>>();
-            let eligible_grouped_candidates = ordered_slot_candidates(
-                &grouped_collection_candidates,
-                &job.release_status,
-                preferred_fansub,
-            );
-            if !eligible_grouped_candidates.is_empty() {
-                tracing::info!(
-                    job_id = job.id,
-                    subject_id = job.bangumi_subject_id,
-                    missing_episodes = ?missing_episodes,
-                    candidate_id = eligible_grouped_candidates[0].id,
-                    title = %eligible_grouped_candidates[0].title,
-                    score = eligible_grouped_candidates[0].score,
-                    "Selected split-part completed-season collection candidate chain"
-                );
-                return Ok(DownloadPlan {
-                    candidate_chains: vec![eligible_grouped_candidates
-                        .into_iter()
-                        .map(|candidate| candidate.id)
-                        .collect()],
-                });
-            }
-        }
-
-        let direct_window_candidates = collection_candidates
-            .iter()
-            .copied()
-            .filter(|candidate| collection_matches_target_window(candidate, &missing_episodes))
-            .collect::<Vec<_>>();
-        let eligible_collection_candidates = ordered_slot_candidates(
-            &direct_window_candidates,
-            &job.release_status,
-            preferred_fansub,
-        );
-        if !eligible_collection_candidates.is_empty() {
-            tracing::info!(
-                job_id = job.id,
-                subject_id = job.bangumi_subject_id,
-                missing_episodes = ?missing_episodes,
-                candidate_id = eligible_collection_candidates[0].id,
-                title = %eligible_collection_candidates[0].title,
-                score = eligible_collection_candidates[0].score,
-                "Selected completed-season collection candidate chain"
-            );
-            return Ok(DownloadPlan {
-                candidate_chains: vec![
-                    eligible_collection_candidates
-                        .into_iter()
-                        .map(|candidate| candidate.id)
-                        .collect(),
-                ],
-            });
-        }
-
-        let expanded_window_candidates = collection_candidates
-            .iter()
-            .copied()
-            .filter(|candidate| {
-                !direct_window_candidates
-                    .iter()
-                    .any(|exact| exact.id == candidate.id)
-                    && collection_matches_expanded_completed_window(candidate, &missing_episodes)
-            })
-            .collect::<Vec<_>>();
-        let eligible_expanded_candidates = ordered_slot_candidates(
-            &expanded_window_candidates,
-            &job.release_status,
-            preferred_fansub,
-        );
-        if !eligible_expanded_candidates.is_empty() {
-            tracing::info!(
-                job_id = job.id,
-                subject_id = job.bangumi_subject_id,
-                missing_episodes = ?missing_episodes,
-                candidate_id = eligible_expanded_candidates[0].id,
-                title = %eligible_expanded_candidates[0].title,
-                score = eligible_expanded_candidates[0].score,
-                "Selected expanded completed-season collection candidate chain"
-            );
-            return Ok(DownloadPlan {
-                candidate_chains: vec![
-                    eligible_expanded_candidates
-                        .into_iter()
-                        .map(|candidate| candidate.id)
-                        .collect(),
-                ],
-            });
-        }
+    let collection_planning = build_collection_planning(
+        pool,
+        bangumi,
+        job,
+        candidates,
+        &availability,
+        &missing_episodes,
+        preferred_fansub,
+    )
+    .await?;
+    if collection_planning.skip_all {
+        return Ok(DownloadPlan::default());
     }
 
     let eligible = candidates
@@ -2489,8 +2716,11 @@ async fn build_completed_download_plan(
     }
 
     let mut preferred_fansub = preferred_fansub.map(str::to_owned);
-    let mut candidate_chains = Vec::new();
-    for episode_number in tracked_episodes.iter().copied() {
+    let mut plan = DownloadPlan {
+        stages: collection_planning.stages,
+    };
+    let mut episode_chains = Vec::new();
+    for (priority_index, episode_number) in tracked_episodes.iter().copied().enumerate() {
         if availability
             .iter()
             .any(|item| availability_covers_episode(item, episode_number))
@@ -2537,16 +2767,25 @@ async fn build_completed_download_plan(
         if let Some(fansub_name) = chosen.fansub_name.clone() {
             preferred_fansub = Some(fansub_name);
         }
-        candidate_chains.push(
+        if let Some(chain) = stage_chain(
+            priority_index as u32,
             ordered_candidates
                 .into_iter()
                 .map(|candidate| candidate.id)
                 .collect(),
-        );
+        ) {
+            episode_chains.push(chain);
+        }
     }
 
     let _ = policy;
-    if !tracked_episodes.is_empty() && !missing_episodes.is_empty() && candidate_chains.is_empty() {
+    plan.push_stage(DownloadPlanStage {
+        label: "completed-episodes",
+        mode: DownloadPlanStageMode::ProcessAllChains,
+        candidate_chains: episode_chains,
+    });
+
+    if !tracked_episodes.is_empty() && !missing_episodes.is_empty() && plan.is_empty() {
         tracing::warn!(
             job_id = job.id,
             subject_id = job.bangumi_subject_id,
@@ -2560,7 +2799,7 @@ async fn build_completed_download_plan(
         ));
     }
 
-    Ok(DownloadPlan { candidate_chains })
+    Ok(plan)
 }
 
 fn collection_covers_all_targets(candidate: &ResourceCandidateDto, targets: &[f64]) -> bool {
@@ -2618,10 +2857,7 @@ fn collection_matches_expanded_completed_window(
     let target_span = max_target - min_target + 1.0;
     let overshoot = end - max_target;
 
-    start >= min_target - 1.0
-        && target_span <= 13.0
-        && overshoot > 1.0
-        && overshoot <= 15.0
+    start >= min_target - 1.0 && target_span <= 13.0 && overshoot > 1.0 && overshoot <= 15.0
 }
 
 fn collection_matches_split_part_group_total(
