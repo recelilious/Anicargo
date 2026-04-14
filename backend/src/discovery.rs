@@ -842,42 +842,6 @@ pub(crate) fn candidate_priority_key(
     (slot_weight, score_weight, quality_weight, freshness_weight)
 }
 
-fn installment_matches_profile(
-    profile: &AnimeGardenSearchProfile,
-    resource: &AnimeGardenResource,
-    expected_installment: i64,
-    actual_installment: i64,
-    actual_part: Option<i64>,
-) -> bool {
-    if actual_installment == expected_installment {
-        return true;
-    }
-
-    // Some split-cour season-1 subjects are labeled by release groups as "S2/II" even though
-    // Bangumi keeps them under season 1 part 2. Allow that alias only when the profile clearly
-    // points at a split part and the resource itself looks like a follow-up window.
-    if profile.installment_hint == Some(1)
-        && profile.season_hint.is_none()
-        && profile.part_hint.is_some_and(|expected_part| expected_part > 1)
-        && profile.part_hint == Some(actual_installment)
-    {
-        if actual_part.is_some_and(|part| part != actual_installment) {
-            return false;
-        }
-
-        let raw_slot = resource
-            .api_release_slot
-            .as_ref()
-            .or(resource.parser_release_slot.as_ref())
-            .unwrap_or(&resource.merged_release_slot);
-        let raw_start = raw_slot.episode_index.unwrap_or_default();
-
-        return actual_part == Some(actual_installment) || raw_start > 1.0;
-    }
-
-    false
-}
-
 fn evaluate_candidate(
     resource: &AnimeGardenResource,
     rules: &[FansubRuleDto],
@@ -909,13 +873,7 @@ fn evaluate_candidate(
 
     if let Some(expected_installment) = profile.installment_hint {
         if let Some(actual_installment) = inferred_installment {
-            if !installment_matches_profile(
-                profile,
-                resource,
-                expected_installment,
-                actual_installment,
-                inferred_part,
-            ) {
+            if actual_installment != expected_installment {
                 return CandidateEvaluation {
                     score: -1000.0,
                     resolution,
@@ -1761,82 +1719,6 @@ mod tests {
             "completed",
             &profile,
         );
-        assert_eq!(
-            evaluation.rejected_reason.as_deref(),
-            Some("installment mismatch: expected 1, got 2")
-        );
-    }
-
-    #[test]
-    fn accepts_split_part_installment_alias_when_release_window_points_to_later_half() {
-        let resource = sample_collection_resource(
-            "[\u{52A8}\u{6F2B}\u{56FD}] \u{65E0}\u{804C}\u{8F6C}\u{751F}\u{2161} ~\u{5230}\u{4E86}\u{5F02}\u{4E16}\u{754C}\u{5C31}\u{62FF}\u{51FA}\u{771F}\u{672C}\u{4E8B}~ [13-24]",
-            "2026-01-01T00:00:00Z",
-            13.0,
-            24.0,
-            Some(2),
-        );
-        let profile = AnimeGardenSearchProfile {
-            bangumi_subject_id: 325585,
-            title: "\u{65E0}\u{804C}\u{8F6C}\u{751F}\u{FF5E}\u{5230}\u{4E86}\u{5F02}\u{4E16}\u{754C}\u{5C31}\u{62FF}\u{51FA}\u{771F}\u{672C}\u{4E8B}\u{FF5E} \u{7B2C}2\u{90E8}\u{5206}".to_owned(),
-            title_cn: "\u{65E0}\u{804C}\u{8F6C}\u{751F}\u{FF5E}\u{5230}\u{4E86}\u{5F02}\u{4E16}\u{754C}\u{5C31}\u{62FF}\u{51FA}\u{771F}\u{672C}\u{4E8B}\u{FF5E} \u{7B2C}2\u{90E8}\u{5206}".to_owned(),
-            aliases: Vec::new(),
-            season_hint: None,
-            installment_hint: Some(1),
-            part_hint: Some(2),
-        };
-        let evaluation = evaluate_candidate(
-            &resource,
-            &Vec::<FansubRuleDto>::new(),
-            None,
-            &PolicyDto {
-                subscription_threshold: 1,
-                replacement_window_hours: 72,
-                prefer_same_fansub: true,
-                max_concurrent_downloads: 5,
-                upload_limit_mb: 0,
-                download_limit_mb: 5,
-            },
-            "completed",
-            &profile,
-        );
-
-        assert!(evaluation.rejected_reason.is_none());
-    }
-
-    #[test]
-    fn rejects_ambiguous_split_part_installment_alias_for_first_episode_without_part_marker() {
-        let resource = sample_resource(
-            "[\u{52A8}\u{6F2B}\u{56FD}] \u{65E0}\u{804C}\u{8F6C}\u{751F}\u{2161} ~\u{5230}\u{4E86}\u{5F02}\u{4E16}\u{754C}\u{5C31}\u{62FF}\u{51FA}\u{771F}\u{672C}\u{4E8B}~ - 01",
-            "2026-01-01T00:00:00Z",
-            Some(1.0),
-            Some(2),
-        );
-        let profile = AnimeGardenSearchProfile {
-            bangumi_subject_id: 325585,
-            title: "\u{65E0}\u{804C}\u{8F6C}\u{751F}\u{FF5E}\u{5230}\u{4E86}\u{5F02}\u{4E16}\u{754C}\u{5C31}\u{62FF}\u{51FA}\u{771F}\u{672C}\u{4E8B}\u{FF5E} \u{7B2C}2\u{90E8}\u{5206}".to_owned(),
-            title_cn: "\u{65E0}\u{804C}\u{8F6C}\u{751F}\u{FF5E}\u{5230}\u{4E86}\u{5F02}\u{4E16}\u{754C}\u{5C31}\u{62FF}\u{51FA}\u{771F}\u{672C}\u{4E8B}\u{FF5E} \u{7B2C}2\u{90E8}\u{5206}".to_owned(),
-            aliases: Vec::new(),
-            season_hint: None,
-            installment_hint: Some(1),
-            part_hint: Some(2),
-        };
-        let evaluation = evaluate_candidate(
-            &resource,
-            &Vec::<FansubRuleDto>::new(),
-            None,
-            &PolicyDto {
-                subscription_threshold: 1,
-                replacement_window_hours: 72,
-                prefer_same_fansub: true,
-                max_concurrent_downloads: 5,
-                upload_limit_mb: 0,
-                download_limit_mb: 5,
-            },
-            "completed",
-            &profile,
-        );
-
         assert_eq!(
             evaluation.rejected_reason.as_deref(),
             Some("installment mismatch: expected 1, got 2")
