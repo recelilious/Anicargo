@@ -5,52 +5,100 @@ type LocationLike = {
 };
 
 export type RouteState = {
-  fromPath?: string;
   restoreScrollTop?: number;
 };
 
 type StoredReturnTarget = {
   fromPath: string;
+  toPath: string;
   scrollTop: number;
 };
 
-const RETURN_TARGET_STORAGE_KEY = "anicargo:return-target";
+const RETURN_TARGET_STORAGE_KEY = "anicargo:return-stack";
+const MAX_RETURN_TARGETS = 64;
 
 export function buildRoutePath(location: LocationLike) {
   return `${location.pathname}${location.search}${location.hash}`;
 }
 
-export function rememberReturnTarget(fromPath: string, scrollTop: number) {
+function readReturnTargetStack() {
   if (typeof window === "undefined") {
-    return;
-  }
-
-  const payload: StoredReturnTarget = {
-    fromPath,
-    scrollTop,
-  };
-
-  window.sessionStorage.setItem(RETURN_TARGET_STORAGE_KEY, JSON.stringify(payload));
-}
-
-export function resolveReturnScrollTop(fromPath: string) {
-  if (typeof window === "undefined") {
-    return null;
+    return [] as StoredReturnTarget[];
   }
 
   const raw = window.sessionStorage.getItem(RETURN_TARGET_STORAGE_KEY);
   if (!raw) {
-    return null;
+    return [] as StoredReturnTarget[];
   }
 
   try {
-    const payload = JSON.parse(raw) as Partial<StoredReturnTarget>;
-    if (payload.fromPath !== fromPath || typeof payload.scrollTop !== "number") {
-      return null;
+    const payload = JSON.parse(raw);
+    if (!Array.isArray(payload)) {
+      return [] as StoredReturnTarget[];
     }
 
-    return Number.isFinite(payload.scrollTop) ? payload.scrollTop : null;
+    return payload.filter((item): item is StoredReturnTarget => {
+      return (
+        item != null &&
+        typeof item === "object" &&
+        typeof item.fromPath === "string" &&
+        typeof item.toPath === "string" &&
+        typeof item.scrollTop === "number" &&
+        Number.isFinite(item.scrollTop)
+      );
+    });
   } catch {
+    return [] as StoredReturnTarget[];
+  }
+}
+
+function writeReturnTargetStack(stack: StoredReturnTarget[]) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.sessionStorage.setItem(RETURN_TARGET_STORAGE_KEY, JSON.stringify(stack.slice(-MAX_RETURN_TARGETS)));
+}
+
+export function rememberReturnTarget(fromPath: string, toPath: string, scrollTop: number) {
+  if (typeof window === "undefined" || fromPath === toPath) {
+    return;
+  }
+
+  const stack = readReturnTargetStack();
+  stack.push({
+    fromPath,
+    toPath,
+    scrollTop: Number.isFinite(scrollTop) ? scrollTop : 0,
+  });
+  writeReturnTargetStack(stack);
+}
+
+export function consumeReturnTarget(currentPath: string) {
+  if (typeof window === "undefined") {
     return null;
   }
+
+  const stack = readReturnTargetStack();
+  const nextStack = [...stack];
+
+  while (nextStack.length > 0) {
+    const target = nextStack.pop();
+    if (!target) {
+      break;
+    }
+
+    if (target.toPath !== currentPath) {
+      continue;
+    }
+
+    writeReturnTargetStack(nextStack);
+    return {
+      fromPath: target.fromPath,
+      scrollTop: target.scrollTop,
+    };
+  }
+
+  writeReturnTargetStack(nextStack);
+  return null;
 }

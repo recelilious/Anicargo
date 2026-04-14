@@ -6,7 +6,7 @@ import { fetchPlaybackHistory } from "../api";
 import { CardCoverFallback } from "../components/CardCoverFallback";
 import { useLoadingStatus } from "../loading-status";
 import { MotionPage, MotionPresence, motionDelayStyle } from "../motion";
-import { buildRoutePath, rememberReturnTarget, type RouteState } from "../navigation";
+import { buildRoutePath, rememberReturnTarget } from "../navigation";
 import { useSession } from "../session";
 import type { PlaybackHistoryItem } from "../types";
 
@@ -271,14 +271,10 @@ export function HistoryPage() {
     }
   }
 
-  function rememberCurrentPosition() {
+  function rememberCurrentPosition(targetPath: string) {
     const scrollTop = document.getElementById("app-scroll-root")?.scrollTop ?? 0;
-    rememberReturnTarget(buildRoutePath(location), scrollTop);
+    rememberReturnTarget(buildRoutePath(location), targetPath, scrollTop);
   }
-
-  const routeState: RouteState = {
-    fromPath: buildRoutePath(location),
-  };
 
   return (
     <MotionPage className={styles.page}>
@@ -309,12 +305,15 @@ export function HistoryPage() {
         <div className={styles.listViewport}>
           <div className={styles.list}>
             {items.map((item, index) => (
+              (() => {
+                const targetPath = `/watch/${item.bangumiSubjectId}/${item.bangumiEpisodeId}`;
+
+                return (
               <Link
                 key={`${item.bangumiSubjectId}-${item.bangumiEpisodeId}-${item.lastPlayedAt}`}
                 className={`${styles.link} app-motion-item`}
-                to={`/watch/${item.bangumiSubjectId}/${item.bangumiEpisodeId}`}
-                state={routeState}
-                onClick={rememberCurrentPosition}
+                to={targetPath}
+                onClick={() => rememberCurrentPosition(targetPath)}
                 style={motionDelayStyle(index, 30, 90)}
               >
                 <Card className={styles.historyCard}>
@@ -347,6 +346,8 @@ export function HistoryPage() {
                   </div>
                 </Card>
               </Link>
+                );
+              })()
             ))}
           </div>
         </div>

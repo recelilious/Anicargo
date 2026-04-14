@@ -6,11 +6,12 @@ import {
   Text,
   makeStyles,
 } from "@fluentui/react-components";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 import { fetchActiveDownloads, fetchResources } from "../api";
 import { useLoadingStatus } from "../loading-status";
 import { MotionPage, MotionPresence, motionDelayStyle } from "../motion";
+import { buildRoutePath, rememberReturnTarget } from "../navigation";
 import { useSession } from "../session";
 import type { ActiveDownload, ResourceLibraryItem } from "../types";
 
@@ -326,6 +327,7 @@ function compareDisplayText(left: string, right: string) {
 
 export function ResourcesPage() {
   const styles = useStyles();
+  const location = useLocation();
   const { deviceId, userToken } = useSession();
   const [items, setItems] = useState<ResourceLibraryItem[]>([]);
   const [downloads, setDownloads] = useState<ActiveDownload[]>([]);
@@ -507,6 +509,11 @@ export function ResourcesPage() {
     [sortedDownloads],
   );
 
+  function rememberCurrentPosition(targetPath: string) {
+    const scrollTop = document.getElementById("app-scroll-root")?.scrollTop ?? 0;
+    rememberReturnTarget(buildRoutePath(location), targetPath, scrollTop);
+  }
+
   return (
     <MotionPage className={styles.page}>
       <Card className={`${styles.surfaceCard} app-motion-surface`}>
@@ -553,12 +560,14 @@ export function ResourcesPage() {
               {sortedDownloads.map((download, index) => {
                 const total = Math.max(download.totalBytes, download.downloadedBytes);
                 const progressValue = total > 0 ? download.downloadedBytes / total : 0;
+                const targetPath = `/title/${download.bangumiSubjectId}`;
 
                 return (
                   <Link
                     key={`${download.bangumiSubjectId}-${download.slotKey}`}
                     className={`${styles.link} app-motion-item`}
-                    to={`/title/${download.bangumiSubjectId}`}
+                    to={targetPath}
+                    onClick={() => rememberCurrentPosition(targetPath)}
                     style={motionDelayStyle(index, 32, 90)}
                   >
                     <Card className={styles.progressCard}>
@@ -641,11 +650,15 @@ export function ResourcesPage() {
 
           <div className={styles.listViewport}>
             <div className={styles.list}>
-              {items.map((item, index) => (
+              {items.map((item, index) => {
+                const targetPath = `/title/${item.bangumiSubjectId}`;
+
+                return (
                 <Link
                   key={item.id}
                   className={`${styles.link} app-motion-item`}
-                  to={`/title/${item.bangumiSubjectId}`}
+                  to={targetPath}
+                  onClick={() => rememberCurrentPosition(targetPath)}
                   style={motionDelayStyle(index, 28, 120)}
                 >
                   <Card className={styles.itemCard}>
@@ -662,7 +675,8 @@ export function ResourcesPage() {
                     </Text>
                   </Card>
                 </Link>
-              ))}
+                );
+              })}
             </div>
           </div>
 

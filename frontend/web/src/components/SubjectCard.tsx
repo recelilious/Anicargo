@@ -4,7 +4,7 @@ import { Link, useLocation } from "react-router-dom";
 
 import { fetchSubjectDetail } from "../api";
 import { motionDelayStyle } from "../motion";
-import { buildRoutePath, rememberReturnTarget, type RouteState } from "../navigation";
+import { buildRoutePath, rememberReturnTarget } from "../navigation";
 import { useSession } from "../session";
 import type { SubjectCard as SubjectCardModel } from "../types";
 import { fetchSubjectDetailCached, primeSubjectPreview } from "../view-cache";
@@ -323,6 +323,7 @@ export function SubjectCard({
   const meta = resolveMeta(subject, metaVariant);
   const fromPath = buildRoutePath(location);
   const isLinkedCard = subject.bangumiSubjectId > 0;
+  const targetPath = isLinkedCard ? `/title/${subject.bangumiSubjectId}` : null;
   const shouldShowPoster = Boolean(subject.imagePortrait) && !hasPosterError;
 
   useEffect(() => {
@@ -493,8 +494,12 @@ export function SubjectCard({
   }
 
   function handleCardClick() {
+    if (!targetPath) {
+      return;
+    }
+
     const scrollTop = document.getElementById("app-scroll-root")?.scrollTop ?? 0;
-    rememberReturnTarget(fromPath, scrollTop);
+    rememberReturnTarget(fromPath, targetPath, scrollTop);
     primeSubjectPreview(subject);
     if (isLinkedCard) {
       void fetchSubjectDetailCached(subject.bangumiSubjectId, deviceId, userToken);
@@ -591,8 +596,7 @@ export function SubjectCard({
     <div className="app-motion-item" style={motionDelayStyle(motionIndex)}>
       <Link
         ref={linkRef}
-        to={`/title/${subject.bangumiSubjectId}`}
-        state={{ fromPath } satisfies RouteState}
+        to={targetPath ?? "/"}
         className={styles.link}
         onClick={handleCardClick}
         onMouseEnter={handleMouseEnter}

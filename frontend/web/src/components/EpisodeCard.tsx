@@ -2,7 +2,7 @@ import { Badge, Card, Text, makeStyles, tokens } from "@fluentui/react-component
 import { Link, useLocation } from "react-router-dom";
 
 import { motionDelayStyle } from "../motion";
-import { buildRoutePath, rememberReturnTarget, type RouteState } from "../navigation";
+import { buildRoutePath, rememberReturnTarget } from "../navigation";
 import type { Episode } from "../types";
 
 const useStyles = makeStyles({
@@ -41,21 +41,18 @@ export function EpisodeCard({
 }) {
   const styles = useStyles();
   const location = useLocation();
+  const fromPath = buildRoutePath(location);
+  const targetPath = `/watch/${subjectId}/${episode.bangumiEpisodeId}`;
 
   function rememberCurrentPosition() {
     const scrollTop = document.getElementById("app-scroll-root")?.scrollTop ?? 0;
-    rememberReturnTarget(buildRoutePath(location), scrollTop);
+    rememberReturnTarget(fromPath, targetPath, scrollTop);
   }
-
-  const routeState: RouteState = {
-    fromPath: buildRoutePath(location),
-  };
 
   return (
     <div className="app-motion-item" style={motionDelayStyle(motionIndex, 34, 40)}>
       <Link
-        to={`/watch/${subjectId}/${episode.bangumiEpisodeId}`}
-        state={routeState}
+        to={targetPath}
         className={styles.link}
         onClick={rememberCurrentPosition}
       >

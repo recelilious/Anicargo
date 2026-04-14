@@ -10,7 +10,7 @@ import {
 import { AnicargoPlayer } from "../components/AnicargoPlayer";
 import { useLoadingStatus } from "../loading-status";
 import { MotionPage, motionDelayStyle } from "../motion";
-import { resolveReturnScrollTop, type RouteState } from "../navigation";
+import { buildRoutePath, consumeReturnTarget, rememberReturnTarget, type RouteState } from "../navigation";
 import { useSession } from "../session";
 import type { Episode, EpisodePlaybackResponse, SubjectDetailResponse } from "../types";
 import {
@@ -267,7 +267,7 @@ export function WatchPage() {
   const [isLoading, setIsLoading] = useState(cachedDetail == null || cachedPlayback == null);
   const [error, setError] = useState<string | null>(null);
   useLoadingStatus(isLoading ? "正在准备播放..." : null);
-  const routeState = (location.state as RouteState | null) ?? null;
+  const currentPath = buildRoutePath(location);
 
   useEffect(() => {
     if (numericSubjectId == null || numericEpisodeId == null) {
@@ -353,21 +353,19 @@ export function WatchPage() {
   }
 
   const fallbackBackPath = subjectId ? `/title/${subjectId}` : "/";
-  const backPath = routeState?.fromPath ?? fallbackBackPath;
 
   function handleBack() {
-    const restoreScrollTop = resolveReturnScrollTop(backPath);
-    navigate(backPath, {
-      state: typeof restoreScrollTop === "number" ? ({ restoreScrollTop } satisfies RouteState) : undefined,
+    const target = consumeReturnTarget(currentPath);
+    if (!target) {
+      navigate(fallbackBackPath, { replace: true });
+      return;
+    }
+
+    navigate(target.fromPath, {
+      replace: true,
+      state: { restoreScrollTop: target.scrollTop } satisfies RouteState,
     });
   }
-
-  const watchRouteState = useMemo<RouteState>(
-    () => ({
-      fromPath: backPath,
-    }),
-    [backPath],
-  );
 
   const visibleEpisodes = useMemo(
     () => (detail?.episodes ?? []).filter((item) => item.isAvailable),
@@ -446,13 +444,17 @@ export function WatchPage() {
             <div className={styles.episodeList}>
               {visibleEpisodes.map((item, index) => {
                 const isCurrentEpisode = item.bangumiEpisodeId === Number(episodeId);
+                const targetPath = `/watch/${subjectId}/${item.bangumiEpisodeId}`;
 
                 return (
                   <Link
                     key={item.bangumiEpisodeId}
-                    to={`/watch/${subjectId}/${item.bangumiEpisodeId}`}
-                    state={watchRouteState}
+                    to={targetPath}
                     className={styles.episodeLink}
+                    onClick={() => {
+                      const scrollTop = document.getElementById("app-scroll-root")?.scrollTop ?? 0;
+                      rememberReturnTarget(currentPath, targetPath, scrollTop);
+                    }}
                     style={motionDelayStyle(index, 26, 120)}
                   >
                     <Card

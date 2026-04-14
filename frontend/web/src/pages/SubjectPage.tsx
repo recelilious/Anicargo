@@ -8,7 +8,7 @@ import { EpisodeCard } from "../components/EpisodeCard";
 import { SubjectCard } from "../components/SubjectCard";
 import { useLoadingStatus } from "../loading-status";
 import { MotionPage, MotionPresence } from "../motion";
-import { resolveReturnScrollTop, type RouteState } from "../navigation";
+import { buildRoutePath, consumeReturnTarget, type RouteState } from "../navigation";
 import { useSession } from "../session";
 import type { SubjectCard as SubjectCardModel, SubjectDetailResponse } from "../types";
 import {
@@ -243,7 +243,7 @@ export function SubjectPage() {
   const [isSubscribing, setIsSubscribing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useLoadingStatus(isLoading ? "正在加载条目..." : isSubscribing ? "正在更新订阅..." : null);
-  const routeState = (location.state as RouteState | null) ?? null;
+  const currentPath = buildRoutePath(location);
 
   useEffect(() => {
     if (numericSubjectId == null) {
@@ -340,14 +340,15 @@ export function SubjectPage() {
   }
 
   function handleBack() {
-    if (!routeState?.fromPath) {
+    const target = consumeReturnTarget(currentPath);
+    if (!target) {
       navigate(-1);
       return;
     }
 
-    const restoreScrollTop = resolveReturnScrollTop(routeState.fromPath);
-    navigate(routeState.fromPath, {
-      state: typeof restoreScrollTop === "number" ? ({ restoreScrollTop } satisfies RouteState) : undefined,
+    navigate(target.fromPath, {
+      replace: true,
+      state: { restoreScrollTop: target.scrollTop } satisfies RouteState,
     });
   }
 
